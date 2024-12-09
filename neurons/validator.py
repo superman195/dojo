@@ -895,6 +895,10 @@ class Validator:
             exit()
 
     async def sync(self):
+        has_connection = await self._ensure_subtensor_connection()
+        if not has_connection:
+            logger.warning("Subtensor connection failed - continuing with partial sync")
+
         self.check_registered()
 
         if self.should_sync_metagraph():
