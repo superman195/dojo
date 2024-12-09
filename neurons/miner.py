@@ -14,7 +14,6 @@ from commons.utils import get_epoch_time
 from dojo import MINER_STATUS, VALIDATOR_MIN_STAKE
 from dojo.base.miner import BaseMinerNeuron
 from dojo.protocol import (
-    FeedbackRequest,
     Heartbeat,
     ScoringResult,
     TaskResultRequest,
@@ -36,7 +35,7 @@ class Miner(BaseMinerNeuron):
         logger.info("Attaching forward function to miner axon.")
         self.axon.attach(
             forward_fn=self.forward_task_request,
-            blacklist_fn=self.blacklist_feedback_request,
+            blacklist_fn=self.blacklist_task_request,
             priority_fn=self.priority_ranking,
         ).attach(forward_fn=self.forward_result).attach(forward_fn=self.ack_heartbeat)
 
@@ -49,7 +48,7 @@ class Miner(BaseMinerNeuron):
         self.thread: threading.Thread = None
         self.lock = asyncio.Lock()
         # log all incoming requests
-        self.hotkey_to_request: Dict[str, FeedbackRequest] = {}
+        self.hotkey_to_request: Dict[str, TaskSynapseObject] = {}
 
     async def ack_heartbeat(self, synapse: Heartbeat) -> Heartbeat:
         caller_hotkey = (
@@ -153,8 +152,8 @@ class Miner(BaseMinerNeuron):
             logger.error(f"Error handling TaskResultRequest: {e}")
             return synapse
 
-    async def blacklist_feedback_request(
-        self, synapse: FeedbackRequest
+    async def blacklist_task_request(
+        self, synapse: TaskSynapseObject
     ) -> Tuple[bool, str]:
         logger.info("checking blacklist function")
 
@@ -191,7 +190,7 @@ class Miner(BaseMinerNeuron):
 
         return False, "Valid request received from validator"
 
-    async def priority_ranking(self, synapse: FeedbackRequest) -> float:
+    async def priority_ranking(self, synapse: TaskSynapseObject) -> float:
         """
         The priority function determines the order in which requests are handled. Higher-priority
         requests are processed before others. Miners may receive messages from multiple entities at

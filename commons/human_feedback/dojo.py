@@ -95,6 +95,7 @@ class DojoAPI:
     @staticmethod
     def serialize_task_request(data: TaskSynapseObject):
         output = dict(
+            task=data.task_type,
             prompt=data.prompt,
             responses=[],
             task_type=str(data.task_type).upper(),
@@ -103,6 +104,11 @@ class DojoAPI:
             completion_dict = {}
             completion_dict["model"] = completion.model
             completion_dict["completion"] = completion.completion.model_dump()
+            completion_dict["criteria"] = (
+                [c.model_dump() for c in completion.criteria_types]
+                if completion.criteria_types
+                else []
+            )
             output["responses"].append(completion_dict)
 
         return output

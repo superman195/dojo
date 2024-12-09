@@ -17,9 +17,9 @@ RidToModelMap = DefaultDict[str, Dict[str, str]]
 class TaskTypeEnum(StrEnum):
     # TEXT_TO_IMAGE = "text_to_image"
     # TEXT_TO_THREE_D = "text_to_three_d"
-    DIALOGUE = "dialogue"
-    TEXT_TO_IMAGE = "image"
-    CODE_GENERATION = "code_generation"
+    DIALOGUE = "DIALOGUE"
+    TEXT_TO_IMAGE = "TEXT_TO_IMAGE"
+    CODE_GENERATION = "CODE_GENERATION"
 
 
 class CriteriaTypeEnum(StrEnum):
@@ -108,7 +108,7 @@ class CompletionResponse(BaseModel):
     )
     score: float | None = Field(description="Score of the completion", default=None)
     criteria_types: List[CriteriaType] = Field(
-        description="Types of criteria for the task",
+        description="Types of criteria for the task", default_factory=list
     )
 
 
@@ -187,8 +187,8 @@ class TaskSynapseObject(bt.Synapse):
     prompt: str = Field(
         description="Prompt or query from the user sent to the LLM",
     )
-    task_type: TaskTypeEnum = Field(description="Type of task")
-    expire_at: datetime = Field(
+    task_type: str = Field(description="Type of task")
+    expire_at: str = Field(
         description="Expired time for task which will be used by miner to create dojo task"
     )
     completion_responses: List[CompletionResponse] = Field(
@@ -201,10 +201,10 @@ class TaskSynapseObject(bt.Synapse):
         description="Mapping of unique identifiers to their ground truth values",
         default_factory=dict,
     )
-    miner_hotkey: str = Field(
+    miner_hotkey: str | None = Field(
         description="Hotkey of the miner that created the task", default=None
     )
-    miner_coldkey: str = Field(
+    miner_coldkey: str | None = Field(
         description="Coldkey of the miner that created the task", default=None
     )
 
