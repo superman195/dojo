@@ -34,6 +34,7 @@ from commons.logging.wandb import init_wandb
 from commons.obfuscation.obfuscation_utils import obfuscate_html_and_js
 from commons.objects import ObjectManager
 from commons.orm import ORM
+from commons.score_storage import ScoreStorage
 from commons.scoring import Scoring
 from commons.utils import (
     _terminal_plot,
@@ -44,7 +45,6 @@ from commons.utils import (
     set_expire_time,
     ttl_get_block,
 )
-from database.client import connect_db
 from dojo import __spec_version__
 from dojo.protocol import (
     CompletionResponse,
@@ -106,10 +106,17 @@ class Validator:
         self.scores: torch.Tensor = torch.zeros(
             len(self.metagraph.hotkeys), dtype=torch.float32
         )
-        # manually always register and always sync metagraph when application starts
         self.check_registered()
-        self.executor = ThreadPoolExecutor(max_workers=2)
 
+        # Run score migration before loading state
+        migration_success = self.loop.run_until_complete(ScoreStorage.migrate_from_db())
+        if not migration_success:
+            logger.error(
+                "Score migration failed - cannot continue without valid scores"
+            )
+            raise RuntimeError("Score migration failed - validator cannot start")
+
+        self.executor = ThreadPoolExecutor(max_workers=2)
         self.load_state()
 
         init_wandb(config=self.config, my_uid=self.uid, wallet=self.wallet)
@@ -125,7 +132,7 @@ class Validator:
             )
 
         await self.dendrite.forward(
-            axons=axons, synapse=synapse, deserialize=False, timeout=12
+            axons=axons, synapse=synapse, deserialize=False, timeout=30
         )
 
     def obfuscate_model_names(
@@ -418,7 +425,8 @@ class Validator:
                 logger.warning("Scores are all zeros, but saving anyway!")
                 # raise EmptyScores("Skipping save as scores are all empty")
 
-            await ORM.create_or_update_validator_score(self.scores)
+            # await ORM.create_or_update_validator_score(self.scores)
+            await ScoreStorage.save(self.scores)
             logger.success(f"📦 Saved validator state with scores: {self.scores}")
         except EmptyScores as e:
             logger.debug(f"No need to to save validator state: {e}")
@@ -427,8 +435,7 @@ class Validator:
 
     async def _load_state(self):
         try:
-            await connect_db()
-            scores = await ORM.get_validator_score()
+            scores = await ScoreStorage.load()
 
             if scores is None:
                 num_processed_tasks = await ORM.get_num_processed_tasks()
@@ -497,7 +504,10 @@ class Validator:
 
             # Send the request via Dendrite and get the response
             response: list[TaskResultRequest] = await self.dendrite.forward(  # type: ignore
-                axons=[miner_axon], synapse=task_synapse, deserialize=False
+                axons=[miner_axon],
+                synapse=task_synapse,
+                deserialize=False,
+                timeout=30,
             )
 
             if response and response[0]:
@@ -724,14 +734,10 @@ class Validator:
                 validator_hotkeys: List[str] = self._get_validator_hotkeys()
 
                 # Grab tasks that were expired TASK_DEADLINE duration ago
-                expire_from = (
-                    datetime_as_utc(datetime.now(timezone.utc))
-                    - timedelta(seconds=dojo.TASK_DEADLINE)
-                    - timedelta(hours=2)
+                expire_from = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
+                    hours=2
                 )
-                expire_to = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
-                    seconds=dojo.TASK_DEADLINE
-                )
+                expire_to = datetime_as_utc(datetime.now(timezone.utc))
                 logger.debug(
                     f"Updating with expire_from: {expire_from} and expire_to: {expire_to}"
                 )
@@ -1300,7 +1306,7 @@ class Validator:
         )
 
         score_data = {
-            "scores_by_hotkey": hotkey_to_score,
+            "scores_by_hotkey": [hotkey_to_score],
             "mean": {
                 "consensus": mean_weighted_consensus_scores,
                 "ground_truth": mean_weighted_gt_scores,

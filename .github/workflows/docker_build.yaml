@@ -6,6 +6,7 @@ on:
       - dev
       - staging
       - main
+      - simulator
 
 jobs:
   docker_publish:
@@ -28,7 +29,7 @@ jobs:
           echo "BRANCH_NAME=$SANITIZED_BRANCH_NAME" >> $GITHUB_ENV
 
       - name: Build and Push Docker Image with Branch Tag
-        if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/simulator'
         uses: macbre/push-to-ghcr@master
         with:
           image_name: ${{ github.repository }}

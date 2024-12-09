@@ -61,6 +61,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["commitizen", "curlify2", "pytest", "ruff"]
 test = ["pytest", "nox"]
+dataset = ["aioboto3", "aiofiles", "python-multipart"]
 
 [project.scripts]
 dojo = "dojo_cli:main"

@@ -74,6 +74,9 @@ miner-worker-api:
 dojo-cli:
 	docker compose --env-file .env.miner -f docker-compose.miner.yaml run --rm dojo-cli
 
+extract-dataset:
+	docker compose -f docker-compose.validator.yaml run --rm --remove-orphans extract-dataset
+
 # ---------------------------------------------------------------------------- #
 #                             CORE SERVICE LOGGING                             #
 # ---------------------------------------------------------------------------- #

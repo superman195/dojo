@@ -131,3 +131,26 @@ services:
       prisma-setup-vali:
         condition: service_completed_successfully
     logging: *default-logging
+
+  dataset-service:
+    image: ghcr.io/tensorplex-labs/dojo:dataset
+    env_file:
+      - .env.validator
+    ports:
+      - "127.0.0.1:9999:9999"
+    command: ["dataset-service"]
+    logging: *default-logging
+
+  extract-dataset:
+    image: ghcr.io/tensorplex-labs/dojo:dataset
+    env_file:
+      - .env.validator
+    command: ["extract-dataset"]
+    networks:
+      - dojo-validator
+    volumes:
+      - ./:/app
+      - ./.env.validator:/app/.env
+      - prisma-binary:/root/prisma-python
+      - $HOME/.bittensor:/root/.bittensor
+    logging: *default-logging
