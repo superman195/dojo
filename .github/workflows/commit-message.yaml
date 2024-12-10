@@ -1,0 +1,38 @@
+name: "Lint PR Commit Messages"
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+    branches:
+      - dev
+      - main
+
+jobs:
+  commit-lint:
+    name: Conventional Commit PR commit messages
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5.1.1
+        with:
+          python-version: 3.11
+
+      - name: Create uv virtualenv
+        run: |
+          python -m pip install uv
+          uv venv .venv
+          echo "VIRTUAL_ENV=.venv" >> $GITHUB_ENV
+          echo "$PWD/.venv/bin" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        run: uv pip install commitizen
+
+      - name: Check commit messages
+        run: |
+          cz check \
+          --rev-range ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} \
+          --allowed-prefixes 'Merge' 'Revert' 'Pull request' 'fixup!' 'squash!'
