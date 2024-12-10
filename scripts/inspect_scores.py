@@ -1,9 +1,12 @@
 import argparse
+from pathlib import Path
 from typing import List
 
 import torch
 from tabulate import tabulate
 from termcolor import colored
+
+from commons.score_storage import ScoreStorage
 
 
 def format_score_table(scores: torch.Tensor) -> List[List[str]]:
@@ -24,9 +27,7 @@ def format_score_table(scores: torch.Tensor) -> List[List[str]]:
     return table_data
 
 
-def inspect_scores(
-    file_path: str = "scores/validator_scores.pt", show_all: bool = False
-):
+def inspect_scores(file_path: Path = ScoreStorage.SCORES_FILE, show_all: bool = False):
     try:
         scores = torch.load(file_path)
 
