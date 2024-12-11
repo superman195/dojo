@@ -110,6 +110,8 @@ class Validator:
         )
         self.check_registered()
 
+        init_wandb(config=self.config, my_uid=self.uid, wallet=self.wallet)
+
         # Run score migration before loading state
         migration_success = self.loop.run_until_complete(ScoreStorage.migrate_from_db())
         if not migration_success:
@@ -120,8 +122,6 @@ class Validator:
 
         self.executor = ThreadPoolExecutor(max_workers=2)
         self.load_state()
-
-        init_wandb(config=self.config, my_uid=self.uid, wallet=self.wallet)
 
     async def send_scores(self, synapse: ScoringResult, hotkeys: List[str]):
         """Send consensus score back to miners who participated in the request."""
