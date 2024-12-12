@@ -35,60 +35,44 @@ class DojoAPI:
     _http_client = httpx.AsyncClient()
 
     @classmethod
-    async def _get_task_by_id(cls, task_id: str):
-        """Gets task by task id and checks completion status"""
-        url = f"{DOJO_API_BASE_URL}/api/v1/tasks/{task_id}"
+    async def _get_task_results_by_dojo_task_id(cls, dojo_task_id: str):
+        """Gets task results from dojo task id"""
+        url = f"{DOJO_API_BASE_URL}/api/v1/tasks/task-result/{dojo_task_id}"
         response = await cls._http_client.get(url)
         response.raise_for_status()
         return response.json()
 
     @classmethod
-    async def _get_task_results_by_task_id(cls, task_id: str):
-        """Gets task results from task id"""
-        url = f"{DOJO_API_BASE_URL}/api/v1/tasks/task-result/{task_id}"
-        response = await cls._http_client.get(url)
-        response.raise_for_status()
-        return response.json()
+    async def get_task_results_by_dojo_task_id(
+        cls, dojo_task_id: str
+    ) -> List[Dict] | None:
+        """Gets task results from dojo task id to prepare for scoring later on"""
 
-    @classmethod
-    async def get_task_results_by_task_id(cls, task_id: str) -> List[Dict] | None:
-        """Gets task results from task id to prepare for scoring later on"""
-        # task_response = await cls._get_task_by_id(task_id)
-        # task_status = task_response.get("body", {}).get("status", None)
-        # is_completed = task_status and task_status.lower() == "completed"
-        # if is_completed is None:
-        #     logger.error(f"Failed to read status field for task_id: {task_id}")
-        #     return
-
-        # if is_completed is False:
-        #     return
-
-        max_retries = 5
-        base_delay = 1
-
-        for attempt in range(max_retries):
+        for attempt in range(cls.MAX_RETRIES):
             try:
-                task_results_response = await cls._get_task_results_by_task_id(task_id)
+                task_results_response = await cls._get_task_results_by_dojo_task_id(
+                    dojo_task_id
+                )
                 task_results = task_results_response.get("body", {}).get("taskResults")
-                if task_results is None or not task_results:
-                    return None
-                return task_results
+                if task_results:
+                    return task_results
+                return None
             except Exception as e:
-                if attempt < max_retries - 1:
-                    delay = base_delay * 2**attempt + random.uniform(0, 1)
+                if attempt < cls.MAX_RETRIES - 1:
+                    delay = cls.BASE_DELAY * 2**attempt + random.uniform(0, 1)
                     logger.warning(
-                        f"Error occurred while getting task results for task_id {task_id}: {e}. "
+                        f"Error occurred while getting task results for dojo task id {dojo_task_id}: {e}. "
                         f"Retrying in {delay:.2f} seconds..."
                     )
                     await asyncio.sleep(delay)
                 else:
                     logger.error(
-                        f"Failed to get task results for task_id {task_id} after {max_retries} attempts: {e}"
+                        f"Failed to get task results for dojo task id {dojo_task_id} after {cls.MAX_RETRIES} attempts: {e}"
                     )
                     return None
 
         logger.error(
-            f"Failed to get task results for task_id {task_id} after {max_retries} retries"
+            f"Failed to get task results for dojo task id {dojo_task_id} after {cls.MAX_RETRIES} retries"
         )
         return None
 

@@ -103,6 +103,7 @@ class CompletionResponse(BaseModel):
         description="Completion from the model"
     )
     completion_id: str = Field(description="Unique identifier for the completion")
+    # TODO: Check if rank_id is needed
     rank_id: int | None = Field(
         description="Rank of the completion", examples=[1, 2, 3, 4], default=None
     )
@@ -191,15 +192,16 @@ class TaskSynapseObject(bt.Synapse):
     expire_at: str = Field(
         description="Expired time for task which will be used by miner to create dojo task"
     )
-    completion_responses: List[CompletionResponse] = Field(
+    completion_responses: List[CompletionResponse] | None = Field(
         description="List of completions for the task",
+        default=None,
     )
     dojo_task_id: str | None = Field(
         description="Dojo task ID returned by miner", default=None
     )
-    ground_truth: dict[str, int] = Field(
+    ground_truth: dict[str, int] | None = Field(
         description="Mapping of unique identifiers to their ground truth values",
-        default_factory=dict,
+        default=None,
     )
     miner_hotkey: str | None = Field(
         description="Hotkey of the miner that created the task", default=None
@@ -209,12 +211,31 @@ class TaskSynapseObject(bt.Synapse):
     )
 
 
+class Scores(BaseModel):
+    raw_score: float | None = Field(description="Raw score of the miner", default=None)
+    normalised_score: float | None = Field(
+        description="Normalised score of the miner", default=None
+    )
+    ground_truth_score: float | None = Field(
+        description="Ground truth score of the miner", default=None
+    )
+    cosine_similarity_score: float | None = Field(
+        description="Cosine similarity score of the miner", default=None
+    )
+    normalised_cosine_similarity_score: float | None = Field(
+        description="Normalised cosine similarity score of the miner", default=None
+    )
+    cubic_reward_score: float | None = Field(
+        description="Cubic reward score of the miner", default=None
+    )
+
+
 class ScoringResult(bt.Synapse):
-    request_id: str = Field(
+    task_id: str = Field(
         description="Unique identifier for the request",
     )
-    hotkey_to_scores: Dict[str, float] = Field(
-        description="Hotkey to score mapping",
+    hotkey_to_scores: Dict[str, Scores] = Field(
+        description="Hotkey to scores mapping",
         default_factory=dict,
     )
 
@@ -226,7 +247,7 @@ class Heartbeat(bt.Synapse):
 # TODO rename this to be a Task or something
 class DendriteQueryResponse(BaseModel):
     model_config = ConfigDict(frozen=False)
-    request: TaskSynapseObject
+    validator_task: TaskSynapseObject
     miner_responses: List[TaskSynapseObject]
 
 
@@ -241,8 +262,9 @@ class TaskResult(BaseModel):
     updated_at: datetime = Field(description="Last update timestamp")
     status: str = Field(description="Status of the task result")
     result_data: list[Result] = Field(description="List of Result data for the task")
-    task_id: str = Field(description="ID of the associated task")
+    dojo_task_id: str = Field(description="ID of the associated dojo task")
     worker_id: str = Field(description="ID of the worker who completed the task")
+    # Below not in used at the moment
     stake_amount: float | None = Field(description="Stake amount", default=None)
     potential_reward: float | None = Field(description="Potential reward", default=None)
     potential_loss: float | None = Field(description="Potential loss", default=None)
@@ -251,7 +273,7 @@ class TaskResult(BaseModel):
 
 
 class TaskResultRequest(bt.Synapse):
-    task_id: str = Field(description="The ID of the task to retrieve results for")
+    dojo_task_id: str = Field(description="The ID of the task to retrieve results for")
     task_results: list[TaskResult] = Field(
         description="List of TaskResult objects", default=[]
     )

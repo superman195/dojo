@@ -37,7 +37,9 @@ class Miner(BaseMinerNeuron):
             forward_fn=self.forward_task_request,
             blacklist_fn=self.blacklist_task_request,
             priority_fn=self.priority_ranking,
-        ).attach(forward_fn=self.forward_result).attach(forward_fn=self.ack_heartbeat)
+        ).attach(forward_fn=self.forward_score_result).attach(
+            forward_fn=self.ack_heartbeat
+        )
 
         # Attach a handler for TaskResultRequest to return task results
         self.axon.attach(forward_fn=self.forward_task_result_request)
@@ -63,7 +65,7 @@ class Miner(BaseMinerNeuron):
         logger.debug(f"⬆️ Respondng to heartbeat synapse: {synapse}")
         return synapse
 
-    async def forward_result(self, synapse: ScoringResult) -> ScoringResult:
+    async def forward_score_result(self, synapse: ScoringResult) -> ScoringResult:
         logger.info("Received scoring result from validators")
         try:
             # Validate that synapse is not None and has the required fields
@@ -132,25 +134,31 @@ class Miner(BaseMinerNeuron):
         self, synapse: TaskResultRequest
     ) -> TaskResultRequest:
         """Handle a TaskResultRequest from a validator, fetching the task result from the DojoAPI."""
+        if not synapse or not synapse.dojo_task_id:
+            logger.error("Invalid TaskResultRequest: missing dojo_task_id")
+            return synapse
+
         try:
-            logger.info(f"Received TaskResultRequest for task id: {synapse.task_id}")
-            if not synapse or not synapse.task_id:
-                logger.error("Invalid TaskResultRequest: missing task_id")
-                return synapse
+            logger.info(
+                f"Received TaskResultRequest for dojo task id: {synapse.dojo_task_id}"
+            )
 
             # Fetch task results from DojoAPI using task_id
-            task_results = await DojoAPI.get_task_results_by_task_id(synapse.task_id)
-            if not task_results:
-                logger.debug(f"No task result found for task id: {synapse.task_id}")
-                return synapse
-
-            synapse.task_results = task_results
-            return synapse
+            task_results = await DojoAPI.get_task_results_by_dojo_task_id(
+                synapse.dojo_task_id
+            )
+            if task_results:
+                synapse.task_results = task_results
+            else:
+                logger.debug(
+                    f"No task result found for dojo task id: {synapse.dojo_task_id}"
+                )
 
         except Exception as e:
-            traceback.print_exc()
             logger.error(f"Error handling TaskResultRequest: {e}")
-            return synapse
+            traceback.print_exc()
+
+        return synapse
 
     async def blacklist_task_request(
         self, synapse: TaskSynapseObject

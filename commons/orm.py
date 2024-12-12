@@ -1,7 +1,10 @@
 import asyncio
+import json
+import math
 from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, List
 
+import torch
 from bittensor.btlogging import logging as logger
 
 from commons.exceptions import (
@@ -12,19 +15,25 @@ from commons.exceptions import (
 from commons.utils import datetime_as_utc
 from database.client import prisma, transaction
 from database.mappers import (
+    map_miner_response_to_task_synapse_object,
     map_task_synapse_object_to_miner_response,
     map_task_synapse_object_to_validator_task,
+    map_validator_task_to_task_synapse_object,
 )
 from database.prisma.errors import PrismaError
 from database.prisma.models import (
     GroundTruth,
+    Score_Model,
     ValidatorTask,
 )
 from database.prisma.types import (
+    Json,
+    Score_ModelCreateInput,
+    Score_ModelUpdateInput,
     ValidatorTaskWhereInput,
 )
 from dojo import TASK_DEADLINE
-from dojo.protocol import TaskSynapseObject
+from dojo.protocol import DendriteQueryResponse, Scores, TaskSynapseObject
 
 
 class ORM:
@@ -33,7 +42,7 @@ class ORM:
         batch_size: int = 10,
         expire_from: datetime | None = None,
         expire_to: datetime | None = None,
-    ) -> AsyncGenerator[tuple[List[ValidatorTask], bool], None]:
+    ) -> AsyncGenerator[tuple[List[DendriteQueryResponse], bool], None]:
         """Returns batches of expired ValidatorTask records and a boolean indicating if there are more batches.
 
         Args:
@@ -47,8 +56,8 @@ class ORM:
             NoNewExpiredTasksYet: If no expired tasks are found for processing.
 
         Yields:
-            tuple[List[ValidatorTask], bool]: Each yield returns:
-            - List of ValidatorTask records with their related completions, miner_responses, and GroundTruth
+            tuple[List[DendriteQueryResponse], bool]: Each yield returns:
+            - List of DendriteQueryResponse records with their related completions, miner_responses, and GroundTruth
             - Boolean indicating if there are more batches to process
         """
 
@@ -109,19 +118,43 @@ class ORM:
             )
 
         # Yield first batch
-        yield first_batch, task_count_unprocessed > batch_size
+        # first_batch_synapse_objects = [
+        #     map_validator_task_to_task_synapse_object(task) for task in first_batch
+        # ]
+        # yield first_batch_synapse_objects, task_count_unprocessed > batch_size
+        first_batch_responses = [
+            DendriteQueryResponse(
+                validator_task=map_validator_task_to_task_synapse_object(task),
+                miner_responses=[
+                    map_miner_response_to_task_synapse_object(miner_response)
+                    for miner_response in task.miner_responses
+                ],
+            )
+            for task in first_batch
+        ]
+        yield first_batch_responses, task_count_unprocessed > batch_size
 
         # Process remaining batches
         for skip in range(batch_size, task_count_unprocessed, batch_size):
-            validator_requests = await ValidatorTask.prisma().find_many(
+            validator_tasks = await ValidatorTask.prisma().find_many(
                 include=include_query,
                 where=vali_where_query_unprocessed,
                 order={"created_at": "desc"},
                 skip=skip,
                 take=batch_size,
             )
+            batch_responses = [
+                DendriteQueryResponse(
+                    validator_task=map_validator_task_to_task_synapse_object(task),
+                    miner_responses=[
+                        map_miner_response_to_task_synapse_object(miner_response)
+                        for miner_response in task.miner_responses
+                    ],
+                )
+                for task in validator_tasks
+            ]
             has_more = (skip + batch_size) < task_count_unprocessed
-            yield validator_requests, has_more
+            yield batch_responses, has_more
 
     @staticmethod
     async def get_real_model_ids(validator_task_id: str) -> dict[str, str]:
@@ -227,115 +260,134 @@ class ORM:
         return await ValidatorTask.prisma().count(where={"is_processed": True})
 
     # TODO: How to store miner scores
-    # @staticmethod
-    # async def update_miner_completions(
-    #     miner_responses: List[MinerResponse],
-    #     batch_size: int = 10,
-    #     max_retries: int = 20,
-    # ) -> tuple[bool, list[int]]:
-    #     """
-    #     Update the miner's provided rank_id / scores etc. for a list of miner responses that it is responding to validator. This exists because over the course of a task, a miner may recruit multiple workers and we
-    #     need to recalculate the average score / rank_id etc. across all workers.
-    #     """
-    #     if not len(miner_responses):
-    #         logger.debug("Updating completion responses: nothing to update, skipping.")
-    #         return True, []
+    @staticmethod
+    async def update_miner_raw_scores(
+        miner_responses: List[TaskSynapseObject],
+        batch_size: int = 10,
+        max_retries: int = 20,
+    ) -> tuple[bool, list[int]]:
+        """Update the miner's provided raw scores for a list of miner responses.
 
-    #     num_batches = math.ceil(len(miner_responses) / batch_size)
-    #     failed_batch_indices = []
+        Args:
+            miner_responses: List of TaskSynapseObject containing miner responses
+            batch_size: Number of responses to process in each batch
+            max_retries: Maximum number of retry attempts for failed batches
 
-    #     for batch_id in range(num_batches):
-    #         start_idx = batch_id * batch_size
-    #         end_idx = min((batch_id + 1) * batch_size, len(miner_responses))
-    #         batch_responses = miner_responses[start_idx:end_idx]
+        Returns:
+            Tuple containing:
+            - Boolean indicating if all updates were successful
+            - List of indices for any failed batches
+        """
+        if not len(miner_responses):
+            logger.debug("Updating completion responses: nothing to update, skipping.")
+            return True, []
 
-    #         for attempt in range(max_retries):
-    #             try:
-    #                 async with prisma.tx(timeout=timedelta(seconds=30)) as tx:
-    #                     for miner_response in batch_responses:
-    #                         # TODO: Check if this is really necessary
-    #                         # if (
-    #                         #     not miner_response.axon
-    #                         #     or not miner_response.axon.hotkey
-    #                         # ):
-    #                         #     raise InvalidMinerResponse(
-    #                         #         f"Miner response {miner_response} must have a hotkey"
-    #                         #     )
+        # Returns ceiling of the division to get number of batches to process
+        num_batches = math.ceil(len(miner_responses) / batch_size)
+        failed_batch_indices = []
 
-    #                         hotkey = miner_response.axon.hotkey
-    #                         request_id = miner_response.request_id
+        for batch_id in range(num_batches):
+            start_idx = batch_id * batch_size
+            end_idx = min((batch_id + 1) * batch_size, len(miner_responses))
+            batch_responses = miner_responses[start_idx:end_idx]
 
-    #                         curr_miner_response = (
-    #                             await tx.feedback_request_model.find_first(
-    #                                 where=Feedback_Request_ModelWhereInput(
-    #                                     request_id=request_id,
-    #                                     hotkey=hotkey,
-    #                                 )
-    #                             )
-    #                         )
+            for attempt in range(max_retries):
+                try:
+                    async with prisma.tx(timeout=timedelta(seconds=30)) as tx:
+                        for miner_response in batch_responses:
+                            if not miner_response.miner_hotkey:
+                                raise InvalidMinerResponse(
+                                    f"Miner response {miner_response} must have a hotkey"
+                                )
 
-    #                         if not curr_miner_response:
-    #                             raise ValueError(
-    #                                 f"Miner response not found for request_id: {request_id}, hotkey: {hotkey}"
-    #                             )
+                            # Find the miner response record
+                            db_miner_response = await tx.minerresponse.find_first(
+                                where={
+                                    "hotkey": miner_response.miner_hotkey,
+                                    "dojo_task_id": miner_response.dojo_task_id,
+                                }
+                            )
 
-    #                         completion_ids = [
-    #                             c.completion_id
-    #                             for c in miner_response.completion_responses
-    #                         ]
+                            if not db_miner_response:
+                                raise ValueError(
+                                    f"Miner response not found for dojo_task_id: {miner_response.dojo_task_id}, "
+                                    f"hotkey: {miner_response.miner_hotkey}"
+                                )
 
-    #                         completion_records = (
-    #                             await tx.completion_response_model.find_many(
-    #                                 where=Completion_Response_ModelWhereInput(
-    #                                     feedback_request_id=curr_miner_response.id,
-    #                                     completion_id={"in": completion_ids},
-    #                                 )
-    #                             )
-    #                         )
+                            # Create score records for each completion response
+                            for completion in miner_response.completion_responses:
+                                # Find or create the criterion record
+                                criterion = await tx.criterion.find_first(
+                                    where={
+                                        "completion": {
+                                            "validator_task_id": miner_response.task_id,
+                                            "model": completion.model,
+                                        }
+                                    }
+                                )
 
-    #                         completion_id_record_id = {
-    #                             c.completion_id: c.id for c in completion_records
-    #                         }
+                                if not criterion:
+                                    continue
 
-    #                         for completion in miner_response.completion_responses:
-    #                             await tx.completion_response_model.update(
-    #                                 data={
-    #                                     "score": completion.score,
-    #                                     "rank_id": completion.rank_id,
-    #                                 },
-    #                                 where=Completion_Response_ModelWhereUniqueInput(
-    #                                     id=completion_id_record_id[
-    #                                         completion.completion_id
-    #                                     ],
-    #                                 ),
-    #                             )
+                                # Create scores object
+                                scores = Scores(
+                                    raw_score=completion.score,
+                                    rank_id=completion.rank_id,
+                                    # Initialize other scores as None - they'll be computed later
+                                    normalised_score=None,
+                                    ground_truth_score=None,
+                                    cosine_similarity_score=None,
+                                    normalised_cosine_similarity_score=None,
+                                    cubic_reward_score=None,
+                                )
 
-    #                 logger.debug(
-    #                     f"Updating completion responses: updated batch {batch_id+1}/{num_batches}"
-    #                 )
-    #                 break
-    #             except Exception as e:
-    #                 if attempt == max_retries - 1:
-    #                     logger.error(
-    #                         f"Failed to update batch {batch_id+1}/{num_batches} after {max_retries} attempts: {e}"
-    #                     )
-    #                     failed_batch_indices.extend(range(start_idx, end_idx))
-    #                 else:
-    #                     logger.warning(
-    #                         f"Retrying batch {batch_id+1}/{num_batches}, attempt {attempt+2}/{max_retries}"
-    #                     )
-    #                     await asyncio.sleep(2**attempt)
+                                # Create or update the score record
+                                score_data = {
+                                    "scores": Json(json.dumps(scores.model_dump())),
+                                }
 
-    #             await asyncio.sleep(0.1)
+                                await tx.minerscore.upsert(
+                                    where={
+                                        "criterion_id_miner_response_id": {
+                                            "criterion_id": criterion.id,
+                                            "miner_response_id": db_miner_response.id,
+                                        }
+                                    },
+                                    data={
+                                        "create": {
+                                            "criterion_id": criterion.id,
+                                            "miner_response_id": db_miner_response.id,
+                                            **score_data,
+                                        },
+                                        "update": score_data,
+                                    },
+                                )
 
-    #     if not failed_batch_indices:
-    #         logger.success(
-    #             f"Successfully updated all {num_batches} batches for {len(miner_responses)} responses"
-    #         )
-    #         gc.collect()
-    #         return True, []
+                    logger.debug(
+                        f"Updating completion responses: updated batch {batch_id+1}/{num_batches}"
+                    )
+                    break
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        logger.error(
+                            f"Failed to update batch {batch_id+1}/{num_batches} after {max_retries} attempts: {e}"
+                        )
+                        failed_batch_indices.extend(range(start_idx, end_idx))
+                    else:
+                        logger.warning(
+                            f"Retrying batch {batch_id+1}/{num_batches}, attempt {attempt+2}/{max_retries}"
+                        )
+                        await asyncio.sleep(2**attempt)
 
-    #     return False, failed_batch_indices
+                await asyncio.sleep(0.1)
+
+        if not failed_batch_indices:
+            logger.success(
+                f"Successfully updated all {num_batches} batches for {len(miner_responses)} responses"
+            )
+            return True, []
+
+        return False, failed_batch_indices
 
     @staticmethod
     async def save_task(
@@ -395,32 +447,32 @@ class ORM:
 
     # Remove this as scores will be saved in .pt file instead
     # @staticmethod
-    # async def create_or_update_validator_score(scores: torch.Tensor) -> None:
-    #     # Save scores as a single record
-    #     score_model = await Score_Model.prisma().find_first()
-    #     scores_list = scores.tolist()
-    #     if score_model:
-    #         await Score_Model.prisma().update(
-    #             where={"id": score_model.id},
-    #             data=Score_ModelUpdateInput(score=Json(json.dumps(scores_list))),
-    #         )
-    #     else:
-    #         await Score_Model.prisma().create(
-    #             data=Score_ModelCreateInput(
-    #                 score=Json(json.dumps(scores_list)),
-    #             )
-    #         )
+    async def create_or_update_validator_score(scores: torch.Tensor) -> None:
+        # Save scores as a single record
+        score_model = await Score_Model.prisma().find_first()
+        scores_list = scores.tolist()
+        if score_model:
+            await Score_Model.prisma().update(
+                where={"id": score_model.id},
+                data=Score_ModelUpdateInput(score=(json.dumps(scores_list))),
+            )
+        else:
+            await Score_Model.prisma().create(
+                data=Score_ModelCreateInput(
+                    score=(json.dumps(scores_list)),
+                )
+            )
 
     # TODO: Remove this as scores will be saved in .pt file instead
-    # @staticmethod
-    # async def get_validator_score() -> torch.Tensor | None:
-    #     score_record = await Score_Model.prisma().find_first(
-    #         order={"created_at": "desc"}
-    #     )
-    #     if not score_record:
-    #         return None
+    @staticmethod
+    async def get_validator_score() -> torch.Tensor | None:
+        score_record = await Score_Model.prisma().find_first(
+            order={"created_at": "desc"}
+        )
+        if not score_record:
+            return None
 
-    #     return torch.tensor(json.loads(score_record.score))
+        return torch.tensor(json.loads(score_record.score))
 
     # TODO: Remove this as this was only used for wandb logging
     # @staticmethod

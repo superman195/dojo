@@ -14,11 +14,13 @@ from torch.nn import functional as F
 from commons.utils import _terminal_plot
 from dojo.protocol import (
     CodeAnswer,
-    CompletionResponses,
+    CompletionResponse,
     CriteriaType,
-    FeedbackRequest,
     MultiScoreCriteria,
     RankingCriteria,
+    ScoreCriteria,
+    Scores,
+    TaskSynapseObject,
 )
 
 
@@ -140,10 +142,8 @@ class Score(BaseModel):
     )
 
 
-def _get_miner_response_by_criteria(criteria, response: CompletionResponses):
-    if isinstance(criteria, RankingCriteria):
-        return response.rank_id
-    elif isinstance(criteria, MultiScoreCriteria):
+def _get_miner_response_by_criteria(criteria, response: CompletionResponse):
+    if isinstance(criteria, ScoreCriteria):
         return response.score
 
 
@@ -168,8 +168,8 @@ class Scoring:
     @staticmethod
     def consensus_score(
         criteria: CriteriaType,
-        request: FeedbackRequest,
-        miner_responses: List[FeedbackRequest],
+        request: TaskSynapseObject,
+        miner_responses: List[TaskSynapseObject],
     ):
         """Given a list of responses, will only return a dict of hotkey to their normalized scores.
         e.g. if a miner failed to respond, its hotkey won't be a key in the dict.
@@ -356,10 +356,10 @@ class Scoring:
         )
 
     @staticmethod
-    def ground_truth_score_V1(
+    def ground_truth_scoring(
         criteria: CriteriaType,
         ground_truth: dict[str, int],
-        miner_responses: List[FeedbackRequest],
+        miner_responses: List[TaskSynapseObject],
     ):
         """
         - Calculate score between all miner outputs and ground truth.
@@ -368,7 +368,7 @@ class Scoring:
         Args:
             criteria (CriteriaType): Criteria type
             ground_truth (dict[str, int]): Ground truth, where key is completion id and value is rank.
-            miner_responses (List[FeedbackRequest]): Miner responses
+            miner_responses (List[TaskSynapseObject]): Miner responses
 
         Raises:
             ValueError: If miner responses are empty or contain None values.
@@ -461,8 +461,8 @@ class Scoring:
     @staticmethod
     def cmp_ground_truth(
         criteria: CriteriaType,
-        request: FeedbackRequest,
-        miner_responses: List[FeedbackRequest],
+        request: TaskSynapseObject,
+        miner_responses: List[TaskSynapseObject],
     ):
         # determine the ground truth ordering based on request
         # we can assume `model` is the same as the `completion_id`, see validator.obfuscate_model_names function
@@ -519,8 +519,8 @@ class Scoring:
     @staticmethod
     def spm_ground_truth(
         criteria: CriteriaType,
-        request: FeedbackRequest,
-        miner_responses: List[FeedbackRequest],
+        request: TaskSynapseObject,
+        miner_responses: List[TaskSynapseObject],
     ):
         """
         Calculate Spearman Correlation between miner outputs and ground truth using 'cid'.
@@ -559,96 +559,100 @@ class Scoring:
 
         return gt_reward
 
-    @staticmethod
+    # ---------------------------------------------------------------------------- #
+    #                           SCORING CORE FUNCTIONS                             #
+    # ---------------------------------------------------------------------------- #
+    @classmethod
     def calculate_score(
-        criteria_types: List[CriteriaType],
-        request: FeedbackRequest,
-        miner_responses: List[FeedbackRequest],
-    ) -> tuple[dict[CriteriaType, Score], Dict[str, float]]:
-        """Combines both consensus score and difference with ground truths scoring to output a final score per miner"""
-        criteria_to_miner_scores = defaultdict(Score)
-        hotkey_to_final_score: dict[str, float] = defaultdict(float)
+        cls,
+        validator_task: TaskSynapseObject,
+        miner_responses: List[TaskSynapseObject],
+    ) -> Dict[str, Scores]:
+        """Calculates scores for miners.
+
+        Args:
+            validator_task: Task object containing ground truth and completion responses
+            miner_responses: List of miner response objects
+
+        Returns:
+            Dictionary mapping miner hotkeys to their calculated scores
+        """
+        hotkey_to_scores: dict[str, Scores] = {}
+        # Initialize empty scores for all miners
+        for response in miner_responses:
+            hotkey_to_scores[response.axon.hotkey] = Scores()
+
+        # validation
+        if (
+            not validator_task.completion_responses
+            or not validator_task.completion_responses[0].criteria_types
+        ):
+            logger.error("No criteria types found in completion responses")
+            return hotkey_to_scores
+
+        # Use criteria types from the first completion response
+        criteria_types = validator_task.completion_responses[0].criteria_types
         logger.trace(
             f"Calculating scores for miner responses ... {len(miner_responses)}"
         )
+
         for criteria in criteria_types:
             # valid responses
-            valid_miner_responses = []
-            for response in miner_responses:
-                values = [
-                    _get_miner_response_by_criteria(criteria, completion)
+            valid_miner_responses = [
+                response
+                for response in miner_responses
+                if all(
+                    _get_miner_response_by_criteria(criteria, completion) is not None
                     for completion in response.completion_responses
-                ]
-                if any(v is None for v in values):
-                    continue
-                valid_miner_responses.append(response)
-
-            if not len(valid_miner_responses):
-                logger.info(f"📝 No valid responses for {request.request_id}")
-
-                for r in miner_responses:
-                    hotkey_to_final_score[r.axon.hotkey] = 0.0  # type: ignore
-                consensus_score = ConsensusScore(
-                    score=torch.zeros(len(miner_responses)),
-                    mse_by_miner=torch.zeros(len(miner_responses)),
-                    icc_by_miner=torch.zeros(len(miner_responses)),
                 )
+            ]
 
-                criteria_to_miner_scores[criteria.type] = Score(
-                    ground_truth=torch.zeros(len(miner_responses)),
-                    consensus=consensus_score,
-                )
-                return criteria_to_miner_scores, hotkey_to_final_score
-
-            # if len(valid_miner_responses) < 2:
-            #     logger.warning(
-            #         f"Skipping scoring for request id: {request.request_id} as not enough valid responses"
-            #     )
-            #     for r in valid_miner_responses:
-            #         hotkey_to_final_score[r.axon.hotkey] = 0.0
-
-            #     continue
-
-            # # if isinstance(criteria, RankingCriteria):
-            # #     gt_score = Scoring.spm_ground_truth(
-            # #         criteria, request, valid_miner_responses
-            # #     )
+            if not valid_miner_responses:
+                logger.info(f"📝 No valid responses for {validator_task.task_id}")
+                return hotkey_to_scores
 
             logger.info(
-                f"📝 Filtered {len(valid_miner_responses)} valid responses for request id {request.request_id}"
+                f"📝 Filtered {len(valid_miner_responses)} valid responses for task id {validator_task.task_id}"
             )
 
-            if not isinstance(criteria, MultiScoreCriteria):
-                raise NotImplementedError("Only multi-score criteria is supported atm")
-            gt_score = Scoring.ground_truth_score_V1(
-                criteria, request.ground_truth, valid_miner_responses
-            )
-
-            # TODO @dev add heuristics once scoring is stable
-            # consensus_score = Scoring.consensus_score(
-            #     criteria, request, valid_miner_responses
-            # )
-
-            # dummy for now
-            consensus_score = ConsensusScore(
-                score=torch.zeros(len(valid_miner_responses)),
-                mse_by_miner=torch.zeros(len(valid_miner_responses)),
-                icc_by_miner=torch.zeros(len(valid_miner_responses)),
-            )
-
-            for i, r in enumerate(valid_miner_responses):
-                # consensus = 0.2 * consensus_score.score[i]
-                ground_truth = gt_score[i]
-
-                # NOTE: just use ground truth for now
-                hotkey_to_final_score[r.axon.hotkey] = float(
-                    ground_truth / len(criteria_types)
+            try:
+                hotkey_to_scores = cls._assign_scores(
+                    criteria,
+                    valid_miner_responses,
+                    validator_task.ground_truth,
+                    hotkey_to_scores,
                 )
+            except NotImplementedError:
+                logger.warning(
+                    f"Scoring not implemented for criteria type: {type(criteria)}"
+                )
+                continue
 
-            criteria_to_miner_scores[criteria.type] = Score(
-                ground_truth=gt_score, consensus=consensus_score
+        return hotkey_to_scores
+
+    # ---------------------------------------------------------------------------- #
+    #                           SCORING HELPER FUNCTIONS                           #
+    # ---------------------------------------------------------------------------- #
+    @classmethod
+    def _assign_scores(
+        cls,
+        criteria: CriteriaType,
+        valid_responses: List[TaskSynapseObject],
+        ground_truth: Dict[str, int],
+        score_dict: Dict[str, Scores],
+    ) -> Dict[str, Scores]:
+        """Calculates and assigns scores based on criteria type."""
+        if isinstance(criteria, ScoreCriteria):
+            gt_scores = cls.ground_truth_scoring(
+                criteria, ground_truth, valid_responses
             )
-        return criteria_to_miner_scores, hotkey_to_final_score
+            for i, response in enumerate(valid_responses):
+                scores = score_dict.get(response.axon.hotkey, Scores())
+                scores.ground_truth_score = float(gt_scores[i])
+                score_dict[response.axon.hotkey] = scores
+            return score_dict
+        else:
+            raise NotImplementedError("Only score criteria is supported")
 
 
 def _map_ground_truth_rank_to_score(
@@ -705,198 +709,198 @@ def _test_ground_truth_score_v1():
         "d": 3,
     }
 
-    a = CompletionResponses(
+    a = CompletionResponse(
         model="a", completion=CodeAnswer(files=[]), completion_id="a"
     )
-    b = CompletionResponses(
+    b = CompletionResponse(
         model="b", completion=CodeAnswer(files=[]), completion_id="b"
     )
-    c = CompletionResponses(
+    c = CompletionResponse(
         model="c", completion=CodeAnswer(files=[]), completion_id="c"
     )
-    d = CompletionResponses(
+    d = CompletionResponse(
         model="d", completion=CodeAnswer(files=[]), completion_id="d"
     )
 
     criteria = MultiScoreCriteria(options=["a", "b", "c", "d"], min=0, max=100)
 
     miner_responses = [
-        FeedbackRequest(
+        TaskSynapseObject(
             prompt="test_prompt",
             task_type="test_task",
             criteria_types=[criteria],
             expire_at="",
             completion_responses=[
-                CompletionResponses(
+                CompletionResponse(
                     model="a", completion=a.completion, completion_id="a", score=56
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="b", completion=b.completion, completion_id="b", score=78
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="c", completion=c.completion, completion_id="c", score=89
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="d", completion=d.completion, completion_id="d", score=100
                 ),
             ],
         ),
-        FeedbackRequest(
+        TaskSynapseObject(
             prompt="test_prompt",
             task_type="test_task",
             criteria_types=[criteria],
             expire_at="",
             completion_responses=[
-                CompletionResponses(
+                CompletionResponse(
                     model="a", completion=a.completion, completion_id="a", score=12
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="b", completion=b.completion, completion_id="b", score=12
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="c", completion=c.completion, completion_id="c", score=12
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="d", completion=d.completion, completion_id="d", score=12
                 ),
             ],
         ),
-        FeedbackRequest(
+        TaskSynapseObject(
             prompt="test_prompt",
             task_type="test_task",
             criteria_types=[criteria],
             expire_at="",
             completion_responses=[
-                CompletionResponses(
+                CompletionResponse(
                     model="a", completion=a.completion, completion_id="a", score=12
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="b", completion=b.completion, completion_id="b", score=23
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="c", completion=c.completion, completion_id="c", score=12
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="d", completion=d.completion, completion_id="d", score=12
                 ),
             ],
         ),
-        FeedbackRequest(
+        TaskSynapseObject(
             prompt="test_prompt",
             task_type="test_task",
             criteria_types=[criteria],
             expire_at="",
             completion_responses=[
-                CompletionResponses(
+                CompletionResponse(
                     model="a", completion=a.completion, completion_id="a", score=56
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="b", completion=b.completion, completion_id="b", score=34
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="c", completion=c.completion, completion_id="c", score=23
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="d", completion=d.completion, completion_id="d", score=23
                 ),
             ],
         ),
-        FeedbackRequest(
+        TaskSynapseObject(
             prompt="test_prompt",
             task_type="test_task",
             criteria_types=[criteria],
             expire_at="",
             completion_responses=[
-                CompletionResponses(
+                CompletionResponse(
                     model="a", completion=a.completion, completion_id="a", score=23
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="b", completion=b.completion, completion_id="b", score=23
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="c", completion=c.completion, completion_id="c", score=34
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="d", completion=d.completion, completion_id="d", score=12
                 ),
             ],
         ),
-        FeedbackRequest(
+        TaskSynapseObject(
             prompt="test_prompt",
             task_type="test_task",
             criteria_types=[criteria],
             expire_at="",
             completion_responses=[
-                CompletionResponses(
+                CompletionResponse(
                     model="a", completion=a.completion, completion_id="a", score=23
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="b", completion=b.completion, completion_id="b", score=23
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="c", completion=c.completion, completion_id="c", score=76
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="d", completion=d.completion, completion_id="d", score=100
                 ),
             ],
         ),
-        FeedbackRequest(
+        TaskSynapseObject(
             prompt="test_prompt",
             task_type="test_task",
             criteria_types=[criteria],
             expire_at="",
             completion_responses=[
-                CompletionResponses(
+                CompletionResponse(
                     model="a", completion=a.completion, completion_id="a", score=1
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="b", completion=b.completion, completion_id="b", score=1
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="c", completion=c.completion, completion_id="c", score=76
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="d", completion=d.completion, completion_id="d", score=100
                 ),
             ],
         ),
-        FeedbackRequest(
+        TaskSynapseObject(
             prompt="test_prompt",
             task_type="test_task",
             criteria_types=[criteria],
             expire_at="",
             completion_responses=[
-                CompletionResponses(
+                CompletionResponse(
                     model="a", completion=a.completion, completion_id="a", score=1
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="b", completion=b.completion, completion_id="b", score=12
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="c", completion=c.completion, completion_id="c", score=23
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="d", completion=d.completion, completion_id="d", score=34
                 ),
             ],
         ),
-        FeedbackRequest(
+        TaskSynapseObject(
             prompt="test_prompt",
             task_type="test_task",
             criteria_types=[criteria],
             expire_at="",
             completion_responses=[
-                CompletionResponses(
+                CompletionResponse(
                     model="a", completion=a.completion, completion_id="a", score=1
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="b", completion=b.completion, completion_id="b", score=23
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="c", completion=c.completion, completion_id="c", score=76
                 ),
-                CompletionResponses(
+                CompletionResponse(
                     model="d", completion=d.completion, completion_id="d", score=100
                 ),
             ],
@@ -905,7 +909,7 @@ def _test_ground_truth_score_v1():
 
     import matplotlib.pyplot as plt
 
-    scores = Scoring.ground_truth_score_V1(criteria, gt, miner_responses)
+    scores = Scoring.ground_truth_scoring(criteria, gt, miner_responses)
     scores, _ = torch.sort(scores, descending=False)
     # Check if the sum of scores is 1
     print(f"{scores=}")
