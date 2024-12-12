@@ -51,17 +51,21 @@ class Row(BaseModel):
     raw_scores: list[list[float]]
     # shape (num_completions)
     mean_scores: list[float]
+    # ground truth ranks
+    cid_to_ground_truth_rank: dict[str, int]
 
     class Config:
         arbitrary_types_allowed = True
 
     @model_serializer
     def serialize_model(self):
+        """Custom serializer method to ensure that types such as np.ndarray and torch.tensor are serialized correctly"""
         return {
             "prompt": self.prompt,
             "completions": self.completions,
             "raw_scores": self.raw_scores,
             "mean_scores": self.mean_scores,
+            "cid_to_ground_truth_rank": self.cid_to_ground_truth_rank,
         }
 
 
@@ -95,13 +99,15 @@ async def build_jsonl(filename: str):
                 logger.info(f"raw_scores_vec: {raw_scores_vec}")
 
                 if raw_scores_vec.size > 0:
-                    mean_scores = raw_scores_vec.mean(axis=1)
+                    # ensure we're taking mean for each completion, across all miners
+                    mean_scores = raw_scores_vec.mean(axis=0)
                     logger.info(f"mean_scores shape: {mean_scores.shape}")
                     jsonl_row = Row(
                         prompt=prompt,
                         completions=completions,
                         raw_scores=raw_scores,
                         mean_scores=mean_scores.tolist(),
+                        cid_to_ground_truth_rank=task.request.ground_truth,
                     )
                 else:
                     jsonl_row = Row(
@@ -109,6 +115,7 @@ async def build_jsonl(filename: str):
                         completions=completions,
                         raw_scores=[],
                         mean_scores=[],
+                        cid_to_ground_truth_rank={},
                     )
 
                 # Write the entry as a JSON line
@@ -192,6 +199,7 @@ async def get_processed_tasks(
             vali_request = map_feedback_request_model_to_feedback_request(
                 validator_request
             )
+            logger.info(f"Vali request ground truths: {vali_request.ground_truth}")
 
             m_responses = list(
                 map(

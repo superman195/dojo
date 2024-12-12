@@ -59,7 +59,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["commitizen", "curlify2", "pytest", "ruff"]
+dev = ["commitizen", "curlify2", "pytest", "ruff", "tabulate", "termcolor"]
 test = ["pytest", "nox"]
 dataset = ["aioboto3", "aiofiles", "python-multipart"]
 
