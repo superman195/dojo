@@ -1,3 +1,27 @@
+## [1.4.2](https://github.com/tensorplex-labs/dojo/compare/v1.4.1...v1.4.2) (2024-11-22)
+
+### Performance Improvements
+
+* add retries for dojo api calls ([461214a](https://github.com/tensorplex-labs/dojo/commit/461214aef4b51f42574d920effeaa7cbb58f5a92))
+* extend delay ([97a9b04](https://github.com/tensorplex-labs/dojo/commit/97a9b0417106c4e3cfc11501c9408f15574daf23))
+* extend delay ([69e1974](https://github.com/tensorplex-labs/dojo/commit/69e19742f23fd1a2ac81f197f4e2f07fe9018049))
+* removed unused completions in miner's response to optimize network traffic ([e76ce98](https://github.com/tensorplex-labs/dojo/commit/e76ce98dd2c6e7ef3f52b70225cd0f0e07abf996))
+
+## [1.4.1](https://github.com/tensorplex-labs/dojo/compare/v1.4.0...v1.4.1) (2024-11-07)
+
+### Bug Fixes
+
+* add assert check ([f849130](https://github.com/tensorplex-labs/dojo/commit/f849130670abdc8614c302dbb73a1af053aa00ed))
+* add unit test for reward_cubic ([7a8483a](https://github.com/tensorplex-labs/dojo/commit/7a8483ae11569287fdb2474615781c3fa458de35))
+* change nans to -1 instead of 0 ([f15815c](https://github.com/tensorplex-labs/dojo/commit/f15815c9613935857cc7c649cb3dcb8d185c6bd9))
+* potential scoring issue ([335b40b](https://github.com/tensorplex-labs/dojo/commit/335b40b2493a67fdc19aa5366daac9f0e0031c01))
+* remove error log ([e0b1a85](https://github.com/tensorplex-labs/dojo/commit/e0b1a8570457765a395d995b94d936c0e37f3618))
+* scoring shapes ([dc15bb9](https://github.com/tensorplex-labs/dojo/commit/dc15bb93cd9b61bb1219c4766fbc8938e110c1b3))
+
+### Performance Improvements
+
+* refactor logging, and clean synapase_history ([8e36b5c](https://github.com/tensorplex-labs/dojo/commit/8e36b5c6694909506a04f002389fc106b6a4f87d))
+
 ## [1.4.0](https://github.com/tensorplex-labs/dojo/compare/v1.3.3...v1.4.0) (2024-10-31)
 
 ### Features

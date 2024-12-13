@@ -178,6 +178,18 @@ def add_args(parser):
         help="Whether to run in fast mode, for developers to test locally.",
     )
 
+    parser.add_argument(
+        "--simulation",
+        action="store_true",
+        help="Whether to run the validator in simulation mode",
+    )
+
+    parser.add_argument(
+        "--simulation_bad_miner",
+        action="store_true",
+        help="Set miner simluation to a bad one",
+    )
+
     epoch_length = 100
     known_args, _ = parser.parse_known_args()
     if known_args := vars(known_args):

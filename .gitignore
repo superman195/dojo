@@ -188,3 +188,6 @@ testing/
 
 # prisma
 database/prisma/
+
+# scores data
+scores/*.pt

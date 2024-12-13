@@ -35,6 +35,7 @@ from commons.exceptions import (
 from commons.obfuscation.obfuscation_utils import obfuscate_html_and_js
 from commons.objects import ObjectManager
 from commons.orm import ORM
+from commons.score_storage import ScoreStorage
 from commons.scoring import Scoring
 from commons.utils import (
     _terminal_plot,
@@ -46,7 +47,6 @@ from commons.utils import (
     set_expire_time,
     ttl_get_block,
 )
-from database.client import connect_db
 from dojo import __spec_version__
 from dojo.protocol import (
     CompletionResponses,
@@ -78,6 +78,11 @@ class Validator:
     spec_version: int = __spec_version__
 
     def __init__(self):
+        self.MAX_BLOCK_CHECK_ATTEMPTS = 3
+        self._last_block = None
+        self._block_check_attempts = 0
+        self._connection_lock = asyncio.Lock()
+
         self.loop = asyncio.get_event_loop()
         # TODO @dev WIP from BaseNeuron
         self.config = ObjectManager.get_config()
@@ -104,13 +109,20 @@ class Validator:
         self.scores: torch.Tensor = torch.zeros(
             len(self.metagraph.hotkeys), dtype=torch.float32
         )
-        # manually always register and always sync metagraph when application starts
         self.check_registered()
-        self.executor = ThreadPoolExecutor(max_workers=2)
-
-        self.load_state()
 
         init_wandb(config=self.config, my_uid=self.uid, wallet=self.wallet)
+
+        # Run score migration before loading state
+        migration_success = self.loop.run_until_complete(ScoreStorage.migrate_from_db())
+        if not migration_success:
+            logger.error(
+                "Score migration failed - cannot continue without valid scores"
+            )
+            raise RuntimeError("Score migration failed - validator cannot start")
+
+        self.executor = ThreadPoolExecutor(max_workers=2)
+        self.load_state()
 
     async def send_scores(self, synapse: ScoringResult, hotkeys: List[str]):
         """Send consensus score back to miners who participated in the request."""
@@ -123,7 +135,7 @@ class Validator:
             )
 
         await self.dendrite.forward(
-            axons=axons, synapse=synapse, deserialize=False, timeout=12
+            axons=axons, synapse=synapse, deserialize=False, timeout=30
         )
 
     def obfuscate_model_names(
@@ -155,7 +167,7 @@ class Validator:
                 ]
 
                 responses: List[Heartbeat] = await self.dendrite.forward(  # type: ignore
-                    axons=axons, synapse=Heartbeat(), deserialize=False, timeout=12
+                    axons=axons, synapse=Heartbeat(), deserialize=False, timeout=30
                 )
                 active_hotkeys = [r.axon.hotkey for r in responses if r.ack and r.axon]
                 active_uids = [
@@ -226,7 +238,7 @@ class Validator:
                         axons=[axon],
                         synapse=shuffled_synapse,
                         deserialize=False,
-                        timeout=12,
+                        timeout=30,
                     )
                 )
 
@@ -714,7 +726,8 @@ class Validator:
                 logger.warning("Scores are all zeros, but saving anyway!")
                 # raise EmptyScores("Skipping save as scores are all empty")
 
-            await ORM.create_or_update_validator_score(self.scores)
+            # await ORM.create_or_update_validator_score(self.scores)
+            await ScoreStorage.save(self.scores)
             logger.success(f"📦 Saved validator state with scores: {self.scores}")
         except EmptyScores as e:
             logger.debug(f"No need to to save validator state: {e}")
@@ -723,8 +736,7 @@ class Validator:
 
     async def _load_state(self):
         try:
-            await connect_db()
-            scores = await ORM.get_validator_score()
+            scores = await ScoreStorage.load()
 
             if scores is None:
                 num_processed_tasks = await ORM.get_num_processed_tasks()
@@ -800,7 +812,10 @@ class Validator:
 
             # Send the request via Dendrite and get the response
             response: list[TaskResultRequest] = await self.dendrite.forward(  # type: ignore
-                axons=[miner_axon], synapse=task_synapse, deserialize=False
+                axons=[miner_axon],
+                synapse=task_synapse,
+                deserialize=False,
+                timeout=30,
             )
 
             if response and response[0]:
@@ -881,6 +896,10 @@ class Validator:
             exit()
 
     async def sync(self):
+        has_connection = await self._ensure_subtensor_connection()
+        if not has_connection:
+            logger.warning("Subtensor connection failed - continuing with partial sync")
+
         self.check_registered()
 
         if self.should_sync_metagraph():
@@ -893,7 +912,54 @@ class Validator:
 
     @property
     def block(self):
-        return ttl_get_block(self.subtensor)
+        try:
+            if not self.loop.run_until_complete(self._ensure_subtensor_connection()):
+                logger.warning(
+                    "Subtensor connection failed - returning last known block"
+                )
+                return self._last_block if self._last_block is not None else 0
+
+            self._last_block = ttl_get_block(self.subtensor)
+            self._block_check_attempts = 0
+            return self._last_block
+        except Exception as e:
+            logger.error(f"Error getting block number: {e}")
+            return self._last_block if self._last_block is not None else 0
+
+    async def _try_reconnect_subtensor(self):
+        self._block_check_attempts += 1
+        if self._block_check_attempts >= self.MAX_BLOCK_CHECK_ATTEMPTS:
+            logger.error(
+                f"Failed to reconnect after {self.MAX_BLOCK_CHECK_ATTEMPTS} attempts"
+            )
+            return False
+
+        try:
+            logger.info(
+                f"Attempting to reconnect to subtensor (attempt {self._block_check_attempts}/{self.MAX_BLOCK_CHECK_ATTEMPTS})..."
+            )
+            if hasattr(self.subtensor.substrate, "websocket"):
+                self.subtensor.substrate.websocket.close()
+
+            self.subtensor = bt.subtensor(self.subtensor.config)
+            await asyncio.sleep(1)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to reconnect to subtensor: {e}")
+            return await self._try_reconnect_subtensor()
+
+    async def _ensure_subtensor_connection(self):
+        async with self._connection_lock:
+            try:
+                self.subtensor.get_current_block()
+                self._block_check_attempts = 0
+                return True
+            except (BrokenPipeError, ConnectionError):
+                logger.warning("Connection lost, attempting immediate reconnection")
+                return await self._try_reconnect_subtensor()
+            except Exception as e:
+                logger.error(f"Unexpected error checking connection: {e}")
+                return False
 
     async def _ensure_subtensor_ws_connected(
         self, max_attempts: int = 5, sleep: int = 3
@@ -943,14 +1009,10 @@ class Validator:
                 validator_hotkeys: List[str] = self._get_validator_hotkeys()
 
                 # Grab tasks that were expired TASK_DEADLINE duration ago
-                expire_from = (
-                    datetime_as_utc(datetime.now(timezone.utc))
-                    - timedelta(seconds=dojo.TASK_DEADLINE)
-                    - timedelta(hours=2)
+                expire_from = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
+                    hours=2
                 )
-                expire_to = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
-                    seconds=dojo.TASK_DEADLINE
-                )
+                expire_to = datetime_as_utc(datetime.now(timezone.utc))
                 logger.debug(
                     f"Updating with expire_from: {expire_from} and expire_to: {expire_to}"
                 )
@@ -1302,7 +1364,7 @@ class Validator:
         )
 
         score_data = {
-            "scores_by_hotkey": hotkey_to_score,
+            "scores_by_hotkey": [hotkey_to_score],
             "mean": {
                 "consensus": mean_weighted_consensus_scores,
                 "ground_truth": mean_weighted_gt_scores,

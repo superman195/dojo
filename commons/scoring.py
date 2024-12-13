@@ -79,8 +79,11 @@ def _reward_cubic(
     # shape: (num_miners,)
     # number range [-1, 1]
     x = F.cosine_similarity(
-        torch.from_numpy(miner_outputs), torch.from_numpy(ground_truth), dim=1
+        torch.from_numpy(miner_outputs.copy()),
+        torch.from_numpy(ground_truth.copy()),
+        dim=1,
     ).numpy()
+
     # Convert nans to -1 to send it to the bottom
     x = np.where(np.isnan(x), -1, x)
 
@@ -411,10 +414,12 @@ class Scoring:
         )
 
         miner_outputs = miner_outputs_normalised
-        logger.debug(f"scoring: raw miner outputs with nans\n{miner_outputs}")
 
-        ground_truth_arr = np.array([0, 0.45, 0.55, 1])
-        logger.debug(f"scoring: ground truth\n{ground_truth_arr}")
+        # reverse order here, because the lowest rank is the best
+        # e.g. ranks: ('cid1', 0), ('cid2', 1), ('cid3', 2), ('cid4', 3)
+        # after minmax scale: [0, 0.45, 0.55, 1]
+        # but we want the reverse, so: [1, 0.55, 0.45, 0] since cid1 is the best
+        ground_truth_arr = np.array([1, 0.55, 0.45, 0])
 
         logger.info(f"scoring: Miner outputs\n{miner_outputs}")
         logger.info(f"scoring: Ground truth\n{ground_truth_arr}")
@@ -446,7 +451,7 @@ class Scoring:
             logger.debug(f"scoring: error calculating segment sums: {e}")
             pass
 
-        return torch.from_numpy(cubic_reward)
+        return torch.from_numpy(cubic_reward.copy())
 
     @staticmethod
     def cmp_ground_truth(
@@ -631,8 +636,8 @@ class Scoring:
                 ground_truth = gt_score[i]
 
                 # NOTE: just use ground truth for now
-                hotkey_to_final_score[r.axon.hotkey] = ground_truth / len(
-                    criteria_types
+                hotkey_to_final_score[r.axon.hotkey] = float(
+                    ground_truth / len(criteria_types)
                 )
 
             criteria_to_miner_scores[criteria.type] = Score(
