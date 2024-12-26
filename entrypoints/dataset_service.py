@@ -7,7 +7,7 @@ import aiofiles
 import bittensor as bt
 import httpx
 import uvicorn
-from bittensor.btlogging import logging as logger
+from bittensor.utils.btlogging import logging as logger
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from substrateinterface import Keypair

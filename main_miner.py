@@ -1,6 +1,6 @@
 import asyncio
 
-from bittensor.btlogging import logging as logger
+from bittensor.utils.btlogging import logging as logger
 
 from commons.objects import ObjectManager
 from dojo.utils.config import source_dotenv

@@ -6,7 +6,7 @@ import pandas as pd
 import pingouin as pg
 import torch
 from attr import define, field
-from bittensor.btlogging import logging as logger
+from bittensor.utils.btlogging import logging as logger
 from pydantic import BaseModel, Field
 from scipy.stats import spearmanr
 from torch.nn import functional as F

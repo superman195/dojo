@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 import wandb
-from bittensor.btlogging import logging as logger
+from bittensor.utils.btlogging import logging as logger
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 

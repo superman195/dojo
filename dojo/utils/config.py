@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import bittensor as bt
-from bittensor.btlogging import logging as logger
+from bittensor.utils.btlogging import logging as logger
 from dotenv import find_dotenv, load_dotenv
 
 base_path = Path.cwd()

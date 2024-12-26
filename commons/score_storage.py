@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 import torch
-from bittensor.btlogging import logging as logger
+from bittensor.utils.btlogging import logging as logger
 
 from database.client import connect_db
 from database.prisma.models import Score_Model

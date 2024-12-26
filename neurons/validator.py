@@ -15,7 +15,7 @@ import bittensor as bt
 import numpy as np
 import torch
 import wandb
-from bittensor.btlogging import logging as logger
+from bittensor.utils.btlogging import logging as logger
 from bittensor.utils.weight_utils import process_weights_for_netuid
 from fastapi.encoders import jsonable_encoder
 from tenacity import RetryError
