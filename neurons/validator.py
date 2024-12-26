@@ -48,18 +48,20 @@ from commons.utils import (
 from dojo import __spec_version__
 from dojo.protocol import (
     CompletionResponse,
+    CriteriaType,
     CriteriaTypeEnum,
     DendriteQueryResponse,
     Heartbeat,
     ScoreCriteria,
     ScoringResult,
+    SyntheticQA,
     TaskResult,
     TaskResultRequest,
     TaskSynapseObject,
     TaskTypeEnum,
 )
 from dojo.utils.config import get_config
-from dojo.utils.uids import MinerUidSelector, extract_miner_uids, is_miner
+from dojo.utils.uids import extract_miner_uids, is_miner
 
 
 class Validator:
@@ -132,7 +134,7 @@ class Validator:
             logger.warning("No axons to send consensus to... skipping")
         else:
             logger.debug(
-                f"Sending back consensus to miners for request id: {synapse.task_id}"
+                f"Sending back scores to miners for task id: {synapse.task_id}"
             )
 
         await self.dendrite.forward(
@@ -175,22 +177,9 @@ class Validator:
                         except Exception as e:
                             logger.error(f"Error obfuscating {file.filename}: {e}")
 
-    async def get_miner_uids(self, is_external_request: bool, request_id: str):
+    async def get_miner_uids(self):
         async with self._uids_alock:
-            if is_external_request:
-                sel_miner_uids = [
-                    uid
-                    for uid in self._active_miner_uids
-                    if self.scores[uid] > self._threshold
-                ]
-                logger.debug(
-                    f"🌍 External user request, number of miners with scores above threshold: {len(sel_miner_uids)}"
-                )
-            else:
-                sel_miner_uids = MinerUidSelector(
-                    nodes=list(self._active_miner_uids),
-                ).get_target_uids(key=request_id, k=get_config().neuron.sample_size)
-        return sel_miner_uids
+            return sorted(list(self._active_miner_uids))
 
     async def set_weights(self):
         """
@@ -672,6 +661,10 @@ class Validator:
         # This loop maintains the validator's operations until intentionally stopped.
         while True:
             try:
+                # Check if there are any active miners. If no active miners, skip the request generation.
+                if not self._active_miner_uids:
+                    logger.info("No active miners to send request to... skipping")
+                    return
                 # Group related operations in a single async context
                 async with self._request_alock:
                     (
@@ -838,7 +831,9 @@ class Validator:
         self.axon.stop()
         logger.success("Validator shutdown complete")
 
-    async def _generate_synthetic_request(self) -> tuple[TaskSynapseObject, str] | None:
+    async def _generate_synthetic_request(
+        self,
+    ) -> tuple[TaskSynapseObject | None, dict[str, int] | None]:
         """
         Generate a synthetic request for code generation tasks.
 
@@ -848,13 +843,13 @@ class Validator:
         """
         task_id = get_new_uuid()
         try:
-            data = await SyntheticAPI.get_qa()
+            data: SyntheticQA | None = await SyntheticAPI.get_qa()
             if not data or not data.responses:
                 logger.error("Invalid or empty data returned from synthetic data API")
-                return None
+                return None, None
 
             # Create criteria for each completion response
-            criteria = [
+            criteria: List[CriteriaType] = [
                 ScoreCriteria(
                     min=1.0,
                     max=100.0,
@@ -883,7 +878,7 @@ class Validator:
             logger.error(f"Unexpected error during synthetic data generation: {e}")
             logger.debug(f"Traceback: {traceback.format_exc()}")
 
-        return None
+        return None, None
 
     async def send_request(
         self,
@@ -899,8 +894,7 @@ class Validator:
             return
 
         start = get_epoch_time()
-        # sel_miner_uids = await self.get_miner_uids(external_user, synapse.task_id)
-        sel_miner_uids = sorted(list(self._active_miner_uids))
+        sel_miner_uids = await self.get_miner_uids()
 
         axons = [
             axon
@@ -950,7 +944,7 @@ class Validator:
         if not await ORM.save_task(
             validator_task=synapse,
             miner_responses=valid_miner_responses,
-            ground_truth=ground_truth,
+            ground_truth=ground_truth or {},
         ):
             logger.error("Failed to save dendrite response")
             return
@@ -978,6 +972,10 @@ class Validator:
         """
         all_responses = []
         batch_size = 10
+
+        if not synapse.completion_responses:
+            logger.warning("No completion responses to send... skipping")
+            return all_responses
 
         for i in range(0, len(axons), batch_size):
             batch_axons = axons[i : i + batch_size]
