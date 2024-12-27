@@ -53,6 +53,7 @@ class Row(BaseModel):
     mean_scores: list[float]
     # ground truth ranks
     cid_to_ground_truth_rank: dict[str, int]
+    expire_at: str
 
     class Config:
         arbitrary_types_allowed = True
@@ -108,6 +109,7 @@ async def build_jsonl(filename: str):
                         raw_scores=raw_scores,
                         mean_scores=mean_scores.tolist(),
                         cid_to_ground_truth_rank=task.request.ground_truth,
+                        expire_at=task.request.expire_at,
                     )
                 else:
                     jsonl_row = Row(
@@ -116,6 +118,7 @@ async def build_jsonl(filename: str):
                         raw_scores=[],
                         mean_scores=[],
                         cid_to_ground_truth_rank={},
+                        expire_at=task.request.expire_at,
                     )
 
                 # Write the entry as a JSON line
