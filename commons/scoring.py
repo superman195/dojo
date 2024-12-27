@@ -260,7 +260,7 @@ class Scoring:
             logger.error("No criteria types found in completion responses")
             return hotkey_to_scores
 
-        # Use criteria types from the first completion response
+        # Use criteria types from the first completion response. This assumes that all completions have the same criteria types
         criteria_types = validator_task.completion_responses[0].criteria_types
         logger.trace(
             f"Calculating scores for miner responses ... {len(miner_responses)}"

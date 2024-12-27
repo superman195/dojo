@@ -15,7 +15,7 @@ from commons.utils import (
     iso8601_str_to_datetime,
 )
 from database.prisma import Json
-from database.prisma.enums import CriteriaTypeEnum
+from database.prisma.enums import CriteriaTypeEnum, TaskTypeEnum
 from database.prisma.models import (
     Criteria_Type_Model,
     Feedback_Request_Model,
@@ -27,9 +27,9 @@ from database.prisma.types import (
     CompletionCreateInput,
     Criteria_Type_ModelCreateInput,
     Criteria_Type_ModelCreateWithoutRelationsInput,
-    CriterionCreateInput,
+    CriterionCreateWithoutRelationsInput,
     Feedback_Request_ModelCreateInput,
-    GroundTruthCreateInput,
+    GroundTruthCreateWithoutRelationsInput,
     MinerResponseCreateInput,
     ValidatorTaskCreateInput,
 )
@@ -70,25 +70,25 @@ def map_task_synapse_object_to_validator_task(
         # Add criteria for each completion if they exist
         if hasattr(resp, "criteria_types") and resp.criteria_types:
             criteria = [
-                CriterionCreateInput(
+                CriterionCreateWithoutRelationsInput(
                     criteria_type=_map_criteria_type_to_enum(criterion),
                     config=Json(json.dumps(_get_criteria_config(criterion))),
                 )
                 for criterion in resp.criteria_types
             ]
-            completion.criterion = {"create": criteria}
+            completion["Criterion"] = {"create": criteria}
 
         completions.append(completion)
 
     # Map ground truths if present
     ground_truths = (
         [
-            GroundTruthCreateInput(
+            GroundTruthCreateWithoutRelationsInput(
                 validator_task_id=synapse.task_id,
                 obfuscated_model_id=model_id,
                 real_model_id=model_id,
                 rank_id=rank_id,
-                # ground_truth_score=float(rank_id), # TODO: Add normalised gt score
+                ground_truth_score=float(rank_id),  # TODO: Add normalised gt score
             )
             for model_id, rank_id in synapse.ground_truth.items()
         ]
@@ -100,11 +100,12 @@ def map_task_synapse_object_to_validator_task(
         id=synapse.task_id,
         previous_task_id=synapse.previous_task_id,
         prompt=synapse.prompt,
-        task_type=synapse.task_type,
-        expire_at=synapse.expire_at,
+        task_type=TaskTypeEnum(synapse.task_type),
+        expire_at=iso8601_str_to_datetime(synapse.expire_at),
         is_processed=False,
         completions={"create": completions},
-        ground_truth={"create": ground_truths},
+        miner_responses={"create": []},
+        GroundTruth={"create": ground_truths},
     )
 
 
@@ -155,6 +156,7 @@ def map_task_synapse_object_to_miner_response(
         dojo_task_id=synapse.dojo_task_id,
         hotkey=synapse.miner_hotkey,
         coldkey=synapse.miner_coldkey,
+        task_result=Json("{}"),
     )
 
 

@@ -922,9 +922,17 @@ class Validator:
                     continue
 
                 response.miner_hotkey = response.axon.hotkey if response.axon else None
-                response.miner_coldkey = (
-                    response.axon.coldkey if response.axon else None
-                )
+                # Get coldkey from metagraph using hotkey index
+                if response.axon and response.axon.hotkey:
+                    try:
+                        hotkey_index = self.metagraph.hotkeys.index(
+                            response.axon.hotkey
+                        )
+                        response.miner_coldkey = self.metagraph.coldkeys[hotkey_index]
+                    except ValueError:
+                        response.miner_coldkey = None
+                else:
+                    response.miner_coldkey = None
                 valid_miner_responses.append(response)
 
             except Exception as e:
@@ -1278,7 +1286,6 @@ class Validator:
         hotkey_to_scores = {}
         try:
             hotkey_to_scores = Scoring.calculate_score(
-                criteria_types=task.validator_task.completion_responses.criteria_types,
                 validator_task=task.validator_task,
                 miner_responses=task.miner_responses,
             )
@@ -1306,7 +1313,7 @@ class Validator:
             hotkeys=list(hotkey_to_scores.keys()),
         )
 
-        # TODO: Remove wandb logging
+        # TODO: Remove wandb logging and save to db instead
         criteria_to_miner_score = {}
         asyncio.create_task(
             self._log_wandb(task, criteria_to_miner_score, hotkey_to_scores)
