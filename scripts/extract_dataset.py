@@ -67,6 +67,7 @@ class Row(BaseModel):
             "raw_scores": self.raw_scores,
             "mean_scores": self.mean_scores,
             "cid_to_ground_truth_rank": self.cid_to_ground_truth_rank,
+            "expire_at": self.expire_at,
         }
 
 
