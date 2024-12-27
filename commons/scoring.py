@@ -1,14 +1,8 @@
-from collections import defaultdict
 from typing import Dict, List
 
 import numpy as np
-import pandas as pd
-import pingouin as pg
 import torch
-from attr import define, field
 from bittensor.utils.btlogging import logging as logger
-from pydantic import BaseModel, Field
-from scipy.stats import spearmanr
 from torch.nn import functional as F
 
 from commons.utils import _terminal_plot
@@ -17,34 +11,10 @@ from dojo.protocol import (
     CompletionResponse,
     CriteriaType,
     MultiScoreCriteria,
-    RankingCriteria,
     ScoreCriteria,
     Scores,
     TaskSynapseObject,
 )
-
-
-@define(kw_only=True, frozen=True, slots=True)
-class Result:
-    # Each request id has multiple completions, where each miner scores each of these completions.
-    request_id: str
-    cid_to_hotkey_to_score: Dict[str, Dict[str, float]] = field(factory=dict)
-
-
-class GroundTruthScore(BaseModel):
-    class Config:
-        arbitrary_types_allowed = True
-
-    score: torch.Tensor
-
-
-class ConsensusScore(BaseModel):
-    class Config:
-        arbitrary_types_allowed = True
-
-    score: torch.Tensor
-    mse_by_miner: torch.Tensor
-    icc_by_miner: torch.Tensor
 
 
 def _reward_cubic(
@@ -124,36 +94,9 @@ def _reward_cubic(
     return points
 
 
-def _reward_l1_norm(miner_outputs: np.ndarray, ground_truth: np.ndarray):
-    return np.linalg.norm(miner_outputs - ground_truth, axis=1)
-
-
-class Score(BaseModel):
-    class Config:
-        arbitrary_types_allowed = True
-
-    ground_truth: torch.Tensor = Field(description="Raw score from ground truth")
-    consensus: ConsensusScore = Field(description="Raw score from ground truth")
-    weighted_consensus: torch.Tensor | None = Field(
-        default=None, description="Weighted score from consensus"
-    )
-    weighted_ground_truth: torch.Tensor | None = Field(
-        default=None, description="Weighted score from ground truth"
-    )
-
-
 def _get_miner_response_by_criteria(criteria, response: CompletionResponse):
     if isinstance(criteria, ScoreCriteria):
         return response.score
-
-
-def _get_ground_truth_by_criteria(criteria, model_with_score_sorted):
-    gt = []
-    if isinstance(criteria, RankingCriteria):
-        gt = [i + 1 for i in range(len(model_with_score_sorted))]
-    elif isinstance(criteria, MultiScoreCriteria):
-        gt = [score for _, score in model_with_score_sorted]
-    return np.array(gt)
 
 
 def minmax_scale(tensor: torch.Tensor | np.ndarray) -> torch.Tensor:
@@ -166,194 +109,28 @@ def minmax_scale(tensor: torch.Tensor | np.ndarray) -> torch.Tensor:
 
 class Scoring:
     @staticmethod
-    def consensus_score(
-        criteria: CriteriaType,
-        request: TaskSynapseObject,
-        miner_responses: List[TaskSynapseObject],
-    ):
-        """Given a list of responses, will only return a dict of hotkey to their normalized scores.
-        e.g. if a miner failed to respond, its hotkey won't be a key in the dict.
-        """
-
-        # depending on the criteria, this may be average ranks or average scores
-        if not len(miner_responses):
-            raise ValueError("Responses cannot be empty")
-
-        # shape (num completions)
-        avg = None
-        # shape (num miners, num completions)
-        miner_outputs = None
-        icc_arr = []
-
-        # for ordering based on criteria
-        model_id_to_avg_rank = defaultdict(list)
-        model_id_to_scores = defaultdict(list)
-
-        if isinstance(criteria, RankingCriteria):
-            logger.debug("consensus scoring for ranking criteria")
-            for response in miner_responses:
-                for completion in response.completion_responses:
-                    # if completion.model_id not in model_id_to_average_rank:
-                    #     model_id_to_average_rank[completion.model_id] = []
-                    model_id_to_avg_rank[completion.model].append(completion.rank_id)
-
-            for model_id, ranks in model_id_to_avg_rank.items():
-                model_id_to_avg_rank[model_id] = sum(ranks) / len(ranks)
-
-            model_id_to_avg_rank = dict(
-                sorted(model_id_to_avg_rank.items(), key=lambda item: item[1])
-            )
-
-            # shape (num miners, num completions)
-            # order ranks based on their order in the sorted dict
-            miner_outputs = [
-                [
-                    _get_miner_response_by_criteria(criteria, x)
-                    for x in sorted(
-                        response.completion_responses,
-                        key=lambda x: model_id_to_avg_rank[x.model],
-                    )
-                ]
-                for response in miner_responses
-            ]
-            miner_outputs = np.array(miner_outputs)
-            avg = np.array([i + 1 for i in range(len(model_id_to_avg_rank.keys()))])
-
-        elif isinstance(criteria, MultiScoreCriteria):
-            logger.debug("consensus scoring for multi-score criteria")
-            # calculate average score per model
-            for response in miner_responses:
-                for completion in response.completion_responses:
-                    model_id_to_scores[completion.model].append(completion.score)
-            # for each model calculate the average score
-            # USE DICT BECAUSE WE NEED TO ENSURE CORRECT ORDERING
-            model_id_to_avg_score = {
-                model: sum(scores) / len(scores)
-                for model, scores in model_id_to_scores.items()
-            }
-
-            # shape (num miners, num completions)
-            # collect all scores from each miner based on ordering in model_id_avg_score
-            miner_outputs = np.array(
-                [
-                    [
-                        completion.score
-                        for completion in sorted(
-                            response.completion_responses,
-                            key=lambda x: model_id_to_avg_score[x.model],
-                        )
-                    ]
-                    for response in miner_responses
-                ]
-            )
-
-            avg: np.ndarray = np.array([v for k, v in model_id_to_avg_score.items()])
-
-        else:
-            raise NotImplementedError(
-                f"Consensus score for type {criteria} not implemented yet"
-            )
-
-        if avg is None or miner_outputs is None:
-            raise ValueError("avg and miner_outputs cannot be None")
-
-        logger.info(f"Average across all miners: {avg}")
-        logger.info(f"Miner outputs {miner_outputs}")
-        logger.info(f"Model id to avg {model_id_to_avg_score}")
-
-        # create df with the original number of completions
-        df = pd.DataFrame(
-            {
-                "subject": [i for i in range(len(request.completion_responses))],
-            }
+    def _convert_ground_truth_ranks_to_scores(
+        cids_with_ranks: list[tuple[str, int]],
+    ) -> np.ndarray:
+        # check if the cids with ranks are sorted in ascending order
+        ranks = [rank for _, rank in cids_with_ranks]
+        # check if the ranks are continuous e.g. [0, 1, 2, 3] and not [0, 1, 3, 2]
+        is_sorted_and_continuous = all(
+            ranks[i] == ranks[i - 1] + 1 for i in range(1, len(ranks))
         )
-        # prepare dataframe for calculating ICC
-        for response in miner_responses:
-            rater_id = response.axon.hotkey
-            ordered_scores = [
-                x.score
-                for x in sorted(
-                    response.completion_responses,
-                    key=lambda x: (
-                        model_id_to_avg_score[x.model]
-                        if criteria == MultiScoreCriteria
-                        else model_id_to_avg_rank[x.model]
-                    ),
-                )
-            ]
-            # order scores based on order in model_id_to_avg_score
-            df[rater_id] = ordered_scores
-        rater_ids = list(df.columns)
-        rater_ids.remove("subject")
-        df["avg"] = df[rater_ids].mean(axis=1)
+        if not is_sorted_and_continuous:
+            raise ValueError("Provided ranks must be sorted and must be continuous")
 
-        # this works because we are calculating ICC for each rater VS the avg
-        for rater_id in rater_ids:
-            try:
-                data_by_rater = df[["subject", rater_id, "avg"]]
-                # only use the columns for the current rater and avg
-                data_by_rater = data_by_rater.melt(
-                    id_vars=["subject"], var_name=rater_id, value_name="score"
-                )
-                icc = pg.intraclass_corr(
-                    data=data_by_rater,
-                    targets="subject",
-                    raters=rater_id,
-                    ratings="score",
-                )
+        # use minmax scale to ensure ground truth is in the range [0, 1]
+        ground_truth_arr = minmax_scale(np.array(ranks)).numpy()
 
-                # take ICC(2,1)
-                icc2_value = icc[icc["Type"] == "ICC2"]["ICC"].iloc[0]
-                icc_arr.append(icc2_value)
+        # reverse order here, because the lowest rank is the best
+        # e.g. ranks: ('cid1', 0), ('cid2', 1), ('cid3', 2), ('cid4', 3)
+        # after minmax scale: [0, 0.33, 0.667, 1]
+        # but we want the reverse, so: [1, 0.667, 0.33, 0], since cid1 is the best
+        ground_truth_arr = ground_truth_arr[::-1]
 
-            except Exception as e:
-                logger.error(f"Error calculating ICC for rater {rater_id}: {e}")
-                logger.debug(f"Data by rater: {data_by_rater}")
-                continue
-
-        # already in the range [0, 1]
-        icc_arr: torch.Tensor = torch.tensor(np.array(icc_arr))
-
-        # only use this for ordinal data
-        # spearman = np.array(
-        #     [
-        #         spearmanr(miner_output, avg, nan_policy="propagate").statistic
-        #         for miner_output in miner_outputs
-        #     ]
-        # )
-        # num_nans = np.sum(np.isnan(spearman))
-
-        mse = torch.tensor(np.mean(np.abs(miner_outputs - avg) ** 2, axis=1))
-        logger.debug(f"MSE raw: {mse}")
-        logger.info(f"ICC raw: {icc_arr}")
-
-        mse_reward = F.softmax(-1 * mse, dim=0)
-
-        if not np.isnan(icc_arr).any():
-            return ConsensusScore(
-                score=torch.tensor(icc_arr),
-                mse_by_miner=mse_reward,
-                icc_by_miner=icc_arr,
-            )
-
-        logger.warning("ICC array contains NaN values, using just MSE instead")
-
-        # use negative sign to penalize higher mse
-
-        # # edge case where all miners provide the same rating
-        # if torch.all(mse_reward_norm == 0):
-        #     logger.warning("MSE reward normalization resulted in all zeros.")
-        #     reward_per_miner = 1 / len(miner_outputs)
-        #     mse_reward_norm = torch.full_like(mse_reward_norm, reward_per_miner)
-
-        logger.debug(f"MSE reward: {mse_reward}")
-        logger.debug(f"MSE normalized: {mse_reward}")
-
-        return ConsensusScore(
-            score=mse_reward,
-            mse_by_miner=mse_reward,
-            icc_by_miner=icc_arr,
-        )
+        return ground_truth_arr
 
     @staticmethod
     def ground_truth_scoring(
@@ -416,15 +193,9 @@ class Scoring:
         miner_outputs = miner_outputs_normalised
 
         # use minmax scale to ensure ground truth is in the range [0, 1]
-        ground_truth_arr = minmax_scale(
-            np.array([rank for _, rank in cid_with_rank_sorted])
-        ).numpy()
-
-        # reverse order here, because the lowest rank is the best
-        # e.g. ranks: ('cid1', 0), ('cid2', 1), ('cid3', 2), ('cid4', 3)
-        # after minmax scale: [0, 0.33, 0.667, 1]
-        # but we want the reverse, so: [1, 0.667, 0.33, 0], since cid1 is the best
-        ground_truth_arr = ground_truth_arr[::-1]
+        ground_truth_arr = Scoring._convert_ground_truth_ranks_to_scores(
+            cid_with_rank_sorted
+        )
 
         logger.info(f"scoring: Miner outputs\n{miner_outputs}")
         logger.info(f"scoring: Ground truth\n{ground_truth_arr}")
@@ -457,107 +228,6 @@ class Scoring:
             pass
 
         return torch.from_numpy(cubic_reward.copy())
-
-    @staticmethod
-    def cmp_ground_truth(
-        criteria: CriteriaType,
-        request: TaskSynapseObject,
-        miner_responses: List[TaskSynapseObject],
-    ):
-        # determine the ground truth ordering based on request
-        # we can assume `model` is the same as the `completion_id`, see validator.obfuscate_model_names function
-        model_score_tuples = _map_ground_truth_rank_to_score(
-            criteria, request.ground_truth
-        )
-        model_with_score_sorted = sorted(
-            model_score_tuples, key=lambda x: (x[1] is not None, x[1]), reverse=True
-        )
-        model_ids_sorted = [model[0] for model in model_with_score_sorted]
-
-        # sort miner outputs according to ground truth order
-        # this may be scores or ranks
-        # log miner models to check
-        miner_models = []
-        for r in miner_responses:
-            for completion in r.completion_responses:
-                miner_models.append(completion.model)
-
-        miner_outputs = []
-        for response in miner_responses:
-            curr_miner_outputs = []
-            for completion in sorted(
-                response.completion_responses,
-                key=lambda r: model_ids_sorted.index(r.model),
-            ):
-                curr_miner_outputs.append(
-                    _get_miner_response_by_criteria(criteria, completion)
-                )
-            miner_outputs.append(curr_miner_outputs)
-        if miner_outputs == []:
-            raise ValueError("Miner outputs cannot be empty")
-
-        if None in miner_outputs:
-            raise ValueError("Miner outputs cannot contain None values")
-
-        miner_outputs = np.array(miner_outputs)
-
-        # this may be scores or ranks
-        ground_truth = _get_ground_truth_by_criteria(criteria, model_with_score_sorted)
-
-        logger.info(f"Miner outputs: {miner_outputs}")
-        logger.info(f"Ground truth: {ground_truth}")
-
-        diff_gt = torch.tensor(
-            -1 * np.linalg.norm(miner_outputs - ground_truth, ord=2, axis=1)
-        )
-        logger.debug(f"{diff_gt=}")
-        gt_reward = F.softmax(diff_gt, dim=0)
-        logger.debug(f"{gt_reward=}")
-
-        return torch.tensor(gt_reward)
-
-    @staticmethod
-    def spm_ground_truth(
-        criteria: CriteriaType,
-        request: TaskSynapseObject,
-        miner_responses: List[TaskSynapseObject],
-    ):
-        """
-        Calculate Spearman Correlation between miner outputs and ground truth using 'cid'.
-        """
-
-        gt_keys = list(request.ground_truth.keys())
-        gt_values = list(request.ground_truth.values())
-
-        # Gather miner outputs based on their responses
-        miner_outputs = []
-        for response in miner_responses:
-            curr_miner_outputs = []
-            for completion in sorted(
-                response.completion_responses,
-                key=lambda response: gt_keys.index(response.completion_id),
-            ):
-                curr_miner_outputs.append(
-                    _get_miner_response_by_criteria(criteria, completion)
-                )
-            miner_outputs.append(curr_miner_outputs)
-
-        # Convert miner outputs to numpy array for easier processing
-        miner_outputs = np.array(miner_outputs)
-
-        # Calculate Spearman correlation for each miner's output against the ground truth
-        spearman_scores = [
-            spearmanr(miner_output, gt_values).correlation
-            for miner_output in miner_outputs
-        ]
-
-        # Convert the Spearman correlation scores into rewards
-        spearman_scores = torch.tensor(
-            np.nan_to_num(spearman_scores), dtype=torch.float32
-        )  # Handle NaN values
-        gt_reward = F.softmax(torch.tensor(spearman_scores, dtype=torch.float32), dim=0)
-
-        return gt_reward
 
     # ---------------------------------------------------------------------------- #
     #                           SCORING CORE FUNCTIONS                             #
@@ -653,52 +323,6 @@ class Scoring:
             return score_dict
         else:
             raise NotImplementedError("Only score criteria is supported")
-
-
-def _map_ground_truth_rank_to_score(
-    criteria: CriteriaType, ground_truth: dict[str, int]
-) -> list[tuple[str, float]]:
-    if not isinstance(criteria, MultiScoreCriteria):
-        raise NotImplementedError("Only multi-score criteria is supported")
-
-    completion_ids = list(ground_truth.keys())
-    unique_ranks = set(ground_truth.values())
-    expected_ranks = set(range(0, len(completion_ids)))
-
-    assert (
-        unique_ranks == expected_ranks
-    ), f"Ground truth values must be discrete integers from 0 to {len(completion_ids) - 1}"
-
-    def convert_rank_to_score(
-        rank: int,
-        min_rank: int,
-        max_rank: int,
-        min_score: int | float,
-        max_score: int | float,
-    ):
-        # invert the rank because rank with lower number
-        # i.e. rank 1 is best, rank 3 is worst (0-indexed)
-        inverted_rank = max_rank - rank + min_rank
-        return (
-            inverted_rank / (max_rank - min_rank) * (max_score - min_score) + min_score
-        )
-
-    completion_id_score_tuples: list[tuple[str, float]] = []
-
-    min_rank = min(list(unique_ranks))
-    max_rank = max(list(unique_ranks))
-
-    for completion_id, rank in list(ground_truth.items()):
-        score = convert_rank_to_score(
-            rank,
-            min_rank,
-            max_rank,
-            criteria.min,
-            criteria.max,
-        )
-        completion_id_score_tuples.append((completion_id, float(score)))
-
-    return completion_id_score_tuples
 
 
 def _test_ground_truth_score_v1():

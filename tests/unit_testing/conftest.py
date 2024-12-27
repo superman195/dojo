@@ -44,13 +44,13 @@ def mock_evalplus_leaderboard_results():
 
 @pytest.fixture
 def mock_initialise() -> (
-    tuple[patch, bt.MockWallet, MockSubtensor, MockMetagraph, MockDendrite]
+    tuple[patch, bt.Wallet, MockSubtensor, MockMetagraph, MockDendrite]
 ):
     """Fixture to initialise mock components for testing."""
     netuid = 1
 
     bt.MockSubtensor.reset()
-    mock_wallet = bt.MockWallet()
+    mock_wallet = bt.Wallet()
     mock_subtensor = MockSubtensor(netuid=netuid, wallet=mock_wallet)
     mock_metagraph = MockMetagraph(netuid=netuid, subtensor=mock_subtensor)
     mock_dendrite = MockDendrite(wallet=mock_wallet)
@@ -69,3 +69,9 @@ def mock_initialise() -> (
             mock_metagraph,
             mock_dendrite,
         )
+
+
+@pytest.fixture
+def disable_terminal_plot():
+    with patch("commons.scoring._terminal_plot", return_value=None):
+        yield

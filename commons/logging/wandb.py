@@ -2,7 +2,7 @@ import copy
 
 import bittensor as bt
 import wandb
-from bittensor.btlogging import logging as logger
+from bittensor.utils.btlogging import logging as logger
 
 from commons.objects import ObjectManager
 from commons.utils import hide_sensitive_path
