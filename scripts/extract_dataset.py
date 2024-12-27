@@ -7,7 +7,7 @@ import aiofiles
 import bittensor as bt
 import httpx
 import numpy as np
-from bittensor.btlogging import logging as logger
+from bittensor.utils.btlogging import logging as logger
 from pydantic import BaseModel, model_serializer
 
 from commons.exceptions import (

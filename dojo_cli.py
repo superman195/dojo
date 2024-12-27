@@ -251,10 +251,10 @@ def main():
                 .lower()
             )
             if use_default_path == "y":
-                config.wallet.path = default_wallet_path
+                config.wallet.path = str(default_wallet_path)
                 is_wallet_path_decided = True
             elif use_default_path == "n":
-                config.wallet.path = input("Enter the wallet path: ").strip()
+                config.wallet.path = str(input("Enter the wallet path: ").strip())
                 if Path(config.wallet.path).expanduser().exists():
                     is_wallet_path_decided = True
                 else:

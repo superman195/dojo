@@ -4,7 +4,7 @@ import sys
 import time
 from datetime import datetime
 
-from bittensor.btlogging import logging as logger
+from bittensor.utils.btlogging import logging as logger
 
 from commons.utils import datetime_to_iso8601_str
 from dojo import __version__

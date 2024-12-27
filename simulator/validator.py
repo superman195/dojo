@@ -4,7 +4,7 @@ from typing import List
 
 import aiohttp
 import bittensor as bt
-from bittensor.btlogging import logging as logger
+from bittensor.utils.btlogging import logging as logger
 from tenacity import RetryError
 
 import dojo

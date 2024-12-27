@@ -1,7 +1,7 @@
 import inspect
 import os
 
-from bittensor.btlogging import logging
+from bittensor.utils.btlogging import logging
 
 
 def custom_format(cls, prefix: object, suffix: object = None):

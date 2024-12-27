@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, Tuple
 
 import bittensor as bt
-from bittensor.btlogging import logging as logger
+from bittensor.utils.btlogging import logging as logger
 
 from commons.human_feedback.dojo import DojoAPI
 from commons.utils import get_epoch_time

@@ -10,12 +10,11 @@ from pathlib import Path
 from typing import Any, Tuple
 
 import bittensor as bt
-import jsonref
 import numpy as np
 import plotext
 import requests
 import torch
-from bittensor.btlogging import logging as logger
+from bittensor.utils.btlogging import logging as logger
 from Crypto.Hash import keccak
 from tenacity import RetryError, Retrying, stop_after_attempt, wait_exponential_jitter
 
@@ -229,10 +228,6 @@ def remove_key(input_dict, key, depth=0):
         elif isinstance(v, dict):
             remove_key(v, key, depth=depth + 1)
     return input_dict
-
-
-def _resolve_references(json_str):
-    return jsonref.loads(json_str)
 
 
 # LRU Cache with TTL

@@ -1,4 +1,4 @@
-from bittensor.btlogging import logging as logger
+from bittensor.utils.btlogging import logging as logger
 from fastapi import APIRouter, Header, Request, responses
 from fastapi.encoders import jsonable_encoder
 from pydantic.error_wrappers import ValidationError

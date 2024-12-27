@@ -11,7 +11,7 @@ import tempfile
 import time
 from functools import partial
 
-from bittensor.btlogging import logging as logger
+from bittensor.utils.btlogging import logging as logger
 from bs4 import BeautifulSoup
 from jsmin import jsmin
 
