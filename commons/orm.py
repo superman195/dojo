@@ -28,6 +28,7 @@ from database.prisma.models import (
 )
 from database.prisma.types import (
     Json,
+    MinerResponseCreateWithoutRelationsInput,
     Score_ModelCreateInput,
     Score_ModelUpdateInput,
     ValidatorTaskWhereInput,
@@ -434,7 +435,7 @@ class ORM:
                     # Bulk create all miner responses
                     await tx.minerresponse.create_many(
                         data=[
-                            {**miner_data, "validator_task_id": created_task.id}
+                            MinerResponseCreateWithoutRelationsInput(**miner_data)
                             for miner_data in valid_miner_data
                         ]
                     )

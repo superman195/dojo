@@ -156,7 +156,8 @@ def map_task_synapse_object_to_miner_response(
         dojo_task_id=synapse.dojo_task_id,
         hotkey=synapse.miner_hotkey,
         coldkey=synapse.miner_coldkey,
-        task_result=Json("{}"),
+        expire_at=iso8601_str_to_datetime(synapse.expire_at),
+        task_result=(Json(json.dumps({}))),
     )
 
 

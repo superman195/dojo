@@ -84,7 +84,9 @@ class Miner(BaseMinerNeuron):
                 )
                 return synapse
 
-            logger.info(f"Miner received score: {found_miner_score}")
+            logger.info(
+                f"Miner received score: {found_miner_score} from {synapse.task_id}"
+            )
         except KeyError as e:
             logger.error(f"KeyError in forward_result: {e}")
         except Exception as e:
