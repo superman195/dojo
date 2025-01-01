@@ -11,6 +11,8 @@ from commons.exceptions import CreateTaskFailed
 from commons.utils import loaddotenv
 from dojo import get_dojo_api_base_url
 from dojo.protocol import (
+    CodeAnswer,
+    MultimediaAnswer,
     TaskSynapseObject,
 )
 
@@ -84,10 +86,19 @@ class DojoAPI:
             responses=[],
             task_type=str(data.task_type).upper(),
         )
+
+        # Safety check for responses
+        if not isinstance(output["responses"], list):
+            output["responses"] = []
+
         for completion in data.completion_responses:
             completion_dict = {}
             completion_dict["model"] = completion.model
-            completion_dict["completion"] = completion.completion.model_dump()
+            completion_dict["completion"] = (
+                completion.completion.model_dump()
+                if isinstance(completion.completion, CodeAnswer | MultimediaAnswer)
+                else completion.completion
+            )
             completion_dict["criteria"] = (
                 [c.model_dump() for c in completion.criteria_types]
                 if completion.criteria_types

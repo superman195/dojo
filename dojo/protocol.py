@@ -88,6 +88,18 @@ class CodeAnswer(BaseModel):
     files: List[CodeFileObject] = Field(description="List of FileObjects")
 
 
+class MultimediaFileObject(BaseModel):
+    filename: str = Field(description="Name of the file")
+    content: bytes = Field(description="Binary content of the file")
+    mime_type: str = Field(
+        description="MIME type of the file (e.g., 'image/png', 'model/ply')"
+    )
+
+
+class MultimediaAnswer(BaseModel):
+    files: List[MultimediaFileObject] = Field(description="List of multimedia files")
+
+
 # TODO: Remove this
 class DialogueItem(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
@@ -99,7 +111,7 @@ class DialogueItem(BaseModel):
 # TODO: Remove DialogueItem
 class CompletionResponse(BaseModel):
     model: str = Field(description="Model that generated the completion")
-    completion: CodeAnswer | List[DialogueItem] | str | None = Field(
+    completion: CodeAnswer | MultimediaAnswer | str | None = Field(
         description="Completion from the model"
     )
     completion_id: str = Field(description="Unique identifier for the completion")
