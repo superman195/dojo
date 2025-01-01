@@ -950,63 +950,198 @@ def _test_ground_truth_score_v1():
     plt.show()
 
 
-def _test_reward_cubic():
-    miner_outputs = np.array(
-        [
-            [0.1, 0.2, 0.3, 0.4],
-            [0.5, 0.6, 0.7, 0.8],
-            [0.9, 0.1, 0.2, 0.3],
-            [0.4, 0.5, 0.6, 0.7],
-            [0.8, 0.9, 0.1, 0.2],
-            [0.3, 0.4, 0.5, 0.6],
-            [0.7, 0.8, 0.9, 0.1],
-            [0.2, 0.3, 0.4, 0.5],
-            [0.6, 0.7, 0.8, 0.9],
-            [np.nan, np.nan, np.nan, np.nan],
-            [0.15, 0.25, 0.35, 0.45],
-            [0.55, 0.65, 0.75, 0.85],
-            [0.95, 0.05, 0.15, 0.25],
-            [0.45, 0.55, 0.65, 0.75],
-            [0.85, 0.95, 0.05, 0.15],
-            [0.35, 0.45, 0.55, 0.65],
-            [0.75, 0.85, 0.95, 0.05],
-            [0.25, 0.35, 0.45, 0.55],
-            [0.65, 0.75, 0.85, 0.95],
-            [0.05, 0.15, 0.25, 0.35],
-            [1.0, 0.0, 0.0, 1.0],
-            [0.0, 1.0, 1.0, 0.0],
-            [0.99, 0.01, 0.01, 0.99],
-            [0.01, 0.99, 0.99, 0.01],
-            [0.5, 0.5, 0.5, 0.5],
-            [0.25, 0.75, 0.75, 0.25],
-            [0.75, 0.25, 0.25, 0.75],
-            [0.1, 0.9, 0.9, 0.1],
-            [1, 0.6666667, 0.33333334, 0],
-            [0.0, 0.0, 0.0, 0.0],
+def _get_test_miner_outputs(
+    test_type: str = "default",
+) -> tuple[np.ndarray, np.ndarray]:
+    """Get test miner outputs and ground truth for different test configurations.
+
+    Args:
+        test_type: Type of test configuration to use
+            - "default": Default test case from the code
+            - "distribution": Test case matching weight distribution
+            - "simple": Simple test case with few miners
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: (miner_outputs, ground_truth)
+    """
+    if test_type == "default":
+        miner_outputs = np.array(
+            [
+                [0.1, 0.2, 0.3, 0.4],
+                [0.5, 0.6, 0.7, 0.8],
+                [0.9, 0.1, 0.2, 0.3],
+                [0.4, 0.5, 0.6, 0.7],
+                [0.8, 0.9, 0.1, 0.2],
+                [0.3, 0.4, 0.5, 0.6],
+                [0.7, 0.8, 0.9, 0.1],
+                [0.2, 0.3, 0.4, 0.5],
+                [0.6, 0.7, 0.8, 0.9],
+                [np.nan, np.nan, np.nan, np.nan],
+                [0.15, 0.25, 0.35, 0.45],
+                [0.55, 0.65, 0.75, 0.85],
+                [0.95, 0.05, 0.15, 0.25],
+                [0.45, 0.55, 0.65, 0.75],
+                [0.85, 0.95, 0.05, 0.15],
+                [0.35, 0.45, 0.55, 0.65],
+                [0.75, 0.85, 0.95, 0.05],
+                [0.25, 0.35, 0.45, 0.55],
+                [0.65, 0.75, 0.85, 0.95],
+                [0.05, 0.15, 0.25, 0.35],
+                [1.0, 0.0, 0.0, 1.0],
+                [0.0, 1.0, 1.0, 0.0],
+                [0.99, 0.01, 0.01, 0.99],
+                [0.01, 0.99, 0.99, 0.01],
+                [0.5, 0.5, 0.5, 0.5],
+                [0.25, 0.75, 0.75, 0.25],
+                [0.75, 0.25, 0.25, 0.75],
+                [0.1, 0.9, 0.9, 0.1],
+                [1, 0.6666667, 0.33333334, 0],
+                [0.0, 0.0, 0.0, 0.0],
+            ]
+        )
+        ground_truth = np.array([0, 0.33333334, 0.6666667, 1])
+
+    elif test_type == "distribution":
+        # Create base pattern that would result in average performance
+        base_pattern = np.array([0.7, 0.5, 0.3, 0.1])
+
+        # Initialize lists for different performer categories
+        top_performers = [
+            [0.95, 0.7, 0.4, 0.1],  # Very close to ground truth
+            [0.9, 0.65, 0.35, 0.15],
+            [0.85, 0.6, 0.3, 0.2],
         ]
-    )
-    ground_truth = np.array([0, 0.33333334, 0.6666667, 1])
+
+        above_avg = [
+            [0.8, 0.55, 0.35, 0.2],
+            [0.75, 0.5, 0.3, 0.25],
+            [0.85, 0.5, 0.25, 0.15],
+        ] * 3
+
+        slight_above = [
+            [0.7, 0.5, 0.35, 0.25],
+            [0.65, 0.45, 0.3, 0.2],
+        ] * 5
+
+        # Add average performers (will get ~0.002-0.003 weight)
+        avg_performers = []
+        for _ in range(170):  # Bulk of miners
+            noise = np.random.normal(0, 0.1, 4)
+            pattern = base_pattern + noise
+            pattern = np.clip(pattern, 0, 1)
+            avg_performers.append(pattern)
+
+        poor_performers = [
+            [0.1, 0.2, 0.3, 0.4],  # Inverse of good pattern
+            [0.25, 0.25, 0.25, 0.25],  # No differentiation
+            [0.0, 0.0, 0.0, 0.0],  # All zeros
+            [np.nan, np.nan, np.nan, np.nan],  # NaN values
+        ] * 5
+
+        miner_outputs = np.array(
+            top_performers + above_avg + slight_above + avg_performers + poor_performers
+        )
+        ground_truth = np.array([1.0, 0.6666667, 0.33333334, 0.0])
+
+    elif test_type == "skewed_distribution":
+        # Create base pattern that would result in poor performance
+        base_pattern = np.array([0.3, 0.3, 0.3, 0.3])  # Poor differentiation
+
+        # Elite performers (will get very high weights)
+        elite_performers = [
+            [0.95, 0.7, 0.35, 0.1],  # Almost perfect
+            [0.92, 0.65, 0.32, 0.12],  # Very close
+            [0.90, 0.62, 0.30, 0.15],  # Still excellent
+        ]
+
+        # Add poor performers (will get very low weights ~0.001 or less)
+        poor_performers = []
+        for _ in range(225):  # Bulk of miners
+            noise = np.random.normal(0, 0.01, 4)  # Small noise
+            pattern = base_pattern + noise
+            pattern = np.clip(pattern, 0.29, 0.31)  # Restrict to narrow poor range
+            poor_performers.append(pattern)
+
+        # Add some edge cases
+        edge_cases = []
+        # edge_cases = [
+        #     [0.0, 0.0, 0.0, 0.0],  # All zeros
+        #     [0.25, 0.25, 0.25, 0.25],  # Flat line
+        #     [0.1, 0.2, 0.3, 0.4],  # Inverse pattern
+        #     [0.4, 0.3, 0.2, 0.1],  # Wrong direction
+        #     [np.nan, np.nan, np.nan, np.nan],  # NaN values
+        # ] * 1
+
+        miner_outputs = np.array(elite_performers + poor_performers + edge_cases)
+        ground_truth = np.array([1.0, 0.6666667, 0.33333334, 0.0])
+
+    elif test_type == "simple":
+        # Simple test case with few miners for debugging
+        miner_outputs = np.array(
+            [
+                [1.0, 0.7, 0.3, 0.0],  # Perfect match
+                [0.9, 0.6, 0.4, 0.1],  # Very good
+                [0.7, 0.5, 0.3, 0.1],  # Average
+                [0.5, 0.5, 0.5, 0.5],  # Poor - no differentiation
+                [0.0, 0.3, 0.7, 1.0],  # Poor - inverse pattern
+            ]
+        )
+        ground_truth = np.array([1.0, 0.6666667, 0.33333334, 0.0])
+
+    else:
+        raise ValueError(f"Unknown test type: {test_type}")
+
+    return miner_outputs, ground_truth
+
+
+def _test_reward_cubic(test_type: str = "default", print_stats: bool = True):
+    """Test the reward cubic function with different configurations.
+
+    Args:
+        test_type: Type of test configuration to use
+        print_stats: Whether to print distribution statistics
+    """
+    miner_outputs, ground_truth = _get_test_miner_outputs(test_type)
+
+    # Parameters for cubic reward function
     scaling = 0.006
     translation = 7
     offset = 2
+    # scaling = 0.1
+    # translation = 0.5
+    # offset = 0.5
 
-    expected_shape = (30,)
-    result = _reward_cubic(miner_outputs, ground_truth, scaling, translation, offset)
+    result = _reward_cubic(
+        miner_outputs, ground_truth, scaling, translation, offset, True
+    )
 
+    # Assertions
     assert isinstance(result, np.ndarray), "Result should be a numpy array"
-    assert (
-        result.shape == expected_shape
-    ), f"Expected shape {expected_shape}, but got {result.shape}"
     assert np.all(result >= 0) and np.all(
         result <= 1
-    ), "All values should be in the range [0, 1]"
+    ), "All values should be in range [0,1]"
 
-    # Visualize the result using _terminal_plot
-    _terminal_plot("Cubic Reward Test Result", result, sort=False)
+    if print_stats:
+        print(f"\nTest type: {test_type}")
+        print("\nWeight distribution summary:")
+        print(f"Min weight: {result.min():.4f}")
+        print(f"Max weight: {result.max():.4f}")
+        print(f"Mean weight: {result.mean():.4f}")
+        print(f"Median weight: {np.median(result):.4f}")
 
-    print("test_reward_cubic passed.")
+        print("\nWeight distribution counts:")
+        print(f"Very high (>0.06): {np.sum(result > 0.06)}")
+        print(f"High (0.02-0.06): {np.sum((result > 0.02) & (result <= 0.06))}")
+        print(f"Above avg (0.005-0.02): {np.sum((result > 0.005) & (result <= 0.02))}")
+        print(f"Average (0.002-0.005): {np.sum((result > 0.002) & (result <= 0.005))}")
+        print(f"Low (<0.002): {np.sum(result <= 0.002)}")
+
+    # Visualize the result
+    _terminal_plot("Cubic Reward Test Result", result, sort=True)
+
+    print("\ntest_reward_cubic passed.")
 
 
 if __name__ == "__main__":
     # _test_ground_truth_score_v1()
-    _test_reward_cubic()
+    _test_reward_cubic("skewed_distribution")
