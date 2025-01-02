@@ -156,8 +156,9 @@ class DojoAPI:
                 response.raise_for_status()
 
             except Exception as e:
+                delay = cls.BASE_DELAY * 2**attempt + random.uniform(0, 1)
+
                 if attempt < cls.MAX_RETRIES - 1:
-                    delay = cls.BASE_DELAY * 2**attempt + random.uniform(0, 1)
                     logger.warning(
                         f"Error occurred: {e}. Retrying in {delay:.2f} seconds..."
                     )
@@ -175,9 +176,7 @@ class DojoAPI:
                 )
 
                 raise CreateTaskFailed(
-                    f"Failed to create task due to {error_msg}: {e}, "
+                    f"Failed to create task after {cls.MAX_RETRIES} retries due to {error_msg}: {e}, "
                     f"response_text: {response_data['text']}, "
                     f"response_json: {response_data['json']}"
                 )
-
-        raise CreateTaskFailed(f"Failed to create task after {cls.MAX_RETRIES} retries")
