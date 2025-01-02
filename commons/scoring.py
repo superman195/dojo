@@ -158,10 +158,12 @@ class Scoring:
         ]
         logger.debug(f"scoring: cid rank tuples\n{cid_rank_tuples}")
 
+        # Sort cids by rank. In the order, 0 is the best, 1 is the second best, etc.
         cid_with_rank_sorted = sorted(
             cid_rank_tuples, key=lambda x: x[1], reverse=False
         )
         logger.debug(f"scoring: cid with rank sorted\n{cid_with_rank_sorted}")
+
         # sort miner outputs according to ground truth order
         # we're using this because miners receive a shuffled order of the completions
         cids_sorted = [cid for cid, _ in cid_with_rank_sorted]
@@ -169,7 +171,7 @@ class Scoring:
         for response in miner_responses:
             curr_miner_outputs = []
             for completion in sorted(
-                response.completion_responses,
+                response.completion_responses or [],
                 key=lambda r: cids_sorted.index(r.model),
             ):
                 curr_miner_outputs.append(
@@ -250,6 +252,8 @@ class Scoring:
         hotkey_to_scores: dict[str, Scores] = {}
         # Initialize empty scores for all miners
         for response in miner_responses:
+            if response.axon is None or response.axon.hotkey is None:
+                continue
             hotkey_to_scores[response.axon.hotkey] = Scores()
 
         # validation
@@ -271,7 +275,8 @@ class Scoring:
             valid_miner_responses = [
                 response
                 for response in miner_responses
-                if all(
+                if response.completion_responses
+                and all(
                     _get_miner_response_by_criteria(criteria, completion) is not None
                     for completion in response.completion_responses
                 )
@@ -284,6 +289,11 @@ class Scoring:
             logger.info(
                 f"📝 Filtered {len(valid_miner_responses)} valid responses for task id {validator_task.task_id}"
             )
+
+            # Check if ground truth is None
+            if validator_task.ground_truth is None:
+                logger.error("No ground truth found in validator task")
+                return hotkey_to_scores
 
             try:
                 hotkey_to_scores = cls._assign_scores(

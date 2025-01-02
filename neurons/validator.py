@@ -53,6 +53,7 @@ from dojo.protocol import (
     DendriteQueryResponse,
     Heartbeat,
     ScoreCriteria,
+    Scores,
     ScoringResult,
     SyntheticQA,
     TaskResult,
@@ -789,8 +790,8 @@ class Validator:
                     batch = all_miner_responses[i : i + batch_size]
                     if batch:
                         await self._update_miner_raw_scores_batch(
-                            batch[0].task_id,
-                            batch,  # Use first response's task_id
+                            batch[0].task_id,  # Use first response's task_id
+                            batch,
                         )
 
         except NoNewExpiredTasksYet as e:
@@ -1122,13 +1123,14 @@ class Validator:
         # Validate miner response
         if (
             not miner_response.axon
+            or not hasattr(miner_response.axon, "hotkey")
             or not miner_response.axon.hotkey
             or not miner_response.dojo_task_id
         ):
             raise InvalidMinerResponse(
                 f"""Missing hotkey, task_id, or axon:
                 axon: {miner_response.axon}
-                hotkey: {miner_response.axon.hotkey}
+                hotkey: {miner_response.axon.hotkey if miner_response.axon else None}
                 dojo_task_id: {miner_response.dojo_task_id}"""
             )
 
@@ -1144,6 +1146,10 @@ class Validator:
         model_id_to_avg_score = self._calculate_averages(
             task_results, obfuscated_to_real_model_id
         )
+
+        # Check for completion responses
+        if not miner_response.completion_responses:
+            return None
 
         for completion in miner_response.completion_responses:
             if completion.model in model_id_to_avg_score:
@@ -1277,7 +1283,9 @@ class Validator:
                     logger.warning(f"Error during attempt {attempt+1}, retrying: {e}")
                     await asyncio.sleep(2**attempt)
 
-    async def _score_task(self, task: DendriteQueryResponse) -> tuple[str, dict]:
+    async def _score_task(
+        self, task: DendriteQueryResponse
+    ) -> tuple[str, Dict[str, Scores]]:
         """Process a task and calculate the scores for the miner responses"""
         if not task.miner_responses:
             logger.warning("📝 No miner responses, skipping task")
@@ -1291,7 +1299,7 @@ class Validator:
             )
         except Exception as e:
             logger.error(
-                f"📝 Error occurred while calculating scores: {e}. Request ID: {task.validator_task.request_id}"
+                f"📝 Error occurred while calculating scores: {e}. Request ID: {task.validator_task.task_id}"
             )
             return task.validator_task.task_id, {}
 

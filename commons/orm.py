@@ -20,6 +20,7 @@ from database.mappers import (
     map_task_synapse_object_to_validator_task,
     map_validator_task_to_task_synapse_object,
 )
+from database.prisma import Json
 from database.prisma.errors import PrismaError
 from database.prisma.models import (
     GroundTruth,
@@ -27,8 +28,10 @@ from database.prisma.models import (
     ValidatorTask,
 )
 from database.prisma.types import (
-    Json,
+    CriterionWhereInput,
     MinerResponseCreateWithoutRelationsInput,
+    MinerScoreCreateInput,
+    MinerScoreUpdateInput,
     Score_ModelCreateInput,
     Score_ModelUpdateInput,
     ValidatorTaskInclude,
@@ -101,7 +104,7 @@ class ORM:
             }
         )
 
-        # Get total count and first batch in parallel
+        # Get total count and first batch of validator tasks in parallel
         task_count_unprocessed, first_batch = await asyncio.gather(
             ValidatorTask.prisma().count(where=vali_where_query_unprocessed),
             ValidatorTask.prisma().find_many(
@@ -112,25 +115,24 @@ class ORM:
             ),
         )
 
-        logger.debug(f"Count of unprocessed tasks: {task_count_unprocessed}")
+        logger.debug(f"Count of unprocessed validator tasks: {task_count_unprocessed}")
 
         if not task_count_unprocessed:
             raise NoNewExpiredTasksYet(
-                f"No expired tasks found for processing, please wait for tasks to pass the task deadline of {TASK_DEADLINE} seconds."
+                f"No expired validator tasks found for processing, please wait for tasks to pass the task deadline of {TASK_DEADLINE} seconds."
             )
 
-        # Yield first batch
-        # first_batch_synapse_objects = [
-        #     map_validator_task_to_task_synapse_object(task) for task in first_batch
-        # ]
-        # yield first_batch_synapse_objects, task_count_unprocessed > batch_size
         first_batch_responses = [
             DendriteQueryResponse(
                 validator_task=map_validator_task_to_task_synapse_object(task),
-                miner_responses=[
-                    map_miner_response_to_task_synapse_object(miner_response)
-                    for miner_response in task.miner_responses
-                ],
+                miner_responses=(
+                    [
+                        map_miner_response_to_task_synapse_object(miner_response)
+                        for miner_response in task.miner_responses
+                    ]
+                    if task.miner_responses
+                    else []
+                ),
             )
             for task in first_batch
         ]
@@ -148,10 +150,14 @@ class ORM:
             batch_responses = [
                 DendriteQueryResponse(
                     validator_task=map_validator_task_to_task_synapse_object(task),
-                    miner_responses=[
-                        map_miner_response_to_task_synapse_object(miner_response)
-                        for miner_response in task.miner_responses
-                    ],
+                    miner_responses=(
+                        [
+                            map_miner_response_to_task_synapse_object(miner_response)
+                            for miner_response in task.miner_responses
+                        ]
+                        if task.miner_responses
+                        else []
+                    ),
                 )
                 for task in validator_tasks
             ]
@@ -263,7 +269,7 @@ class ORM:
                             db_miner_response = await tx.minerresponse.find_first(
                                 where={
                                     "hotkey": miner_response.miner_hotkey,
-                                    "dojo_task_id": miner_response.dojo_task_id,
+                                    "dojo_task_id": miner_response.dojo_task_id or "",
                                 }
                             )
 
@@ -273,16 +279,23 @@ class ORM:
                                     f"hotkey: {miner_response.miner_hotkey}"
                                 )
 
+                            if not miner_response.completion_responses:
+                                continue
+
                             # Create score records for each completion response
                             for completion in miner_response.completion_responses:
                                 # Find or create the criterion record
                                 criterion = await tx.criterion.find_first(
-                                    where={
-                                        "completion": {
-                                            "validator_task_id": miner_response.task_id,
-                                            "model": completion.model,
+                                    where=CriterionWhereInput(
+                                        {
+                                            "completion_relation": {
+                                                "is": {
+                                                    "validator_task_id": miner_response.task_id,
+                                                    "model": completion.model,
+                                                }
+                                            }
                                         }
-                                    }
+                                    )
                                 )
 
                                 if not criterion:
@@ -300,11 +313,6 @@ class ORM:
                                     cubic_reward_score=None,
                                 )
 
-                                # Create or update the score record
-                                score_data = {
-                                    "scores": Json(json.dumps(scores.model_dump())),
-                                }
-
                                 await tx.minerscore.upsert(
                                     where={
                                         "criterion_id_miner_response_id": {
@@ -313,12 +321,16 @@ class ORM:
                                         }
                                     },
                                     data={
-                                        "create": {
-                                            "criterion_id": criterion.id,
-                                            "miner_response_id": db_miner_response.id,
-                                            **score_data,
-                                        },
-                                        "update": score_data,
+                                        "create": MinerScoreCreateInput(
+                                            criterion_id=criterion.id,
+                                            miner_response_id=db_miner_response.id,
+                                            scores=Json(
+                                                json.dumps(scores.model_dump())
+                                            ),
+                                        ),
+                                        "update": MinerScoreUpdateInput(
+                                            scores=Json(json.dumps(scores.model_dump()))
+                                        ),
                                     },
                                 )
 
@@ -372,6 +384,10 @@ class ORM:
                 validator_task_data = map_task_synapse_object_to_validator_task(
                     validator_task
                 )
+                if not validator_task_data:
+                    logger.error("Failed to map validator task")
+                    return None
+
                 created_task = await tx.validatortask.create(data=validator_task_data)
 
                 # Pre-process all valid miner responses

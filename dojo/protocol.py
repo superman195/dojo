@@ -202,6 +202,7 @@ class TaskSynapseObject(bt.Synapse):
 
 class Scores(BaseModel):
     raw_score: float | None = Field(description="Raw score of the miner", default=None)
+    rank_id: int | None = Field(description="Rank of the miner", default=None)
     normalised_score: float | None = Field(
         description="Normalised score of the miner", default=None
     )

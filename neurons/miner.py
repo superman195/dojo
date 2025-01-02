@@ -16,6 +16,7 @@ from dojo.base.miner import BaseMinerNeuron
 from dojo.protocol import (
     Heartbeat,
     ScoringResult,
+    TaskResult,
     TaskResultRequest,
     TaskSynapseObject,
 )
@@ -148,7 +149,8 @@ class Miner(BaseMinerNeuron):
                 synapse.dojo_task_id
             )
             if task_results:
-                synapse.task_results = task_results
+                # Convert task_results to TaskResult objects
+                synapse.task_results = [TaskResult(**result) for result in task_results]
             else:
                 logger.debug(
                     f"No task result found for dojo task id: {synapse.dojo_task_id}"

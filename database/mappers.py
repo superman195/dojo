@@ -49,7 +49,7 @@ from dojo.protocol import (
 # ---------------------------------------------------------------------------- #
 def map_task_synapse_object_to_validator_task(
     synapse: TaskSynapseObject,
-) -> ValidatorTaskCreateInput:
+) -> ValidatorTaskCreateInput | None:
     """Maps a TaskSynapseObject to ValidatorTask database model input.
 
     Args:
@@ -60,6 +60,10 @@ def map_task_synapse_object_to_validator_task(
     """
     # Map completions and their associated criteria
     completions = []
+
+    if not synapse.completion_responses:
+        return None
+
     for resp in synapse.completion_responses:
         completion = CompletionCreateInput(
             validator_task_id=synapse.task_id,
@@ -105,7 +109,7 @@ def map_task_synapse_object_to_validator_task(
         is_processed=False,
         completions={"create": completions},
         miner_responses={"create": []},
-        GroundTruth={"create": ground_truths},
+        ground_truth={"create": ground_truths},
     )
 
 
@@ -156,7 +160,6 @@ def map_task_synapse_object_to_miner_response(
         dojo_task_id=synapse.dojo_task_id,
         hotkey=synapse.miner_hotkey,
         coldkey=synapse.miner_coldkey,
-        expire_at=iso8601_str_to_datetime(synapse.expire_at),
         task_result=(Json(json.dumps({}))),
     )
 
@@ -315,15 +318,13 @@ def map_validator_task_to_task_synapse_object(
                 model=completion.model,
                 completion=json.loads(completion.completion),
                 completion_id=completion.id,
-                rank_id=completion.rank_id,
-                score=completion.score,
             )
         )
 
     # Map ground truth if present
     ground_truth = {}
-    if model.GroundTruth:
-        for gt in model.GroundTruth:
+    if model.ground_truth:
+        for gt in model.ground_truth:
             ground_truth[gt.obfuscated_model_id] = gt.rank_id
 
     # # Map miner info if present
@@ -363,6 +364,8 @@ def map_miner_response_to_task_synapse_object(
     """
     # Get the validator task for its prompt and task type
     validator_task = miner_response.validator_task_relation
+    if not validator_task:
+        raise ValueError("Validator task not found for miner response")
 
     return TaskSynapseObject(
         task_id=validator_task.id,
