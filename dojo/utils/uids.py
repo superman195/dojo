@@ -8,11 +8,6 @@ import bittensor as bt
 from commons.utils import keccak256_hash
 
 
-def get_all_serving_uids(metagraph: bt.metagraph):
-    uids = [uid for uid in range(metagraph.n.item()) if metagraph.axons[uid].is_serving]
-    return uids
-
-
 def is_uid_available(metagraph: bt.metagraph, uid: int) -> bool:
     """Check if uid is available."""
     # filter non serving axons.
@@ -36,7 +31,7 @@ def extract_miner_uids(metagraph: bt.metagraph):
 
     return [
         uid
-        for uid in range(metagraph.n.item())
+        for uid in range(int(metagraph.n.item()))
         if metagraph.axons[uid].is_serving and stakes[uid] < VALIDATOR_MIN_STAKE
     ]
 

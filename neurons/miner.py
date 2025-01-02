@@ -98,16 +98,14 @@ class Miner(BaseMinerNeuron):
         self, synapse: TaskSynapseObject
     ) -> TaskSynapseObject:
         # Validate that synapse, dendrite, dendrite.hotkey, and response are not None
-        if not all(
-            [
-                synapse,
-                synapse.dendrite,
-                synapse.dendrite.hotkey,
-                synapse.completion_responses,
-            ]
-        ):
+        if not synapse or not synapse.completion_responses:
             logger.error("Invalid synapse: missing required fields")
             return synapse
+
+        if not synapse.dendrite or not synapse.dendrite.hotkey:
+            logger.error("Invalid synapse: missing dendrite information")
+            return synapse
+
         try:
             logger.info(
                 f"Miner received task id: {synapse.task_id} from {synapse.dendrite.hotkey}, with expire_at: {synapse.expire_at}"

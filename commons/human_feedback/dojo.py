@@ -174,9 +174,10 @@ class DojoAPI:
                         else "unexpected error"
                     )
                 )
+                last_error = e
 
-                raise CreateTaskFailed(
-                    f"Failed to create task after {cls.MAX_RETRIES} retries due to {error_msg}: {e}, "
-                    f"response_text: {response_data['text']}, "
-                    f"response_json: {response_data['json']}"
-                )
+        raise CreateTaskFailed(
+            f"Failed to create task after {cls.MAX_RETRIES} retries due to {error_msg}: {last_error}, "
+            f"response_text: {response_data['text']}, "
+            f"response_json: {response_data['json']}"
+        )
