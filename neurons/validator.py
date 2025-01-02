@@ -662,8 +662,11 @@ class Validator:
             try:
                 # Check if there are any active miners. If no active miners, skip the request generation.
                 if not self._active_miner_uids:
-                    logger.info("No active miners to send request to... skipping")
-                    return
+                    logger.info(
+                        f"No active miners to send request to... sleeping for {dojo.VALIDATOR_RUN} seconds"
+                    )
+                    await asyncio.sleep(dojo.VALIDATOR_RUN)
+                    continue
                 # Group related operations in a single async context
                 async with self._request_alock:
                     (

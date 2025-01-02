@@ -15,6 +15,7 @@ from commons.utils import datetime_as_utc
 from database.client import prisma, transaction
 from database.mappers import (
     map_miner_response_to_task_synapse_object,
+    map_task_synapse_object_to_completions,
     map_task_synapse_object_to_miner_response,
     map_task_synapse_object_to_validator_task,
     map_validator_task_to_task_synapse_object,
@@ -385,6 +386,12 @@ class ORM:
                     return None
 
                 created_task = await tx.validatortask.create(data=validator_task_data)
+
+                # Create completions separately, ValidatorTaskCreateInput does not support CompletionCreateInput
+                for completion in map_task_synapse_object_to_completions(
+                    validator_task, created_task.id
+                ):
+                    await tx.completion.create(data=completion)
 
                 # Pre-process all valid miner responses
                 valid_miner_data = []

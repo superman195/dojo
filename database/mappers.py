@@ -58,12 +58,43 @@ def map_task_synapse_object_to_validator_task(
     Returns:
         ValidatorTaskCreateInput: The database model input
     """
-    # Map completions and their associated criteria
-    completions = []
+    # Map ground truths if present
+    ground_truths = (
+        [
+            GroundTruthCreateWithoutRelationsInput(
+                obfuscated_model_id=model_id,
+                real_model_id=model_id,
+                rank_id=rank_id,
+                ground_truth_score=float(rank_id),  # TODO: Add normalised gt score
+            )
+            for model_id, rank_id in synapse.ground_truth.items()
+        ]
+        if synapse.ground_truth
+        else []
+    )
+
+    return ValidatorTaskCreateInput(
+        id=synapse.task_id,
+        previous_task_id=synapse.previous_task_id,
+        prompt=synapse.prompt,
+        task_type=TaskTypeEnum(synapse.task_type),
+        expire_at=iso8601_str_to_datetime(synapse.expire_at),
+        is_processed=False,
+        miner_responses={"create": []},
+        ground_truth={"create": ground_truths},
+    )
+
+
+def map_task_synapse_object_to_completions(
+    synapse: TaskSynapseObject, validator_task_id: str
+) -> list[CompletionCreateInput]:
+    """Maps completion responses to database model inputs"""
 
     if not synapse.completion_responses:
-        return None
+        raise ValueError("Completion responses are required")
 
+    # Map completions and their associated criteria
+    completions: list[CompletionCreateInput] = []
     for resp in synapse.completion_responses:
         completion = CompletionCreateInput(
             validator_task_id=synapse.task_id,
@@ -84,33 +115,7 @@ def map_task_synapse_object_to_validator_task(
 
         completions.append(completion)
 
-    # Map ground truths if present
-    ground_truths = (
-        [
-            GroundTruthCreateWithoutRelationsInput(
-                validator_task_id=synapse.task_id,
-                obfuscated_model_id=model_id,
-                real_model_id=model_id,
-                rank_id=rank_id,
-                ground_truth_score=float(rank_id),  # TODO: Add normalised gt score
-            )
-            for model_id, rank_id in synapse.ground_truth.items()
-        ]
-        if synapse.ground_truth
-        else []
-    )
-
-    return ValidatorTaskCreateInput(
-        id=synapse.task_id,
-        previous_task_id=synapse.previous_task_id,
-        prompt=synapse.prompt,
-        task_type=TaskTypeEnum(synapse.task_type),
-        expire_at=iso8601_str_to_datetime(synapse.expire_at),
-        is_processed=False,
-        completions={"create": completions},
-        miner_responses={"create": []},
-        ground_truth={"create": ground_truths},
-    )
+    return completions
 
 
 def _map_criteria_type_to_enum(criteria: CriteriaType) -> CriteriaTypeEnum:
@@ -160,7 +165,7 @@ def map_task_synapse_object_to_miner_response(
         dojo_task_id=synapse.dojo_task_id,
         hotkey=synapse.miner_hotkey,
         coldkey=synapse.miner_coldkey,
-        task_result=(Json(json.dumps({}))),
+        task_result=Json(json.dumps({})),
     )
 
 
@@ -247,6 +252,7 @@ def map_completion_response_to_model(
     return result
 
 
+# TODO: Remove this function, not used anywhere
 def map_parent_feedback_request_to_model(
     request: TaskSynapseObject,
 ) -> Feedback_Request_ModelCreateInput:
@@ -261,7 +267,7 @@ def map_parent_feedback_request_to_model(
         raise InvalidValidatorRequest("Expire at must be in the future")
 
     result = Feedback_Request_ModelCreateInput(
-        request_id=request.request_id,
+        request_id=request.task_id,
         task_type=request.task_type,
         prompt=request.prompt,
         hotkey=request.dendrite.hotkey,
@@ -271,6 +277,7 @@ def map_parent_feedback_request_to_model(
     return result
 
 
+# TODO: Remove this function, not used anywhere
 def map_child_feedback_request_to_model(
     request: TaskSynapseObject, parent_id: str, expire_at: datetime
 ) -> Feedback_Request_ModelCreateInput:
@@ -284,7 +291,7 @@ def map_child_feedback_request_to_model(
         raise InvalidMinerResponse("Dojo Task ID is required")
 
     result = Feedback_Request_ModelCreateInput(
-        request_id=request.request_id,
+        request_id=request.task_id,
         task_type=request.task_type,
         prompt=request.prompt,
         hotkey=request.axon.hotkey,
@@ -366,6 +373,9 @@ def map_miner_response_to_task_synapse_object(
     validator_task = miner_response.validator_task_relation
     if not validator_task:
         raise ValueError("Validator task not found for miner response")
+
+    if not validator_task:
+        raise ValueError("Validator task not found while mapping miner response")
 
     return TaskSynapseObject(
         task_id=validator_task.id,
