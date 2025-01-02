@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import DefaultDict, Dict, List
+from typing import Dict, List
 
 import bittensor as bt
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -7,17 +7,9 @@ from strenum import StrEnum
 
 from commons.utils import get_epoch_time, get_new_uuid
 
-# TODO: Remove this
-RidToHotKeyToTaskId = DefaultDict[str, DefaultDict[str, str]]
-TaskExpiryDict = DefaultDict[str, str]
-RidToModelMap = DefaultDict[str, Dict[str, str]]
 
-
-# TODO: Remove dialogue and rename text_to_image
 class TaskTypeEnum(StrEnum):
-    # TEXT_TO_IMAGE = "text_to_image"
-    # TEXT_TO_THREE_D = "text_to_three_d"
-    DIALOGUE = "DIALOGUE"
+    TEXT_TO_THREE_D = "TEXT_TO_THREE_D"
     TEXT_TO_IMAGE = "TEXT_TO_IMAGE"
     CODE_GENERATION = "CODE_GENERATION"
 
@@ -27,12 +19,6 @@ class CriteriaTypeEnum(StrEnum):
     MULTI_SCORE = "multi-score"
     SCORE = "score"
     MULTI_SELECT = "multi-select"
-
-
-# TODO: Remove this
-class DialogueRoleEnum(StrEnum):
-    ASSISTANT = "assistant"
-    USER = "user"
 
 
 class RankingCriteria(BaseModel):
@@ -100,15 +86,6 @@ class MultimediaAnswer(BaseModel):
     files: List[MultimediaFileObject] = Field(description="List of multimedia files")
 
 
-# TODO: Remove this
-class DialogueItem(BaseModel):
-    model_config = ConfigDict(use_enum_values=True)
-
-    role: DialogueRoleEnum
-    message: str
-
-
-# TODO: Remove DialogueItem
 class CompletionResponse(BaseModel):
     model: str = Field(description="Model that generated the completion")
     completion: CodeAnswer | MultimediaAnswer | str | None = Field(

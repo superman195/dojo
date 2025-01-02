@@ -37,7 +37,7 @@ model ValidatorTask {
     child_tasks     ValidatorTask[] @relation("PreviousTask")
     completions     Completion[]
     miner_responses MinerResponse[]
-    GroundTruth     GroundTruth[]
+    ground_truth     GroundTruth[]
 
     @@index([task_type, is_processed])
     @@index([expire_at])

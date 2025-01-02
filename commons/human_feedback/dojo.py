@@ -91,6 +91,10 @@ class DojoAPI:
         if not isinstance(output["responses"], list):
             output["responses"] = []
 
+        # null check for completion_responses
+        if not data.completion_responses:
+            return output
+
         for completion in data.completion_responses:
             completion_dict = {}
             completion_dict["model"] = completion.model

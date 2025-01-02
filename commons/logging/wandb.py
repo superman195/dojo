@@ -59,4 +59,3 @@ def init_wandb(config: bt.config, my_uid, wallet: bt.wallet):
     wandb.config.update(config, allow_val_change=True)
 
     logger.success(f"Started wandb run with {kwargs=}")
-    return run
