@@ -242,8 +242,8 @@ class DendriteQueryResponse(BaseModel):
 
 
 class Result(BaseModel):
-    type: str = Field(description="Type of the result")
-    value: dict = Field(description="Value of the result")
+    model: str = Field(description="Model that generated the result")
+    criteria: list[dict] = Field(description="List of criteria with scores")
 
 
 class TaskResult(BaseModel):

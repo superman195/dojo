@@ -360,6 +360,7 @@ def map_validator_task_to_task_synapse_object(
 
 def map_miner_response_to_task_synapse_object(
     miner_response: MinerResponse,
+    validator_task: ValidatorTask,
 ) -> TaskSynapseObject:
     """Maps a MinerResponse database model to TaskSynapseObject.
 
@@ -379,11 +380,18 @@ def map_miner_response_to_task_synapse_object(
 
     return TaskSynapseObject(
         task_id=miner_response.validator_task_id,
-        previous_task_id=None,
-        prompt="",
-        task_type="",
-        expire_at="",
-        completion_responses=None,
+        previous_task_id=validator_task.previous_task_id,
+        prompt=validator_task.prompt,
+        task_type=validator_task.task_type,
+        expire_at=datetime_to_iso8601_str(validator_task.expire_at),
+        completion_responses=[
+            CompletionResponse(
+                model=completion.model,
+                completion=json.loads(completion.completion),
+                completion_id=completion.id,
+            )
+            for completion in validator_task.completions or []
+        ],  # need to include completion responses from validator task
         ground_truth=None,
         miner_hotkey=miner_response.hotkey,
         miner_coldkey=miner_response.coldkey,

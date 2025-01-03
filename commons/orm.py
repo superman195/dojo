@@ -22,10 +22,7 @@ from database.mappers import (
 )
 from database.prisma import Json
 from database.prisma.errors import PrismaError
-from database.prisma.models import (
-    GroundTruth,
-    ValidatorTask,
-)
+from database.prisma.models import GroundTruth, ValidatorTask
 from database.prisma.types import (
     CriterionWhereInput,
     MinerResponseCreateWithoutRelationsInput,
@@ -124,7 +121,7 @@ class ORM:
                 validator_task=map_validator_task_to_task_synapse_object(task),
                 miner_responses=(
                     [
-                        map_miner_response_to_task_synapse_object(miner_response)
+                        map_miner_response_to_task_synapse_object(miner_response, task)
                         for miner_response in task.miner_responses
                     ]
                     if task.miner_responses
@@ -149,7 +146,9 @@ class ORM:
                     validator_task=map_validator_task_to_task_synapse_object(task),
                     miner_responses=(
                         [
-                            map_miner_response_to_task_synapse_object(miner_response)
+                            map_miner_response_to_task_synapse_object(
+                                miner_response, task
+                            )
                             for miner_response in task.miner_responses
                         ]
                         if task.miner_responses
@@ -388,9 +387,12 @@ class ORM:
                 created_task = await tx.validatortask.create(data=validator_task_data)
 
                 # Create completions separately, ValidatorTaskCreateInput does not support CompletionCreateInput
-                for completion in map_task_synapse_object_to_completions(
+
+                completions = map_task_synapse_object_to_completions(
                     validator_task, created_task.id
-                ):
+                )
+
+                for completion in completions:
                     await tx.completion.create(data=completion)
 
                 # Pre-process all valid miner responses
@@ -468,7 +470,7 @@ class ORM:
                                     continue
 
                                 # Update each MinerScore record for this miner response
-                                for score_record in miner_response.Score or []:
+                                for score_record in miner_response.score or []:
                                     # Merge existing scores with new scores
                                     existing_scores = json.loads(score_record.scores)
                                     updated_scores = {

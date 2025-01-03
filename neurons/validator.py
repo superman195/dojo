@@ -8,7 +8,7 @@ import traceback
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator, Dict, List
+from typing import AsyncGenerator, Dict, List, TypeAlias
 
 import aiohttp
 import bittensor as bt
@@ -63,6 +63,8 @@ from dojo.protocol import (
 )
 from dojo.utils.config import get_config
 from dojo.utils.uids import extract_miner_uids, is_miner
+
+ObfuscatedModelMap: TypeAlias = Dict[str, str]
 
 
 class Validator:
@@ -150,10 +152,9 @@ class Validator:
         for completion in completion_responses:
             if completion.completion_id is None:
                 raise ValueError("completion_id is None")
+            original_model = completion.model
             completion.model = completion.completion_id
-            obfuscated_model_to_model[completion.completion_id] = (
-                completion.completion_id
-            )
+            obfuscated_model_to_model[completion.completion_id] = original_model
         return obfuscated_model_to_model
 
     @staticmethod
@@ -672,9 +673,13 @@ class Validator:
                     (
                         synthetic_task,
                         ground_truth,
+                        obfuscated_model_to_model,
                     ) = await self._generate_synthetic_request()
+
                     if synthetic_task:
-                        await self.send_request(synthetic_task, ground_truth)
+                        await self.send_request(
+                            synthetic_task, ground_truth, obfuscated_model_to_model
+                        )
 
                 if self._should_exit:
                     logger.debug("Validator should stop...")
@@ -838,12 +843,12 @@ class Validator:
 
     async def _generate_synthetic_request(
         self,
-    ) -> tuple[TaskSynapseObject | None, dict[str, int] | None]:
+    ) -> tuple[TaskSynapseObject | None, dict[str, int] | None, ObfuscatedModelMap]:
         """
         Generate a synthetic request for code generation tasks.
 
         Returns:
-            tuple[TaskSynapseObject, str] | None: Tuple containing the generated task synapse object
+            tuple[TaskSynapseObject | None, dict[str, int] | ObfuscatedModelMap]: Tuple containing the generated task synapse object
             and ground truth, or None if generation fails
         """
         task_id = get_new_uuid()
@@ -851,7 +856,7 @@ class Validator:
             data: SyntheticQA | None = await SyntheticAPI.get_qa()
             if not data or not data.responses:
                 logger.error("Invalid or empty data returned from synthetic data API")
-                return None, None
+                return None, None, {}
 
             # Create criteria for each completion response
             criteria: List[CriteriaType] = [
@@ -865,6 +870,7 @@ class Validator:
             for response in data.responses:
                 response.criteria_types = criteria
 
+            obfuscated_model_to_model = self.obfuscate_model_names(data.responses)
             synapse = TaskSynapseObject(
                 task_id=task_id,
                 prompt=data.prompt,
@@ -873,7 +879,7 @@ class Validator:
                 completion_responses=data.responses,
             )
 
-            return synapse, data.ground_truth
+            return synapse, data.ground_truth, obfuscated_model_to_model
 
         except (RetryError, ValueError, aiohttp.ClientError) as e:
             logger.error(
@@ -883,12 +889,13 @@ class Validator:
             logger.error(f"Unexpected error during synthetic data generation: {e}")
             logger.debug(f"Traceback: {traceback.format_exc()}")
 
-        return None, None
+        return None, None, {}
 
     async def send_request(
         self,
         synapse: TaskSynapseObject | None = None,
         ground_truth: dict[str, int] | None = None,
+        obfuscated_model_to_model: ObfuscatedModelMap = {},
     ):
         if not synapse:
             logger.warning("No synapse provided... skipping")
@@ -896,6 +903,10 @@ class Validator:
 
         if not self._active_miner_uids:
             logger.info("No active miners to send request to... skipping")
+            return
+
+        if not synapse.completion_responses:
+            logger.warning("No completion responses to send... skipping")
             return
 
         start = get_epoch_time()
@@ -924,6 +935,22 @@ class Validator:
         for response in miner_responses:
             try:
                 if not response.dojo_task_id:
+                    continue
+
+                # map obfuscated model names back to the original model names
+                real_model_ids = []
+                if response.completion_responses:
+                    for i, completion in enumerate(response.completion_responses):
+                        found_model_id = obfuscated_model_to_model.get(
+                            completion.model, None
+                        )
+                        real_model_ids.append(found_model_id)
+                        if found_model_id:
+                            response.completion_responses[i].model = found_model_id
+                            synapse.completion_responses[i].model = found_model_id
+
+                if any(c is None for c in real_model_ids):
+                    logger.warning("Failed to map obfuscated model to original model")
                     continue
 
                 response.miner_hotkey = response.axon.hotkey if response.axon else None
@@ -1103,6 +1130,7 @@ class Validator:
 
             for result in results:
                 if result is None:
+                    logger.info("Result is None, skipping")
                     pass
                 elif isinstance(result, TaskSynapseObject):
                     updated_miner_responses.append(result)
@@ -1145,11 +1173,8 @@ class Validator:
             miner_response.axon.hotkey, miner_response.dojo_task_id
         )
 
-        logger.debug(
-            f"Task results......: {[result.result_data for result in task_results]}"
-        )
-
         if not task_results:
+            logger.debug("No task results from miner, skipping")
             return None
 
         # Calculate average scores
@@ -1159,6 +1184,7 @@ class Validator:
 
         # Check for completion responses
         if not miner_response.completion_responses:
+            logger.debug("No completion responses, skipping")
             return None
 
         for completion in miner_response.completion_responses:
@@ -1230,15 +1256,17 @@ class Validator:
 
         for result in task_results:
             for result_data in result.result_data:
-                type = result_data.type
-                value = result_data.value
-                if type == CriteriaTypeEnum.SCORE:
-                    for model_id, score in value.items():
-                        real_model_id = obfuscated_to_real_model_id.get(
-                            model_id, model_id
+                model = getattr(result_data, "model", None)
+                criteria = getattr(result_data, "criteria", None)
+                if model is not None and criteria and len(criteria) > 0:
+                    # TODO refactor to handle multiple criteria, when we have more than one criterion
+                    criterion = criteria[0]
+                    if criterion.get("type") == CriteriaTypeEnum.SCORE:
+                        real_model_id = obfuscated_to_real_model_id.get(model, model)
+                        model_id_to_total_score[real_model_id] += criterion.get(
+                            "value", 0
                         )
-                        model_id_to_total_score[real_model_id] += score
-                    num_scores_by_workers += 1
+                        num_scores_by_workers += 1
 
         # Calculate averages
         return {
