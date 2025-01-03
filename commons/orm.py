@@ -2,9 +2,8 @@ import asyncio
 import json
 import math
 from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator, List
+from typing import AsyncGenerator, Dict, List
 
-import torch
 from bittensor.utils.btlogging import logging as logger
 
 from commons.exceptions import (
@@ -24,7 +23,6 @@ from database.prisma import Json
 from database.prisma.errors import PrismaError
 from database.prisma.models import (
     GroundTruth,
-    Score_Model,
     ValidatorTask,
 )
 from database.prisma.types import (
@@ -32,8 +30,6 @@ from database.prisma.types import (
     MinerResponseCreateWithoutRelationsInput,
     MinerScoreCreateInput,
     MinerScoreUpdateInput,
-    Score_ModelCreateInput,
-    Score_ModelUpdateInput,
     ValidatorTaskInclude,
     ValidatorTaskWhereInput,
 )
@@ -420,94 +416,167 @@ class ORM:
             logger.error(f"Failed to save task: {e}")
             return None
 
-    # Remove this as scores will be saved in .pt file instead
-    # @staticmethod
-    async def create_or_update_validator_score(scores: torch.Tensor) -> None:
-        # Save scores as a single record
-        score_model = await Score_Model.prisma().find_first()
-        scores_list = scores.tolist()
-        if score_model:
-            await Score_Model.prisma().update(
-                where={"id": score_model.id},
-                data=Score_ModelUpdateInput(score=(json.dumps(scores_list))),
-            )
-        else:
-            await Score_Model.prisma().create(
-                data=Score_ModelCreateInput(
-                    score=(json.dumps(scores_list)),
-                )
-            )
-
-    # TODO: Remove this as scores will be saved in .pt file instead
     @staticmethod
-    async def get_validator_score() -> torch.Tensor | None:
-        score_record = await Score_Model.prisma().find_first(
-            order={"created_at": "desc"}
-        )
-        if not score_record:
-            return None
+    async def update_miner_scores(
+        task_id: str,
+        hotkey_to_scores: Dict[str, Scores],
+        batch_size: int = 10,
+        max_retries: int = 3,
+    ) -> tuple[bool, list[str]]:
+        """Update scores for miners in the MinerScore table.
 
-        return torch.tensor(json.loads(score_record.score))
+        Args:
+            task_id: The validator task ID
+            hotkey_to_scores: Dictionary mapping miner hotkeys to their Scores
+            batch_size: Number of scores to process in each batch
+            max_retries: Maximum number of retry attempts for failed updates
+
+        Returns:
+            Tuple containing:
+            - Boolean indicating if all updates were successful
+            - List of hotkeys that failed to update
+        """
+        failed_hotkeys = []
+
+        try:
+            # Get all miner responses for this task
+            miner_responses = await prisma.minerresponse.find_many(
+                where={
+                    "validator_task_id": task_id,
+                    "hotkey": {"in": list(hotkey_to_scores.keys())},
+                },
+                include={"Score": {"include": {"criterion_relation": True}}},
+            )
+
+            # Process in batches
+            for i in range(0, len(miner_responses), batch_size):
+                batch = miner_responses[i : i + batch_size]
+
+                for attempt in range(max_retries):
+                    try:
+                        async with prisma.tx() as tx:
+                            for miner_response in batch:
+                                scores = hotkey_to_scores.get(miner_response.hotkey)
+                                if not scores:
+                                    continue
+
+                                # Update each MinerScore record for this miner response
+                                for score_record in miner_response.Score or []:
+                                    # Merge existing scores with new scores
+                                    existing_scores = json.loads(score_record.scores)
+                                    updated_scores = {
+                                        **existing_scores,
+                                        **scores.model_dump(),
+                                    }
+
+                                    await tx.minerscore.update(
+                                        where={
+                                            "criterion_id_miner_response_id": {
+                                                "criterion_id": score_record.criterion_id,
+                                                "miner_response_id": miner_response.id,
+                                            }
+                                        },
+                                        data={
+                                            "scores": Json(json.dumps(updated_scores))
+                                        },
+                                    )
+                        break
+
+                    except Exception as e:
+                        if attempt == max_retries - 1:
+                            logger.error(
+                                f"Failed to update scores for batch after {max_retries} attempts: {e}"
+                            )
+                            failed_hotkeys.extend([m.hotkey for m in batch])
+                        else:
+                            await asyncio.sleep(2**attempt)
+
+            return len(failed_hotkeys) == 0, failed_hotkeys
+
+        except Exception as e:
+            logger.error(f"Error updating miner scores: {e}")
+            return False, list(hotkey_to_scores.keys())
 
     # TODO: Remove this as this was only used for wandb logging
-    # @staticmethod
-    # async def get_scores_and_ground_truth_by_dojo_task_id(
-    #     dojo_task_id: str,
-    # ) -> dict[str, dict[str, float | int | None]]:
-    #     """
-    #     Fetch the scores, model IDs from Completion_Response_Model for a given Dojo task ID.
-    #     Also fetches rank IDs from Ground_Truth_Model for the given Dojo task ID.
+    @staticmethod
+    async def get_scores_and_ground_truth_by_dojo_task_id(
+        dojo_task_id: str,
+    ) -> dict[str, dict[str, float | int | dict | None]]:
+        """
+        Fetch the scores, model IDs from Completion_Response_Model for a given Dojo task ID.
+        Also fetches rank IDs from Ground_Truth_Model for the given Dojo task ID.
 
-    #     Args:
-    #         dojo_task_id (str): The Dojo task ID to search for.
+        Args:
+            dojo_task_id (str): The Dojo task ID to search for.
 
-    #     Returns:
-    #         dict[str, dict[str, float | int | None]]: A dictionary mapping model ID to a dict containing score and rank_id.
-    #     """
-    #     try:
-    #         # First, find the Feedback_Request_Model with the given dojo_task_id
-    #         feedback_request = await Feedback_Request_Model.prisma().find_first(
-    #             where=Feedback_Request_ModelWhereInput(dojo_task_id=dojo_task_id),
-    #             include={
-    #                 "completions": True,
-    #                 "parent_request": {"include": {"ground_truths": True}},
-    #             },
-    #         )
+        Returns:
+            dict[str, dict[str, float | int | dict | None]]: A dictionary mapping model ID to a dict containing:
+                - score_data: Complete score data including raw_score, normalised_score, etc.
+                - ground_truth_rank_id: The ground truth rank ID for the model
+        """
+        try:
+            # Find the MinerResponse with the given dojo_task_id to get validator_task_id
+            miner_response = await prisma.minerresponse.find_first(
+                where={"dojo_task_id": dojo_task_id},
+                include={
+                    "validator_task_relation": {
+                        "include": {
+                            "completions": True,
+                            "ground_truth": True,
+                        }
+                    }
+                },
+            )
 
-    #         if not feedback_request:
-    #             logger.warning(
-    #                 f"No Feedback_Request_Model found for dojo_task_id: {dojo_task_id}"
-    #             )
-    #             return {}
+            if not miner_response or not miner_response.validator_task_relation:
+                logger.warning(
+                    f"No validator task found for dojo_task_id: {dojo_task_id}"
+                )
+                return {}
 
-    #         parent_request = feedback_request.parent_request
-    #         if not parent_request:
-    #             logger.warning(
-    #                 f"No parent request found for dojo_task_id: {dojo_task_id}"
-    #             )
-    #             return {}
+            validator_task = miner_response.validator_task_relation
 
-    #         rank_id_map = {
-    #             gt.obfuscated_model_id: gt.rank_id
-    #             for gt in parent_request.ground_truths
-    #         }
+            # Create mapping of model to ground truth rank_id
+            rank_id_map = {
+                gt.obfuscated_model_id: gt.rank_id
+                for gt in validator_task.ground_truth or []
+            }
 
-    #         # Extract scores from the completions
-    #         scores_and_gts = {
-    #             completion.model: {
-    #                 "score": completion.score,
-    #                 "ground_truth_rank_id": rank_id_map.get(completion.completion_id),
-    #             }
-    #             for completion in feedback_request.completions
-    #         }
+            # Extract scores from the completions
+            scores_and_gts = {
+                completion.model: {
+                    "score": None,  # Score will come from MinerScore table
+                    "ground_truth_rank_id": rank_id_map.get(completion.model),
+                }
+                for completion in validator_task.completions or []
+            }
 
-    #         return scores_and_gts
+            # Get scores from MinerScore table
+            miner_scores = await prisma.minerscore.find_many(
+                where={"miner_response_id": miner_response.id},
+                include={
+                    "criterion_relation": {"include": {"completion_relation": True}}
+                },
+            )
 
-    #     except Exception as e:
-    #         logger.error(
-    #             f"Error fetching completion scores and ground truths for dojo_task_id {dojo_task_id}: {e}"
-    #         )
-    #         return {}
+            # Update scores in the result
+            for score in miner_scores:
+                if (
+                    score.criterion_relation
+                    and score.criterion_relation.completion_relation
+                ):
+                    model = score.criterion_relation.completion_relation.model
+                    if model in scores_and_gts:
+                        score_data = json.loads(score.scores)
+                        scores_and_gts[model]["score_data"] = score_data
+
+            return scores_and_gts
+
+        except Exception as e:
+            logger.error(
+                f"Error fetching completion scores and ground truths for dojo_task_id {dojo_task_id}: {e}"
+            )
+            return {}
 
 
 # ---------------------------------------------------------------------------- #

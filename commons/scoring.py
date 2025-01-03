@@ -24,7 +24,7 @@ def _reward_cubic(
     translation: float,
     offset: float,
     visualize: bool = False,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray, torch.Tensor, torch.Tensor]:
     """Calculate cubic reward based on miner outputs and ground truth.
 
     Args:
@@ -50,31 +50,39 @@ def _reward_cubic(
 
     # shape: (num_miners,)
     # number range [-1, 1]
-    x = F.cosine_similarity(
+    cosine_similarity_scores = F.cosine_similarity(
         torch.from_numpy(miner_outputs.copy()),
         torch.from_numpy(ground_truth.copy()),
         dim=1,
     ).numpy()
 
     # Convert nans to -1 to send it to the bottom
-    x = np.where(np.isnan(x), -1, x)
+    cosine_similarity_scores = np.where(
+        np.isnan(cosine_similarity_scores), -1, cosine_similarity_scores
+    )
 
     # transform from range [-1, 1] to [0, 1]
-    x = (x + 1) / 2
-    logger.debug(f"scoring: cosine similarity shape: {x.shape}\n array: {x}")
+    normalised_cosine_similarity_scores = (cosine_similarity_scores + 1) / 2
+    logger.debug(
+        f"scoring: cosine similarity shape: {normalised_cosine_similarity_scores.shape}\n array: {normalised_cosine_similarity_scores}"
+    )
     # ensure sum is 1
-    x = F.normalize(torch.from_numpy(x), p=1, dim=0)
-    assert x.shape[0] == miner_outputs.shape[0]
+    normalised_cosine_similarity_scores = F.normalize(
+        torch.from_numpy(normalised_cosine_similarity_scores), p=1, dim=0
+    )
+    assert normalised_cosine_similarity_scores.shape[0] == miner_outputs.shape[0]
 
     # apply the cubic transformation
-    points = scaling * (x - translation) ** 3 + offset
+    cubic_reward_scores = (
+        scaling * (normalised_cosine_similarity_scores - translation) ** 3 + offset
+    )
     logger.debug(
-        f"scoring: cubic reward points shape: {points.shape}\n array: {points}"
+        f"scoring: cubic reward points shape: {cubic_reward_scores.shape}\n array: {cubic_reward_scores}"
     )
 
     # case where a miner provides the same score for all completions
     # convert any nans to zero
-    points = np.where(np.isnan(points), 0, points)
+    points = np.where(np.isnan(cubic_reward_scores), 0, cubic_reward_scores)
     logger.debug(
         f"scoring: cubic reward no nans shape: {points.shape}\n array: {points}"
     )
@@ -91,7 +99,12 @@ def _reward_cubic(
         _terminal_plot("scoring: cubic reward (minmax scaled)", points, sort=True)
 
     assert isinstance(points, np.ndarray)
-    return points
+    return (
+        points,
+        cosine_similarity_scores,
+        normalised_cosine_similarity_scores,
+        cubic_reward_scores,
+    )
 
 
 def _get_miner_response_by_criteria(criteria, response: CompletionResponse):
@@ -137,7 +150,7 @@ class Scoring:
         criteria: CriteriaType,
         ground_truth: dict[str, int],
         miner_responses: List[TaskSynapseObject],
-    ):
+    ) -> tuple[torch.Tensor, np.ndarray, np.ndarray, torch.Tensor, torch.Tensor]:
         """
         - Calculate score between all miner outputs and ground truth.
         - Ensures that the resulting tensor is normalized to sum to 1.
@@ -204,9 +217,12 @@ class Scoring:
 
         # l1_norm = np.linalg.norm(miner_outputs - ground_truth_arr, axis=1)
         # l1_norm = np.linalg.norm(miner_outputs - ground_truth_arr, axis=1)
-        cubic_reward: np.ndarray = _reward_cubic(
-            miner_outputs, ground_truth_arr, 0.006, 7, 2, visualize=True
-        )
+        (
+            cubic_reward,
+            cosine_similarity_scores,
+            normalised_cosine_similarity_scores,
+            cubic_reward_scores,
+        ) = _reward_cubic(miner_outputs, ground_truth_arr, 0.006, 7, 2, visualize=True)
         logger.debug(f"scoring: cubic reward\n{cubic_reward}")
 
         # normalize to ensure sum is 1
@@ -229,7 +245,13 @@ class Scoring:
             logger.debug(f"scoring: error calculating segment sums: {e}")
             pass
 
-        return torch.from_numpy(cubic_reward.copy())
+        return (
+            torch.from_numpy(cubic_reward.copy()),
+            miner_outputs_normalised,
+            cosine_similarity_scores,
+            normalised_cosine_similarity_scores,
+            cubic_reward_scores,
+        )
 
     # ---------------------------------------------------------------------------- #
     #                           SCORING CORE FUNCTIONS                             #
@@ -323,12 +345,24 @@ class Scoring:
     ) -> Dict[str, Scores]:
         """Calculates and assigns scores based on criteria type."""
         if isinstance(criteria, ScoreCriteria):
-            gt_scores = cls.ground_truth_scoring(
-                criteria, ground_truth, valid_responses
-            )
+            (
+                gt_scores,
+                miner_outputs_normalised,
+                cosine_similarity_scores,
+                normalised_cosine_similarity_scores,
+                cubic_reward_scores,
+            ) = cls.ground_truth_scoring(criteria, ground_truth, valid_responses)
             for i, response in enumerate(valid_responses):
-                scores = score_dict.get(response.axon.hotkey, Scores())
+                if not response.axon or not response.axon.hotkey:
+                    continue
+                scores = score_dict[response.axon.hotkey]
                 scores.ground_truth_score = float(gt_scores[i])
+                scores.normalised_score = float(miner_outputs_normalised[i])
+                scores.cosine_similarity_score = float(cosine_similarity_scores[i])
+                scores.normalised_cosine_similarity_score = float(
+                    normalised_cosine_similarity_scores[i]
+                )
+                scores.cubic_reward_score = float(cubic_reward_scores[i])
                 score_dict[response.axon.hotkey] = scores
             return score_dict
         else:

@@ -417,9 +417,7 @@ class Validator:
         try:
             if np.count_nonzero(self.scores) == 0:
                 logger.warning("Scores are all zeros, but saving anyway!")
-                # raise EmptyScores("Skipping save as scores are all empty")
 
-            # await ORM.create_or_update_validator_score(self.scores)
             await ScoreStorage.save(self.scores)
             logger.success(f"📦 Saved validator state with scores: {self.scores}")
         except EmptyScores as e:
@@ -737,7 +735,10 @@ class Validator:
                         if processed_id:
                             processed_request_ids.append(processed_id)
                         for hotkey, score in hotkey_to_score.items():
-                            hotkey_to_all_scores[hotkey].append(score)
+                            if score.normalised_score is not None:
+                                hotkey_to_all_scores[hotkey].append(
+                                    score.ground_truth_score
+                                )
 
                 if processed_request_ids:
                     await ORM.mark_validator_task_as_processed(processed_request_ids)
@@ -1297,6 +1298,14 @@ class Validator:
                 validator_task=task.validator_task,
                 miner_responses=task.miner_responses,
             )
+
+            success, failed_hotkeys = await ORM.update_miner_scores(
+                task_id=task.validator_task.task_id, hotkey_to_scores=hotkey_to_scores
+            )
+
+            if not success:
+                logger.error(f"Failed to update scores for hotkeys: {failed_hotkeys}")
+
         except Exception as e:
             logger.error(
                 f"📝 Error occurred while calculating scores: {e}. Request ID: {task.validator_task.task_id}"
@@ -1381,14 +1390,18 @@ class Validator:
 
         wandb_data = jsonable_encoder(
             {
-                "request_id": task.validator_task.request_id,
+                "request_id": task.validator_task.task_id,
                 "task": task.validator_task.task_type,
-                "criteria": task.validator_task.criteria_types,
+                "criteria": (
+                    task.validator_task.completion_responses[0].criteria_types
+                    if task.validator_task.completion_responses
+                    else []
+                ),
                 "prompt": task.validator_task.prompt,
                 "completions": jsonable_encoder(
                     task.validator_task.completion_responses
                 ),
-                "num_completions": len(task.validator_task.completion_responses),
+                "num_completions": len(task.validator_task.completion_responses or []),
                 "scores": score_data,
                 "num_responses": len(task.miner_responses),
             }
@@ -1410,7 +1423,9 @@ class Validator:
                 )
                 hotkey_to_dojo_task_scores_and_gt.append(
                     {
-                        "hotkey": miner_response.axon.hotkey,
+                        "hotkey": (
+                            miner_response.axon.hotkey if miner_response.axon else None
+                        ),
                         "dojo_task_id": miner_response.dojo_task_id,
                         "scores_and_gt": model_to_score_and_gt_map,
                     }
