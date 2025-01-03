@@ -271,20 +271,26 @@ class Scoring:
         Returns:
             Dictionary mapping miner hotkeys to their calculated scores
         """
-        hotkey_to_scores: dict[str, Scores] = {}
-        # Initialize empty scores for all miners
-        for response in miner_responses:
-            if response.axon is None or response.axon.hotkey is None:
-                continue
-            hotkey_to_scores[response.axon.hotkey] = Scores()
+        # Early validation
 
-        # validation
-        if (
-            not validator_task.completion_responses
-            or not validator_task.completion_responses[0].criteria_types
-        ):
-            logger.error("No criteria types found in completion responses")
-            return hotkey_to_scores
+        if not validator_task.completion_responses:
+            logger.error("No completion responses in validator task")
+            return {}
+
+        if not validator_task.ground_truth:
+            logger.error("No ground truth found in validator task")
+            return {}
+
+        # Initialize empty scores for all miners
+        hotkey_to_scores: dict[str, Scores] = {
+            response.axon.hotkey: Scores()
+            for response in miner_responses
+            if response.axon and response.axon.hotkey
+        }
+
+        if not hotkey_to_scores:
+            logger.error("No valid miner hotkeys found")
+            return {}
 
         # Use criteria types from the first completion response. This assumes that all completions have the same criteria types
         criteria_types = validator_task.completion_responses[0].criteria_types

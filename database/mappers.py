@@ -370,24 +370,25 @@ def map_miner_response_to_task_synapse_object(
         TaskSynapseObject: The protocol object
     """
     # Get the validator task for its prompt and task type
-    validator_task = miner_response.validator_task_relation
-    if not validator_task:
-        raise ValueError("Validator task not found for miner response")
+    # validator_task = miner_response.validator_task_relation
+    # if not validator_task:
+    #     raise ValueError("Validator task not found for miner response")
 
-    if not validator_task:
-        raise ValueError("Validator task not found while mapping miner response")
+    # if not validator_task:
+    #     raise ValueError("Validator task not found while mapping miner response")
 
     return TaskSynapseObject(
-        task_id=validator_task.id,
+        task_id=miner_response.validator_task_id,
         previous_task_id=None,
-        prompt=validator_task.prompt,
-        task_type=validator_task.task_type,
-        expire_at=datetime_to_iso8601_str(validator_task.expire_at),
+        prompt="",
+        task_type="",
+        expire_at="",
         completion_responses=None,
         ground_truth=None,
         miner_hotkey=miner_response.hotkey,
         miner_coldkey=miner_response.coldkey,
         dojo_task_id=miner_response.dojo_task_id,
+        axon=bt.TerminalInfo(hotkey=miner_response.hotkey),
     )
 
 

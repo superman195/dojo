@@ -1063,13 +1063,15 @@ class Validator:
             expire_from=expire_from,
             expire_to=expire_to,
         ):
+            # Yield task batch first before break if no more batches
+            yield task_batch
+
             if not has_more_batches:
                 logger.success(
                     "No more unexpired tasks found for processing, exiting task monitoring."
                 )
                 gc.collect()
                 break
-            yield task_batch
 
     async def _update_task_results(
         self, task: DendriteQueryResponse
@@ -1139,8 +1141,12 @@ class Validator:
             )
 
         # Fetch task results
-        task_results = await self._get_task_results_from_miner(
+        task_results: List[TaskResult] = await self._get_task_results_from_miner(
             miner_response.axon.hotkey, miner_response.dojo_task_id
+        )
+
+        logger.debug(
+            f"Task results......: {[result.result_data for result in task_results]}"
         )
 
         if not task_results:
@@ -1321,6 +1327,7 @@ class Validator:
             f"Processed {len(hotkey_to_scores.keys())} responses for scoring."
         )
 
+        # TODO: If no hotkey to score for some reason, should we still mark the task as processed?
         if not hotkey_to_scores:
             logger.info("📝 Did not manage to generate a dict of hotkey to score")
             return task.validator_task.task_id, {}
