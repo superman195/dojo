@@ -1,6 +1,8 @@
 import json
 
 from database.client import connect_db, disconnect_db, prisma
+from database.prisma import Json
+from database.prisma.enums import CriteriaTypeEnum, TaskTypeEnum
 
 
 async def migrate():
@@ -17,11 +19,11 @@ async def migrate():
 
     for old_request in old_feedback_requests:
         # Map task type
-        task_type = "CODE_GENERATION"  # Default fallback
+        task_type = TaskTypeEnum.CODE_GENERATION  # Default fallback
         if old_request.task_type.lower().find("image") >= 0:
-            task_type = "TEXT_TO_IMAGE"
+            task_type = TaskTypeEnum.TEXT_TO_IMAGE
         elif old_request.task_type.lower().find("3d") >= 0:
-            task_type = "TEXT_TO_THREE_D"
+            task_type = TaskTypeEnum.TEXT_TO_THREE_D
 
         existing_task = await prisma.validatortask.find_unique(
             where={"id": old_request.id}
@@ -60,6 +62,9 @@ async def migrate():
                 "value": {},
             }
 
+            if not old_request.ground_truths or not old_request.completions:
+                continue
+
             # Get all ground truths and their corresponding scores
             for ground_truth in old_request.ground_truths:
                 # Find completion response for this ground truth
@@ -91,8 +96,7 @@ async def migrate():
                     where={"id": existing_miner_response.id},
                     data={
                         "coldkey": "",
-                        "expire_at": old_request.expire_at,
-                        "task_result": json.dumps(task_result),
+                        "task_result": Json(json.dumps(task_result)),
                         "created_at": old_request.created_at,
                         "updated_at": old_request.updated_at,
                     },
@@ -104,12 +108,14 @@ async def migrate():
                         "dojo_task_id": old_request.dojo_task_id,
                         "hotkey": old_request.hotkey,
                         "coldkey": "",
-                        "expire_at": old_request.expire_at,
-                        "task_result": json.dumps(task_result),
+                        "task_result": Json(json.dumps(task_result)),
                         "created_at": old_request.created_at,
                         "updated_at": old_request.updated_at,
                     }
                 )
+
+        if not old_request.completions:
+            continue
 
         # Migrate completions and create criteria
         for old_completion in old_request.completions:
@@ -142,6 +148,9 @@ async def migrate():
                     }
                 )
 
+            if not old_request.criteria_types:
+                continue
+
             # Migrate criteria types - now linked to completion instead of request
             for old_criterion in old_request.criteria_types:
                 # Skip RANKING_CRITERIA as it's no longer supported
@@ -160,8 +169,8 @@ async def migrate():
                 new_criterion = await prisma.criterion.create(
                     data={
                         "completion_id": new_completion.id,
-                        "criteria_type": criteria_type,
-                        "config": config,
+                        "criteria_type": CriteriaTypeEnum[criteria_type],
+                        "config": Json(config if config else "{}"),
                         "created_at": old_criterion.created_at,
                         "updated_at": old_criterion.updated_at,
                     }
@@ -189,11 +198,14 @@ async def migrate():
                         data={
                             "criterion_id": new_criterion.id,
                             "miner_response_id": miner_response.id,
-                            "scores": json.dumps({}),
+                            "scores": Json(json.dumps({})),
                             "created_at": old_criterion.created_at,
                             "updated_at": old_criterion.updated_at,
                         }
                     )
+
+        if not old_request.ground_truths:
+            continue
 
         # Migrate ground truths
         for old_ground_truth in old_request.ground_truths:

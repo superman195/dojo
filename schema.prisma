@@ -37,7 +37,7 @@ model ValidatorTask {
     child_tasks     ValidatorTask[] @relation("PreviousTask")
     completions     Completion[]
     miner_responses MinerResponse[]
-    ground_truth     GroundTruth[]
+    ground_truth    GroundTruth[]
 
     @@index([task_type, is_processed])
     @@index([expire_at])
@@ -94,7 +94,7 @@ model Criterion {
 model MinerScore {
     id                String   @id @default(uuid())
     criterion_id      String
-    miner_response_id String   @map("response_id")
+    miner_response_id String
     scores            Json     @db.JsonB // Type-specific score value
     created_at        DateTime @default(now())
     updated_at        DateTime @updatedAt

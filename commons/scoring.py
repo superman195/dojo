@@ -318,7 +318,7 @@ class Scoring:
                 return hotkey_to_scores
 
             try:
-                hotkey_to_scores = cls._assign_scores(
+                hotkey_to_scores = cls.score_by_criteria(
                     criteria,
                     valid_miner_responses,
                     validator_task.ground_truth,
@@ -336,7 +336,7 @@ class Scoring:
     #                           SCORING HELPER FUNCTIONS                           #
     # ---------------------------------------------------------------------------- #
     @classmethod
-    def _assign_scores(
+    def score_by_criteria(
         cls,
         criteria: CriteriaType,
         valid_responses: List[TaskSynapseObject],

@@ -67,11 +67,6 @@ class DojoAPI:
                         f"Retrying in {delay:.2f} seconds..."
                     )
                     await asyncio.sleep(delay)
-                else:
-                    logger.error(
-                        f"Failed to get task results for dojo task id {dojo_task_id} after {cls.MAX_RETRIES} attempts: {e}"
-                    )
-                    return None
 
         logger.error(
             f"Failed to get task results for dojo task id {dojo_task_id} after {cls.MAX_RETRIES} retries"
