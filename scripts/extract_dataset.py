@@ -27,7 +27,7 @@ from database.prisma.types import (
 )
 from dojo import TASK_DEADLINE
 from dojo.protocol import (
-    CompletionResponses,
+    CompletionResponse,
     DendriteQueryResponse,
 )
 from dojo.utils.config import source_dotenv
@@ -46,7 +46,7 @@ if MAX_CHUNK_SIZE_MB is None:
 # represents a row in the jsonl dataset
 class Row(BaseModel):
     prompt: str
-    completions: list[CompletionResponses]
+    completions: list[CompletionResponse]
     # shape (num_miners, num_completions)
     raw_scores: list[list[float]]
     # shape (num_completions)
@@ -79,15 +79,16 @@ async def build_jsonl(filename: str):
 
             for task in task_batch:
                 # Extract prompt from validator request
-                prompt = task.request.prompt
+                prompt = task.validator_task.prompt
 
                 # Extract completions from miner responses
-                completions = task.request.completion_responses
+                completions = task.validator_task.completion_responses
 
                 raw_scores = []
                 for miner_response in task.miner_responses:
+                    # TODO ensure ordering
                     miner_ratings = [
-                        c.score for c in miner_response.completion_responses
+                        c.score for c in miner_response.completion_responses or []
                     ]
                     if any(rating is None for rating in miner_ratings):
                         continue
@@ -104,15 +105,15 @@ async def build_jsonl(filename: str):
                     logger.info(f"mean_scores shape: {mean_scores.shape}")
                     jsonl_row = Row(
                         prompt=prompt,
-                        completions=completions,
+                        completions=completions or [],
                         raw_scores=raw_scores,
                         mean_scores=mean_scores.tolist(),
-                        cid_to_ground_truth_rank=task.request.ground_truth,
+                        cid_to_ground_truth_rank=task.validator_task.ground_truth or {},
                     )
                 else:
                     jsonl_row = Row(
                         prompt=prompt,
-                        completions=completions,
+                        completions=completions or [],
                         raw_scores=[],
                         mean_scores=[],
                         cid_to_ground_truth_rank={},
@@ -196,12 +197,12 @@ async def get_processed_tasks(
         # NOTE: technically a DendriteQueryResponse represents a task
         tasks: list[DendriteQueryResponse] = []
         for validator_request in validator_requests:
-            vali_request = map_feedback_request_model_to_feedback_request(
+            validator_task = map_feedback_request_model_to_feedback_request(
                 validator_request
             )
-            logger.info(f"Vali request ground truths: {vali_request.ground_truth}")
+            logger.info(f"Vali request ground truths: {validator_task.ground_truth}")
 
-            m_responses = list(
+            miner_responses = list(
                 map(
                     lambda x: map_feedback_request_model_to_feedback_request(
                         x, is_miner=True
@@ -211,7 +212,9 @@ async def get_processed_tasks(
             )
 
             tasks.append(
-                DendriteQueryResponse(request=vali_request, miner_responses=m_responses)
+                DendriteQueryResponse(
+                    validator_task=validator_task, miner_responses=miner_responses
+                )
             )
 
         # yield responses, so caller can do something
