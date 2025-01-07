@@ -58,7 +58,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["commitizen", "curlify2", "pytest", "ruff", "tabulate", "termcolor"]
-test = ["pytest", "nox"]
+test = ["pytest", "nox", 'pytest-asyncio==0.25.1']
 dataset = ["aioboto3", "aiofiles", "python-multipart"]
 
 [project.scripts]
