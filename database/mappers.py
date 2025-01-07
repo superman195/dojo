@@ -97,6 +97,7 @@ def map_task_synapse_object_to_completions(
     completions: list[CompletionCreateInput] = []
     for resp in synapse.completion_responses:
         completion = CompletionCreateInput(
+            completion_id=resp.completion_id,
             validator_task_id=synapse.task_id,
             model=resp.model,
             completion=Json(json.dumps(resp.completion, default=vars)),
@@ -324,7 +325,7 @@ def map_validator_task_to_task_synapse_object(
             CompletionResponse(
                 model=completion.model,
                 completion=json.loads(completion.completion),
-                completion_id=completion.id,
+                completion_id=completion.completion_id,
             )
         )
 
@@ -388,7 +389,7 @@ def map_miner_response_to_task_synapse_object(
             CompletionResponse(
                 model=completion.model,
                 completion=json.loads(completion.completion),
-                completion_id=completion.id,
+                completion_id=completion.completion_id,
             )
             for completion in validator_task.completions or []
         ],  # need to include completion responses from validator task

@@ -149,34 +149,12 @@ class Miner(BaseMinerNeuron):
                 synapse.dojo_task_id
             )
 
+            transformed_results = []
             if task_results:
-                # Transform the task results to match our model structure
-                transformed_results = []
-                for result in task_results:
-                    # Map task_id to dojo_task_id and ensure all required fields are present
-                    transformed_result = {
-                        "id": result.get("id"),
-                        "created_at": result.get("created_at"),
-                        "updated_at": result.get("updated_at"),
-                        "status": result.get("status"),
-                        "dojo_task_id": result.get(
-                            "task_id"
-                        ),  # Map task_id to dojo_task_id
-                        "worker_id": result.get("worker_id"),
-                        "result_data": [],
-                    }
-
-                    # Transform result_data keeping the original criteria structure
-                    if "result_data" in result:
-                        transformed_result["result_data"] = [
-                            {
-                                "model": r.get("model", ""),
-                                "criteria": r.get("criteria", []),
-                            }
-                            for r in result["result_data"]
-                        ]
-
-                    transformed_results.append(transformed_result)
+                transformed_results = [
+                    {**result, "dojo_task_id": result.pop("task_id", None)}
+                    for result in (r.copy() for r in task_results)
+                ]
 
                 # Convert transformed results to TaskResult objects
                 synapse.task_results = [

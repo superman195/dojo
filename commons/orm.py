@@ -26,13 +26,14 @@ from database.prisma.models import GroundTruth, ValidatorTask
 from database.prisma.types import (
     CriterionWhereInput,
     MinerResponseCreateWithoutRelationsInput,
+    MinerResponseInclude,
     MinerScoreCreateInput,
     MinerScoreUpdateInput,
     ValidatorTaskInclude,
     ValidatorTaskWhereInput,
 )
 from dojo import TASK_DEADLINE
-from dojo.protocol import DendriteQueryResponse, Scores, TaskSynapseObject
+from dojo.protocol import DendriteQueryResponse, Scores, TaskResult, TaskSynapseObject
 
 
 class ORM:
@@ -220,6 +221,75 @@ class ORM:
     async def get_num_processed_tasks() -> int:
         return await ValidatorTask.prisma().count(where={"is_processed": True})
 
+    @staticmethod
+    async def update_miner_task_results(
+        miner_hotkey: str,
+        dojo_task_id: str,
+        task_results: List[TaskResult],
+        max_retries: int = 3,
+    ) -> bool:
+        """Updates the task_result field of a MinerResponse with the provided task results.
+
+        Args:
+            miner_hotkey (str): The hotkey of the miner
+            dojo_task_id (str): The Dojo task ID
+            task_results (List[TaskResult]): List of task results to store
+            max_retries (int, optional): Maximum number of retry attempts. Defaults to 3.
+
+        Returns:
+            bool: True if update was successful, False otherwise
+        """
+        try:
+            for attempt in range(max_retries):
+                try:
+                    # Convert task_results to JSON-compatible format
+                    task_results_json = Json(
+                        [result.model_dump() for result in task_results]
+                    )
+
+                    # Update the miner response
+                    updated = await prisma.minerresponse.update_many(
+                        where={
+                            "hotkey": miner_hotkey,
+                            "dojo_task_id": dojo_task_id,
+                        },
+                        data={
+                            "task_result": task_results_json,
+                            "updated_at": datetime.now(timezone.utc),
+                        },
+                    )
+
+                    if updated:
+                        logger.success(
+                            f"Updated task results for miner {miner_hotkey}, dojo_task_id {dojo_task_id}"
+                        )
+                        return True
+                    else:
+                        if attempt == max_retries - 1:
+                            logger.error(
+                                f"Failed to update task results after {max_retries} attempts"
+                            )
+                        else:
+                            logger.warning(
+                                f"Retrying update, attempt {attempt+2}/{max_retries}"
+                            )
+                            await asyncio.sleep(2**attempt)
+
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        logger.error(f"Error updating task results: {e}")
+                    else:
+                        logger.warning(
+                            f"Error during attempt {attempt+1}, retrying: {e}"
+                        )
+                        await asyncio.sleep(2**attempt)
+
+            return False
+
+        except Exception as e:
+            logger.error(f"Unexpected error updating task results: {e}")
+            return False
+
     # TODO: How to store miner scores
     @staticmethod
     async def update_miner_raw_scores(
@@ -387,7 +457,6 @@ class ORM:
                 created_task = await tx.validatortask.create(data=validator_task_data)
 
                 # Create completions separately, ValidatorTaskCreateInput does not support CompletionCreateInput
-
                 completions = map_task_synapse_object_to_completions(
                     validator_task, created_task.id
                 )
@@ -454,7 +523,9 @@ class ORM:
                     "validator_task_id": task_id,
                     "hotkey": {"in": list(hotkey_to_scores.keys())},
                 },
-                include={"Score": {"include": {"criterion_relation": True}}},
+                include=MinerResponseInclude(
+                    {"score": {"include": {"criterion_relation": True}}}
+                ),
             )
 
             # Process in batches
@@ -473,9 +544,14 @@ class ORM:
                                 for score_record in miner_response.score or []:
                                     # Merge existing scores with new scores
                                     existing_scores = json.loads(score_record.scores)
+                                    new_scores = scores.model_dump()
                                     updated_scores = {
-                                        **existing_scores,
-                                        **scores.model_dump(),
+                                        k: (
+                                            new_scores.get(k)
+                                            if new_scores.get(k) is not None
+                                            else v
+                                        )
+                                        for k, v in existing_scores.items()
                                     }
 
                                     await tx.minerscore.update(

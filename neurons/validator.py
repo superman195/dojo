@@ -1177,6 +1177,18 @@ class Validator:
             logger.debug("No task results from miner, skipping")
             return None
 
+        # Update the task results in the database
+        success = await ORM.update_miner_task_results(
+            miner_hotkey=miner_response.axon.hotkey,
+            dojo_task_id=miner_response.dojo_task_id,
+            task_results=task_results,
+        )
+
+        if not success:
+            logger.warning(
+                f"Failed to update task_result for miner {miner_response.axon.hotkey}"
+            )
+
         # Calculate average scores
         model_id_to_avg_score = self._calculate_averages(
             task_results, obfuscated_to_real_model_id
@@ -1188,8 +1200,8 @@ class Validator:
             return None
 
         for completion in miner_response.completion_responses:
-            if completion.model in model_id_to_avg_score:
-                completion.score = model_id_to_avg_score[completion.model]
+            if completion.completion_id in model_id_to_avg_score:
+                completion.score = model_id_to_avg_score[completion.completion_id]
 
         return miner_response
 

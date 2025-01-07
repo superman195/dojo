@@ -31,6 +31,7 @@ model ValidatorTask {
     expire_at        DateTime
     created_at       DateTime     @default(now())
     updated_at       DateTime     @updatedAt
+    metadata         Json?        @db.JsonB
 
     // Relationships
     parent_task     ValidatorTask?  @relation("PreviousTask", fields: [previous_task_id], references: [id])
@@ -38,7 +39,6 @@ model ValidatorTask {
     completions     Completion[]
     miner_responses MinerResponse[]
     ground_truth    GroundTruth[]
-    metadata        Json?           @db.JsonB
 
     @@index([task_type, is_processed])
     @@index([expire_at])
@@ -65,6 +65,7 @@ model MinerResponse {
 
 model Completion {
     id                String   @id @default(uuid())
+    completion_id     String
     validator_task_id String
     model             String
     completion        Json     @db.JsonB
@@ -106,7 +107,7 @@ model MinerScore {
     miner_response_relation MinerResponse @relation(fields: [miner_response_id], references: [id], onDelete: Cascade)
 
     @@unique([criterion_id, miner_response_id])
-    @@map("score")
+    @@map("miner_score")
 }
 
 model GroundTruth {
