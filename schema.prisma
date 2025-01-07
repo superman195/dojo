@@ -38,6 +38,7 @@ model ValidatorTask {
     completions     Completion[]
     miner_responses MinerResponse[]
     ground_truth    GroundTruth[]
+    metadata        Json?           @db.JsonB
 
     @@index([task_type, is_processed])
     @@index([expire_at])
@@ -58,6 +59,7 @@ model MinerResponse {
     validator_task_relation ValidatorTask @relation(fields: [validator_task_id], references: [id])
     score                   MinerScore[]
 
+    @@index([dojo_task_id])
     @@map("miner_response")
 }
 
