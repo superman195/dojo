@@ -400,7 +400,7 @@ def map_miner_response_to_task_synapse_object(
     )
 
 
-def map_feedback_request_model_to_feedback_request(
+def map_feedback_request_model_to_task_synapse(
     model: Feedback_Request_Model, is_miner: bool = False
 ) -> TaskSynapseObject:
     """Smaller function to map Feedback_Request_Model to FeedbackRequest, meant to be used when reading from database.
@@ -435,6 +435,7 @@ def map_feedback_request_model_to_feedback_request(
                 completion=json.loads(completion.completion),
                 rank_id=completion.rank_id,
                 score=completion.score,
+                criteria_types=criteria_types,
             )
             for completion in model.completions
         ]
@@ -448,10 +449,9 @@ def map_feedback_request_model_to_feedback_request(
         if is_miner:
             # Create FeedbackRequest object
             feedback_request = TaskSynapseObject(
-                request_id=model.request_id,
+                task_id=model.request_id,
                 prompt=model.prompt,
                 task_type=model.task_type,
-                criteria_types=criteria_types,
                 completion_responses=completion_responses,
                 dojo_task_id=model.dojo_task_id,
                 expire_at=datetime_to_iso8601_str(model.expire_at),
@@ -459,10 +459,9 @@ def map_feedback_request_model_to_feedback_request(
             )
         else:
             feedback_request = TaskSynapseObject(
-                request_id=model.request_id,
+                task_id=model.request_id,
                 prompt=model.prompt,
                 task_type=model.task_type,
-                criteria_types=criteria_types,
                 completion_responses=completion_responses,
                 dojo_task_id=model.dojo_task_id,
                 expire_at=datetime_to_iso8601_str(model.expire_at),
