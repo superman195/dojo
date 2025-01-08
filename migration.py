@@ -1,5 +1,7 @@
 import json
+from functools import lru_cache
 
+import bittensor as bt
 from bittensor.utils.btlogging import logging as logger
 
 from database.client import connect_db, disconnect_db, prisma
@@ -7,8 +9,18 @@ from database.prisma import Json
 from database.prisma.enums import CriteriaTypeEnum, TaskTypeEnum
 
 
+@lru_cache(maxsize=1024)
+def get_coldkey_from_hotkey(subtensor: bt.Subtensor, hotkey: str) -> str:
+    coldkey_scale_encoded = subtensor.query_subtensor(
+        name="Owner",
+        params=[hotkey],
+    )
+    return coldkey_scale_encoded.value  # type: ignore
+
+
 async def migrate():
     await connect_db()
+    subtensor = bt.subtensor(network="finney")
 
     # Fetch all old feedback requests
     old_feedback_requests = await prisma.feedback_request_model.find_many(
@@ -98,12 +110,13 @@ async def migrate():
                     "hotkey": old_request.hotkey,
                 }
             )
+            coldkey = get_coldkey_from_hotkey(subtensor, old_request.hotkey)
 
             if existing_miner_response:
                 miner_response = await prisma.minerresponse.update(
                     where={"id": existing_miner_response.id},
                     data={
-                        "coldkey": "",
+                        "coldkey": coldkey,
                         "task_result": Json(json.dumps(task_result)),
                         "created_at": old_request.created_at,
                         "updated_at": old_request.updated_at,
@@ -115,7 +128,7 @@ async def migrate():
                         "validator_task_id": new_validator_task.id,
                         "dojo_task_id": old_request.dojo_task_id,
                         "hotkey": old_request.hotkey,
-                        "coldkey": "",
+                        "coldkey": coldkey,
                         "task_result": Json(json.dumps(task_result)),
                         "created_at": old_request.created_at,
                         "updated_at": old_request.updated_at,
