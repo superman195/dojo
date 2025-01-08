@@ -115,6 +115,11 @@ def minmax_scale(tensor: torch.Tensor | np.ndarray) -> torch.Tensor:
         tensor = torch.from_numpy(tensor)
     min = tensor.min()
     max = tensor.max()
+
+    # If max == min, return a tensor of ones
+    if max == min:
+        return torch.ones_like(tensor)
+
     return (tensor - min) / (max - min)
 
 
@@ -148,7 +153,14 @@ class Scoring:
         criteria: CriteriaType,
         ground_truth: dict[str, int],
         miner_responses: List[TaskSynapseObject],
-    ) -> tuple[torch.Tensor, np.ndarray, np.ndarray, torch.Tensor, torch.Tensor]:
+    ) -> tuple[
+        torch.Tensor,
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
         """
         - Calculate score between all miner outputs and ground truth.
         - Ensures that the resulting tensor is normalized to sum to 1.
@@ -183,7 +195,7 @@ class Scoring:
             curr_miner_outputs = []
             for completion in sorted(
                 response.completion_responses or [],
-                key=lambda r: cids_sorted.index(r.model),
+                key=lambda r: cids_sorted.index(r.completion_id),
             ):
                 curr_miner_outputs.append(
                     _get_miner_response_by_criteria(criteria, completion)
@@ -203,14 +215,12 @@ class Scoring:
             f"scoring: raw miner outputs with nans\n{miner_outputs_normalised}"
         )
 
-        miner_outputs = miner_outputs_normalised
-
         # use minmax scale to ensure ground truth is in the range [0, 1]
         ground_truth_arr = Scoring._convert_ground_truth_ranks_to_scores(
             cid_with_rank_sorted
         )
 
-        logger.info(f"scoring: Miner outputs\n{miner_outputs}")
+        logger.info(f"scoring: Miner outputs normalised\n{miner_outputs_normalised}")
         logger.info(f"scoring: Ground truth\n{ground_truth_arr}")
 
         # l1_norm = np.linalg.norm(miner_outputs - ground_truth_arr, axis=1)
@@ -245,6 +255,7 @@ class Scoring:
 
         return (
             torch.from_numpy(cubic_reward.copy()),
+            miner_outputs,
             miner_outputs_normalised,
             cosine_similarity_scores,
             normalised_cosine_similarity_scores,
@@ -259,7 +270,7 @@ class Scoring:
         cls,
         validator_task: TaskSynapseObject,
         miner_responses: List[TaskSynapseObject],
-    ) -> Dict[str, Scores]:
+    ) -> List[TaskSynapseObject]:
         """Calculates scores for miners.
 
         Args:
@@ -269,26 +280,16 @@ class Scoring:
         Returns:
             Dictionary mapping miner hotkeys to their calculated scores
         """
-        # Early validation
+        updated_miner_responses = []
 
+        # Early validation
         if not validator_task.completion_responses:
             logger.error("No completion responses in validator task")
-            return {}
+            return updated_miner_responses
 
         if not validator_task.ground_truth:
             logger.error("No ground truth found in validator task")
-            return {}
-
-        # Initialize empty scores for all miners
-        hotkey_to_scores: dict[str, Scores] = {
-            response.axon.hotkey: Scores()
-            for response in miner_responses
-            if response.axon and response.axon.hotkey
-        }
-
-        if not hotkey_to_scores:
-            logger.error("No valid miner hotkeys found")
-            return {}
+            return updated_miner_responses
 
         # Use criteria types from the first completion response. This assumes that all completions have the same criteria types
         criteria_types = validator_task.completion_responses[0].criteria_types
@@ -310,7 +311,7 @@ class Scoring:
 
             if not valid_miner_responses:
                 logger.info(f"📝 No valid responses for {validator_task.task_id}")
-                return hotkey_to_scores
+                return updated_miner_responses
 
             logger.info(
                 f"📝 Filtered {len(valid_miner_responses)} valid responses for task id {validator_task.task_id}"
@@ -319,14 +320,13 @@ class Scoring:
             # Check if ground truth is None
             if validator_task.ground_truth is None:
                 logger.error("No ground truth found in validator task")
-                return hotkey_to_scores
+                return updated_miner_responses
 
             try:
-                hotkey_to_scores = cls.score_by_criteria(
+                updated_miner_responses = cls.score_by_criteria(
                     criteria,
                     valid_miner_responses,
                     validator_task.ground_truth,
-                    hotkey_to_scores,
                 )
             except NotImplementedError:
                 logger.warning(
@@ -334,7 +334,7 @@ class Scoring:
                 )
                 continue
 
-        return hotkey_to_scores
+        return updated_miner_responses
 
     # ---------------------------------------------------------------------------- #
     #                           SCORING HELPER FUNCTIONS                           #
@@ -345,29 +345,47 @@ class Scoring:
         criteria: CriteriaType,
         valid_responses: List[TaskSynapseObject],
         ground_truth: Dict[str, int],
-        score_dict: Dict[str, Scores],
-    ) -> Dict[str, Scores]:
+    ) -> List[TaskSynapseObject]:
         """Calculates and assigns scores based on criteria type."""
-        if isinstance(criteria, ScoreCriteria):
-            (
-                gt_scores,
-                miner_outputs_normalised,
-                cosine_similarity_scores,
-                normalised_cosine_similarity_scores,
-                cubic_reward_scores,
-            ) = cls.ground_truth_scoring(criteria, ground_truth, valid_responses)
-            for i, response in enumerate(valid_responses):
-                if not response.axon or not response.axon.hotkey:
-                    continue
-                scores = score_dict[response.axon.hotkey]
-                scores.ground_truth_score = float(gt_scores[i])
-                scores.normalised_score = float(miner_outputs_normalised[i])
-                scores.cosine_similarity_score = float(cosine_similarity_scores[i])
-                scores.normalised_cosine_similarity_score = float(
-                    normalised_cosine_similarity_scores[i]
-                )
-                scores.cubic_reward_score = float(cubic_reward_scores[i])
-                score_dict[response.axon.hotkey] = scores
-            return score_dict
-        else:
+        if not isinstance(criteria, ScoreCriteria):
             raise NotImplementedError("Only score criteria is supported")
+
+        (
+            gt_score,
+            miner_outputs,
+            miner_outputs_normalised,
+            cosine_similarity_scores,
+            normalised_cosine_similarity_scores,
+            cubic_reward_scores,
+        ) = cls.ground_truth_scoring(criteria, ground_truth, valid_responses)
+
+        if miner_outputs_normalised.shape[0] == 1:
+            miner_outputs_normalised = miner_outputs_normalised.T
+            miner_outputs = miner_outputs.T
+
+        gt_score_float = float(gt_score[0])
+        cos_sim_float = float(cosine_similarity_scores[0])
+        norm_cos_sim_float = float(normalised_cosine_similarity_scores[0])
+        cubic_reward_float = float(cubic_reward_scores[0])
+
+        for i, response in enumerate(valid_responses):
+            if not response.axon or not response.axon.hotkey:
+                continue
+
+            for j, completion_response in enumerate(
+                response.completion_responses or []
+            ):
+                scores = Scores(
+                    raw_score=float(miner_outputs[j, 0]),
+                    ground_truth_score=gt_score_float,
+                    normalised_score=float(miner_outputs_normalised[j, 0]),
+                    cosine_similarity_score=cos_sim_float,
+                    normalised_cosine_similarity_score=norm_cos_sim_float,
+                    cubic_reward_score=cubic_reward_float,
+                )
+
+                for criteria in completion_response.criteria_types:
+                    if isinstance(criteria, ScoreCriteria):
+                        criteria.scores = scores
+
+        return valid_responses

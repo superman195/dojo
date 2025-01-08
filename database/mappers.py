@@ -22,7 +22,6 @@ from database.prisma.types import (
 from dojo.protocol import (
     CompletionResponse,
     CriteriaType,
-    MultiSelectCriteria,
     ScoreCriteria,
     TaskSynapseObject,
 )
@@ -107,10 +106,6 @@ def _map_criteria_type_to_enum(criteria: CriteriaType) -> CriteriaTypeEnum:
     """Helper function to map CriteriaType to CriteriaTypeEnum."""
     if isinstance(criteria, ScoreCriteria):
         return CriteriaTypeEnum.SCORE
-    elif isinstance(criteria, MultiSelectCriteria):
-        return CriteriaTypeEnum.MULTI_SELECT
-    else:
-        raise ValueError(f"Unknown criteria type: {type(criteria)}")
 
 
 def _get_criteria_config(criteria: CriteriaType) -> dict:
@@ -120,8 +115,6 @@ def _get_criteria_config(criteria: CriteriaType) -> dict:
     if isinstance(criteria, ScoreCriteria):
         config["min"] = criteria.min
         config["max"] = criteria.max
-    elif isinstance(criteria, MultiSelectCriteria):
-        config["options"] = criteria.options
 
     return config
 

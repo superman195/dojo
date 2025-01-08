@@ -53,7 +53,6 @@ from dojo.protocol import (
     DendriteQueryResponse,
     Heartbeat,
     ScoreCriteria,
-    Scores,
     ScoringResult,
     SyntheticQA,
     TaskResult,
@@ -743,10 +742,7 @@ class Validator:
                         if processed_id:
                             processed_request_ids.append(processed_id)
                         for hotkey, score in hotkey_to_score.items():
-                            if score.normalised_score is not None:
-                                hotkey_to_all_scores[hotkey].append(
-                                    score.ground_truth_score
-                                )
+                            hotkey_to_all_scores[hotkey].append(score)
 
                 if processed_request_ids:
                     await ORM.mark_validator_task_as_processed(processed_request_ids)
@@ -1335,7 +1331,7 @@ class Validator:
 
     async def _score_task(
         self, task: DendriteQueryResponse
-    ) -> tuple[str, Dict[str, Scores]]:
+    ) -> tuple[str, Dict[str, float]]:
         """Process a task and calculate the scores for the miner responses"""
         if not task.miner_responses:
             logger.warning("📝 No miner responses, skipping task")
@@ -1343,13 +1339,44 @@ class Validator:
 
         hotkey_to_scores = {}
         try:
-            hotkey_to_scores = Scoring.calculate_score(
+            updated_miner_responses = Scoring.calculate_score(
                 validator_task=task.validator_task,
                 miner_responses=task.miner_responses,
             )
 
+            # Create hotkey_to_completion_responses mapping and hotkey_to_scores mapping
+            hotkey_to_completion_responses = {}
+            for miner_response in updated_miner_responses:
+                if miner_response.axon and miner_response.axon.hotkey:
+                    hotkey_to_completion_responses[miner_response.axon.hotkey] = (
+                        miner_response.completion_responses
+                    )
+
+                    # Get ground truth score from the first completion response that has one
+                    if miner_response.completion_responses:
+                        for completion in miner_response.completion_responses:
+                            if (
+                                completion.criteria_types
+                                and completion.criteria_types[0].scores
+                                and completion.criteria_types[
+                                    0
+                                ].scores.ground_truth_score
+                                is not None
+                            ):
+                                hotkey_to_scores[miner_response.axon.hotkey] = (
+                                    completion.criteria_types[
+                                        0
+                                    ].scores.ground_truth_score
+                                )
+                                break
+
+            if not hotkey_to_completion_responses:
+                logger.info("📝 Did not manage to generate a dict of hotkey to score")
+                return task.validator_task.task_id, {}
+
             success, failed_hotkeys = await ORM.update_miner_scores(
-                task_id=task.validator_task.task_id, hotkey_to_scores=hotkey_to_scores
+                task_id=task.validator_task.task_id,
+                miner_responses=updated_miner_responses,
             )
 
             if not success:
@@ -1361,30 +1388,24 @@ class Validator:
             )
             return task.validator_task.task_id, {}
 
-        logger.debug(f"📝 Got hotkey to score: {hotkey_to_scores}")
         logger.debug(
             f"📝 Received {len(task.miner_responses)} responses from miners. "
-            f"Processed {len(hotkey_to_scores.keys())} responses for scoring."
+            f"Processed {len(hotkey_to_completion_responses.keys())} responses for scoring."
         )
-
-        # TODO: If no hotkey to score for some reason, should we still mark the task as processed?
-        if not hotkey_to_scores:
-            logger.info("📝 Did not manage to generate a dict of hotkey to score")
-            return task.validator_task.task_id, {}
 
         await self.send_scores(
             synapse=ScoringResult(
                 task_id=task.validator_task.task_id,
-                hotkey_to_scores=hotkey_to_scores,
+                hotkey_to_completion_responses=hotkey_to_completion_responses,
             ),
-            hotkeys=list(hotkey_to_scores.keys()),
+            hotkeys=list(hotkey_to_completion_responses.keys()),
         )
 
         # TODO: Remove wandb logging and save to db instead
-        criteria_to_miner_score = {}
-        asyncio.create_task(
-            self._log_wandb(task, criteria_to_miner_score, hotkey_to_scores)
-        )
+        # criteria_to_miner_score = {}
+        # asyncio.create_task(
+        #     self._log_wandb(task, criteria_to_miner_score, updated_hotkey_to_scores)
+        # )
 
         return task.validator_task.task_id, hotkey_to_scores
 

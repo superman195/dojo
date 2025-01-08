@@ -2,7 +2,7 @@ import asyncio
 import json
 import math
 from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator, Dict, List
+from typing import AsyncGenerator, List
 
 from bittensor.utils.btlogging import logging as logger
 
@@ -499,7 +499,7 @@ class ORM:
     @staticmethod
     async def update_miner_scores(
         task_id: str,
-        hotkey_to_scores: Dict[str, Scores],
+        miner_responses: List[TaskSynapseObject],
         batch_size: int = 10,
         max_retries: int = 3,
     ) -> tuple[bool, list[str]]:
@@ -507,7 +507,7 @@ class ORM:
 
         Args:
             task_id: The validator task ID
-            hotkey_to_scores: Dictionary mapping miner hotkeys to their Scores
+            miner_responses: List of miner responses to update
             batch_size: Number of scores to process in each batch
             max_retries: Maximum number of retry attempts for failed updates
 
@@ -520,53 +520,117 @@ class ORM:
 
         try:
             # Get all miner responses for this task
-            miner_responses = await prisma.minerresponse.find_many(
+            db_miner_responses = await prisma.minerresponse.find_many(
                 where={
                     "validator_task_id": task_id,
-                    "hotkey": {"in": list(hotkey_to_scores.keys())},
+                    "hotkey": {
+                        "in": [
+                            mr.miner_hotkey for mr in miner_responses if mr.miner_hotkey
+                        ]
+                    },
                 },
                 include=MinerResponseInclude(
-                    {"scores": {"include": {"criterion_relation": True}}}
+                    {
+                        "scores": {
+                            "include": {
+                                "criterion_relation": {
+                                    "include": {"completion_relation": True}
+                                }
+                            }
+                        }
+                    }
                 ),
             )
 
             # Process in batches
-            for i in range(0, len(miner_responses), batch_size):
-                batch = miner_responses[i : i + batch_size]
+            for i in range(0, len(db_miner_responses), batch_size):
+                batch = db_miner_responses[i : i + batch_size]
 
                 for attempt in range(max_retries):
                     try:
                         async with prisma.tx() as tx:
-                            for miner_response in batch:
-                                scores = hotkey_to_scores.get(miner_response.hotkey)
-                                if not scores:
+                            for db_miner_response in batch:
+                                # Find matching miner response from input
+                                miner_response = next(
+                                    (
+                                        mr
+                                        for mr in miner_responses
+                                        if mr.miner_hotkey == db_miner_response.hotkey
+                                    ),
+                                    None,
+                                )
+                                if (
+                                    not miner_response
+                                    or not miner_response.completion_responses
+                                ):
                                     continue
 
                                 # Update each MinerScore record for this miner response
-                                for score_record in miner_response.scores or []:
-                                    # Merge existing scores with new scores
-                                    existing_scores = json.loads(score_record.scores)
-                                    new_scores = scores.model_dump()
-                                    updated_scores = {
-                                        k: (
-                                            new_scores.get(k)
-                                            if new_scores.get(k) is not None
-                                            else v
-                                        )
-                                        for k, v in existing_scores.items()
-                                    }
-
-                                    await tx.minerscore.update(
-                                        where={
-                                            "criterion_id_miner_response_id": {
-                                                "criterion_id": score_record.criterion_id,
-                                                "miner_response_id": miner_response.id,
-                                            }
-                                        },
-                                        data={
-                                            "scores": Json(json.dumps(updated_scores))
-                                        },
+                                for score_record in db_miner_response.scores or []:
+                                    completion_id = (
+                                        score_record.criterion_relation.completion_relation.completion_id
+                                        if score_record.criterion_relation
+                                        and score_record.criterion_relation.completion_relation
+                                        else None
                                     )
+
+                                    matching_completion = next(
+                                        (
+                                            cr
+                                            for cr in miner_response.completion_responses
+                                            if cr.completion_id == completion_id
+                                        ),
+                                        None,
+                                    )
+
+                                    if (
+                                        not matching_completion
+                                        or not matching_completion.criteria_types
+                                    ):
+                                        continue
+
+                                    # Find matching criteria type
+                                    matching_criteria = next(
+                                        (
+                                            ct
+                                            for ct in matching_completion.criteria_types
+                                            if hasattr(ct, "scores") and ct.scores
+                                        ),
+                                        None,
+                                    )
+
+                                    if not matching_criteria:
+                                        continue
+
+                                    if matching_criteria and matching_criteria.scores:
+                                        # Merge existing scores with new scores
+                                        existing_scores = json.loads(
+                                            score_record.scores
+                                        )
+                                        new_scores = (
+                                            matching_criteria.scores.model_dump()
+                                        )
+                                        updated_scores = {
+                                            k: (
+                                                new_scores.get(k)
+                                                if new_scores.get(k) is not None
+                                                else v
+                                            )
+                                            for k, v in existing_scores.items()
+                                        }
+                                        await tx.minerscore.update(
+                                            where={
+                                                "criterion_id_miner_response_id": {
+                                                    "criterion_id": score_record.criterion_id,
+                                                    "miner_response_id": db_miner_response.id,
+                                                }
+                                            },
+                                            data={
+                                                "scores": Json(
+                                                    json.dumps(updated_scores)
+                                                )
+                                            },
+                                        )
                         break
 
                     except Exception as e:
@@ -578,11 +642,14 @@ class ORM:
                         else:
                             await asyncio.sleep(2**attempt)
 
-            return len(failed_hotkeys) == 0, failed_hotkeys
+            return (
+                len(failed_hotkeys) == 0,
+                failed_hotkeys,
+            )
 
         except Exception as e:
             logger.error(f"Error updating miner scores: {e}")
-            return False, list(hotkey_to_scores.keys())
+            return False, [mr.miner_hotkey for mr in miner_responses if mr.miner_hotkey]
 
     # TODO: Remove this as this was only used for wandb logging
     @staticmethod

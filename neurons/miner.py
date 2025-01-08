@@ -70,24 +70,47 @@ class Miner(BaseMinerNeuron):
         logger.info("Received scoring result from validators")
         try:
             # Validate that synapse is not None and has the required fields
-            if not synapse or not synapse.hotkey_to_scores:
+            if not synapse or not synapse.hotkey_to_completion_responses:
                 logger.error(
-                    "Invalid synapse object or missing hotkey_to_scores attribute."
+                    "Invalid synapse object or missing hotkey_to_completion_responses attribute."
                 )
                 return synapse
 
-            found_miner_score = synapse.hotkey_to_scores.get(
+            miner_completion_responses = synapse.hotkey_to_completion_responses.get(
                 self.wallet.hotkey.ss58_address, None
             )
-            if found_miner_score is None:
+            if miner_completion_responses is None:
                 logger.error(
                     f"Miner hotkey {self.wallet.hotkey.ss58_address} not found in scoring result but yet was sent the result"
                 )
                 return synapse
 
-            logger.info(
-                f"Miner received score: {found_miner_score} from {synapse.task_id}"
-            )
+            # Log shared scores once (from first completion that has them)
+            shared_scores_logged = False
+
+            # Log scores for each completion response
+            for idx, completion in enumerate(miner_completion_responses):
+                for criteria in completion.criteria_types:
+                    if hasattr(criteria, "scores") and criteria.scores:
+                        scores = criteria.scores
+                        # Log shared scores only once
+                        if not shared_scores_logged:
+                            logger.info(
+                                f"Task {synapse.task_id} shared scores:"
+                                f"\n\tGround Truth Score: {scores.ground_truth_score}"
+                                f"\n\tCosine Similarity: {scores.cosine_similarity_score}"
+                                f"\n\tNormalised Cosine Similarity: {scores.normalised_cosine_similarity_score}"
+                                f"\n\tCubic Reward Score: {scores.cubic_reward_score}"
+                            )
+                            shared_scores_logged = True
+
+                        # Log individual scores for each completion
+                        logger.info(
+                            f"Completion {idx + 1} scores:"
+                            f"\n\tRaw Score: {scores.raw_score}"
+                            f"\n\tNormalised Score: {scores.normalised_score}"
+                        )
+
         except KeyError as e:
             logger.error(f"KeyError in forward_result: {e}")
         except Exception as e:

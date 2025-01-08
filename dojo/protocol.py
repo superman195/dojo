@@ -15,53 +15,39 @@ class TaskTypeEnum(StrEnum):
 
 
 class CriteriaTypeEnum(StrEnum):
-    RANKING_CRITERIA = "ranking"
-    MULTI_SCORE = "multi-score"
     SCORE = "score"
-    MULTI_SELECT = "multi-select"
 
 
-class RankingCriteria(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    type: str = CriteriaTypeEnum.RANKING_CRITERIA.value
-    options: List[str] = Field(
-        description="List of options human labeller will see", default=[]
+class Scores(BaseModel):
+    raw_score: float | None = Field(description="Raw score of the miner", default=None)
+    rank_id: int | None = Field(description="Rank of the miner", default=None)
+    normalised_score: float | None = Field(
+        description="Normalised score of the miner", default=None
+    )
+    ground_truth_score: float | None = Field(
+        description="Ground truth score of the miner", default=None
+    )
+    cosine_similarity_score: float | None = Field(
+        description="Cosine similarity score of the miner", default=None
+    )
+    normalised_cosine_similarity_score: float | None = Field(
+        description="Normalised cosine similarity score of the miner", default=None
+    )
+    cubic_reward_score: float | None = Field(
+        description="Cubic reward score of the miner", default=None
     )
 
 
 class ScoreCriteria(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=False)
 
-    type: str = CriteriaTypeEnum.SCORE.value
-    min: float = Field(description="Minimum score for the task")
-    max: float = Field(description="Maximum score for the task")
-
-
-class MultiSelectCriteria(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    type: str = CriteriaTypeEnum.MULTI_SELECT.value
-    options: List[str] = Field(
-        description="List of options human labeller will see", default=[]
-    )
+    type: str = Field(default=CriteriaTypeEnum.SCORE.value, frozen=True)
+    min: float = Field(description="Minimum score for the task", frozen=True)
+    max: float = Field(description="Maximum score for the task", frozen=True)
+    scores: Scores | None = Field(description="Scores of the completion", default=None)
 
 
-class MultiScoreCriteria(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    type: str = CriteriaTypeEnum.MULTI_SCORE.value
-    options: List[str] = Field(
-        default=[], description="List of options human labeller will see"
-    )
-    min: float = Field(description="Minimum score for the task")
-    max: float = Field(description="Maximum score for the task")
-
-
-# TODO: Remove RankingCriteria
-CriteriaType = (
-    MultiScoreCriteria | RankingCriteria | ScoreCriteria | MultiSelectCriteria
-)
+CriteriaType = ScoreCriteria
 
 
 class CodeFileObject(BaseModel):
@@ -200,32 +186,12 @@ class TaskSynapseObject(bt.Synapse):
     )
 
 
-class Scores(BaseModel):
-    raw_score: float | None = Field(description="Raw score of the miner", default=None)
-    rank_id: int | None = Field(description="Rank of the miner", default=None)
-    normalised_score: float | None = Field(
-        description="Normalised score of the miner", default=None
-    )
-    ground_truth_score: float | None = Field(
-        description="Ground truth score of the miner", default=None
-    )
-    cosine_similarity_score: float | None = Field(
-        description="Cosine similarity score of the miner", default=None
-    )
-    normalised_cosine_similarity_score: float | None = Field(
-        description="Normalised cosine similarity score of the miner", default=None
-    )
-    cubic_reward_score: float | None = Field(
-        description="Cubic reward score of the miner", default=None
-    )
-
-
 class ScoringResult(bt.Synapse):
     task_id: str = Field(
         description="Unique identifier for the request",
     )
-    hotkey_to_scores: Dict[str, Scores] = Field(
-        description="Hotkey to scores mapping",
+    hotkey_to_completion_responses: Dict[str, List[CompletionResponse]] = Field(
+        description="Hotkey to completion responses mapping",
         default_factory=dict,
     )
 
