@@ -1,5 +1,7 @@
 import json
 
+from bittensor.utils.btlogging import logging as logger
+
 from database.client import connect_db, disconnect_db, prisma
 from database.prisma import Json
 from database.prisma.enums import CriteriaTypeEnum, TaskTypeEnum
@@ -29,8 +31,8 @@ async def migrate():
             where={"id": old_request.id}
         )
         if existing_task:
-            print(f"Replacing existing task {old_request.id}")
-            new_validator_task = await prisma.validatortask.update(
+            logger.info(f"Replacing existing task {old_request.id}")
+            await prisma.validatortask.update(
                 where={"id": old_request.id},
                 data={
                     "prompt": old_request.prompt,
@@ -41,6 +43,7 @@ async def migrate():
                     "updated_at": old_request.updated_at,
                 },
             )
+            new_validator_task = existing_task
         else:
             # Create new ValidatorTask (parent)
             new_validator_task = await prisma.validatortask.create(
@@ -62,7 +65,12 @@ async def migrate():
                 "value": {},
             }
 
-            if not old_request.ground_truths or not old_request.completions:
+            if not old_request.ground_truths:
+                logger.warning(f"No ground truths for task {old_request=}")
+                continue
+
+            if not old_request.completions:
+                logger.warning(f"No completions for task {old_request=}")
                 continue
 
             # Get all ground truths and their corresponding scores
