@@ -113,15 +113,21 @@ async def migrate():
             coldkey = get_coldkey_from_hotkey(subtensor, old_request.hotkey)
 
             if existing_miner_response:
-                miner_response = await prisma.minerresponse.update(
+                await prisma.minerresponse.update(
                     where={"id": existing_miner_response.id},
                     data={
+                        "dojo_task_id": old_request.dojo_task_id,
+                        "hotkey": old_request.hotkey,
                         "coldkey": coldkey,
                         "task_result": Json(json.dumps(task_result)),
                         "created_at": old_request.created_at,
                         "updated_at": old_request.updated_at,
+                        "validator_task_relation": {
+                            "connect": {"id": new_validator_task.id}
+                        },
                     },
                 )
+                miner_response = existing_miner_response
             else:
                 miner_response = await prisma.minerresponse.create(
                     data={
@@ -146,17 +152,22 @@ async def migrate():
             )
 
             if existing_completion:
-                print(f"Replacing existing completion {old_completion.completion_id}")
-                new_completion = await prisma.completion.update(
+                logger.info(
+                    f"Replacing existing completion {old_completion.completion_id}"
+                )
+                await prisma.completion.update(
                     where={"id": old_completion.id},
                     data={
-                        "validator_task_id": new_validator_task.id,
                         "model": old_completion.model,
                         "completion": old_completion.completion,
                         "created_at": old_completion.created_at,
                         "updated_at": old_completion.updated_at,
+                        "validator_task_relation": {
+                            "connect": {"id": new_validator_task.id}
+                        },
                     },
                 )
+                new_completion = existing_completion
             else:
                 new_completion = await prisma.completion.create(
                     data={
@@ -171,12 +182,16 @@ async def migrate():
                 )
 
             if not old_request.criteria_types:
+                logger.warning(f"No criteria types for task id {old_request.id}")
                 continue
 
             # Migrate criteria types - now linked to completion instead of request
             for old_criterion in old_request.criteria_types:
                 # Skip RANKING_CRITERIA as it's no longer supported
                 if old_criterion.type == "RANKING_CRITERIA":
+                    logger.warning(
+                        f"Skipping RANKING_CRITERIA for task id {old_request.id} as it's no longer supported"
+                    )
                     continue
 
                 # Convert MULTI_SCORE to SCORE
@@ -245,12 +260,14 @@ async def migrate():
                 await prisma.groundtruth.update(
                     where={"id": old_ground_truth.id},
                     data={
-                        "validator_task_id": new_validator_task.id,
                         "obfuscated_model_id": old_ground_truth.obfuscated_model_id,
                         "real_model_id": old_ground_truth.real_model_id,
                         "rank_id": old_ground_truth.rank_id,
                         "ground_truth_score": ground_truth_score,
                         "updated_at": old_ground_truth.updated_at,
+                        "validator_task_relation": {
+                            "connect": {"id": new_validator_task.id}
+                        },
                     },
                 )
             else:
@@ -267,6 +284,7 @@ async def migrate():
                     }
                 )
 
+    logger.success("Migration complete! Exiting...")
     await disconnect_db()
 
 
