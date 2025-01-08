@@ -140,6 +140,7 @@ async def migrate():
                 new_completion = await prisma.completion.create(
                     data={
                         "id": old_completion.id,
+                        "completion_id": old_completion.completion_id,
                         "validator_task_id": new_validator_task.id,
                         "model": old_completion.model,
                         "completion": old_completion.completion,

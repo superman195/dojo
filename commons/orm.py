@@ -64,8 +64,10 @@ class ORM:
         # find all validator requests first
         include_query = ValidatorTaskInclude(
             {
-                "completions": True,
-                "miner_responses": True,
+                "completions": {
+                    "include": {"Criterion": {"include": {"scores": True}}}
+                },
+                "miner_responses": {"include": {"scores": True}},
                 "ground_truth": True,
             }
         )
@@ -356,8 +358,8 @@ class ORM:
                                         {
                                             "completion_relation": {
                                                 "is": {
+                                                    "completion_id": completion.completion_id,
                                                     "validator_task_id": miner_response.task_id,
-                                                    "model": completion.model,
                                                 }
                                             }
                                         }
@@ -524,7 +526,7 @@ class ORM:
                     "hotkey": {"in": list(hotkey_to_scores.keys())},
                 },
                 include=MinerResponseInclude(
-                    {"score": {"include": {"criterion_relation": True}}}
+                    {"scores": {"include": {"criterion_relation": True}}}
                 ),
             )
 
@@ -541,7 +543,7 @@ class ORM:
                                     continue
 
                                 # Update each MinerScore record for this miner response
-                                for score_record in miner_response.score or []:
+                                for score_record in miner_response.scores or []:
                                     # Merge existing scores with new scores
                                     existing_scores = json.loads(score_record.scores)
                                     new_scores = scores.model_dump()

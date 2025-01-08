@@ -57,7 +57,7 @@ model MinerResponse {
 
     // Relationships
     validator_task_relation ValidatorTask @relation(fields: [validator_task_id], references: [id])
-    score                   MinerScore[]
+    scores                  MinerScore[]
 
     @@index([dojo_task_id])
     @@map("miner_response")
