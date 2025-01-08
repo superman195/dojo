@@ -83,8 +83,10 @@ class MinerSim(Miner):
         self, synapse: TaskResultRequest
     ) -> TaskResultRequest | None:
         try:
-            logger.info(f"Received TaskResultRequest for task id: {synapse.task_id}")
-            if not synapse or not synapse.task_id:
+            logger.info(
+                f"Received TaskResultRequest for task id: {synapse.dojo_task_id}"
+            )
+            if not synapse or not synapse.dojo_task_id:
                 logger.error("Invalid TaskResultRequest: missing task_id")
                 return None
 
@@ -92,19 +94,21 @@ class MinerSim(Miner):
             # behavior = self._get_response_behavior()
 
             # if behavior in ['no_response', 'timeout']:
-            #     logger.debug(f"Simulating {behavior} for task {synapse.task_id}")
+            #     logger.debug(f"Simulating {behavior} for task {synapse.dojo_task_id}")
             #     if behavior == 'timeout':
             #         await asyncio.sleep(30)
             #     return None
 
-            redis_key = f"feedback:{synapse.task_id}"
+            redis_key = f"feedback:{synapse.dojo_task_id}"
             request_data = self.redis_client.get(redis_key)
 
             request_dict = json.loads(request_data) if request_data else None
             feedback_request = FeedbackRequest(**request_dict) if request_dict else None
 
             if not feedback_request:
-                logger.debug(f"No task result found for task id: {synapse.task_id}")
+                logger.debug(
+                    f"No task result found for task id: {synapse.dojo_task_id}"
+                )
                 return None
 
             current_time = datetime.now(timezone.utc).isoformat()
@@ -123,7 +127,7 @@ class MinerSim(Miner):
                     updated_at=current_time,
                     result_data=[result],
                     worker_id=get_new_uuid(),
-                    task_id=synapse.task_id,
+                    dojo_task_id=synapse.dojo_task_id,
                 )
                 task_results.append(task_result)
 
@@ -131,7 +135,7 @@ class MinerSim(Miner):
             logger.info(f"TaskResultRequest: {synapse}")
 
             self.redis_client.delete(redis_key)
-            logger.debug(f"Processed task result for task {synapse.task_id}")
+            logger.debug(f"Processed task result for task {synapse.dojo_task_id}")
 
             return synapse
 
