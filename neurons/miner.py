@@ -48,7 +48,7 @@ class Miner(BaseMinerNeuron):
         # Instantiate runners
         self.should_exit: bool = False
         self.is_running: bool = False
-        self.thread: threading.Thread = None
+        self.thread: threading.Thread | None = None
         self.lock = asyncio.Lock()
         # log all incoming requests
         self.hotkey_to_request: Dict[str, TaskSynapseObject] = {}
