@@ -363,11 +363,6 @@ class Scoring:
             miner_outputs_normalised = miner_outputs_normalised.T
             miner_outputs = miner_outputs.T
 
-        gt_score_float = float(gt_score[0])
-        cos_sim_float = float(cosine_similarity_scores[0])
-        norm_cos_sim_float = float(normalised_cosine_similarity_scores[0])
-        cubic_reward_float = float(cubic_reward_scores[0])
-
         for i, response in enumerate(valid_responses):
             if not response.axon or not response.axon.hotkey:
                 continue
@@ -376,12 +371,14 @@ class Scoring:
                 response.completion_responses or []
             ):
                 scores = Scores(
-                    raw_score=float(miner_outputs[j, 0]),
-                    ground_truth_score=gt_score_float,
-                    normalised_score=float(miner_outputs_normalised[j, 0]),
-                    cosine_similarity_score=cos_sim_float,
-                    normalised_cosine_similarity_score=norm_cos_sim_float,
-                    cubic_reward_score=cubic_reward_float,
+                    raw_score=float(miner_outputs[i, j]),
+                    ground_truth_score=float(gt_score[i]),
+                    normalised_score=float(miner_outputs_normalised[i, j]),
+                    cosine_similarity_score=float(cosine_similarity_scores[i]),
+                    normalised_cosine_similarity_score=float(
+                        normalised_cosine_similarity_scores[i]
+                    ),
+                    cubic_reward_score=float(cubic_reward_scores[i]),
                 )
 
                 for criteria in completion_response.criteria_types:
