@@ -2,7 +2,7 @@ import asyncio
 import json
 import math
 from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator, Dict, List
+from typing import AsyncGenerator, List
 
 from bittensor.utils.btlogging import logging as logger
 
@@ -15,26 +15,25 @@ from commons.utils import datetime_as_utc
 from database.client import prisma, transaction
 from database.mappers import (
     map_miner_response_to_task_synapse_object,
+    map_task_synapse_object_to_completions,
     map_task_synapse_object_to_miner_response,
     map_task_synapse_object_to_validator_task,
     map_validator_task_to_task_synapse_object,
 )
 from database.prisma import Json
 from database.prisma.errors import PrismaError
-from database.prisma.models import (
-    GroundTruth,
-    ValidatorTask,
-)
+from database.prisma.models import GroundTruth, ValidatorTask
 from database.prisma.types import (
     CriterionWhereInput,
     MinerResponseCreateWithoutRelationsInput,
+    MinerResponseInclude,
     MinerScoreCreateInput,
     MinerScoreUpdateInput,
     ValidatorTaskInclude,
     ValidatorTaskWhereInput,
 )
 from dojo import TASK_DEADLINE
-from dojo.protocol import DendriteQueryResponse, Scores, TaskSynapseObject
+from dojo.protocol import DendriteQueryResponse, Scores, TaskResult, TaskSynapseObject
 
 
 class ORM:
@@ -65,8 +64,10 @@ class ORM:
         # find all validator requests first
         include_query = ValidatorTaskInclude(
             {
-                "completions": True,
-                "miner_responses": True,
+                "completions": {
+                    "include": {"Criterion": {"include": {"scores": True}}}
+                },
+                "miner_responses": {"include": {"scores": True}},
                 "ground_truth": True,
             }
         )
@@ -123,7 +124,7 @@ class ORM:
                 validator_task=map_validator_task_to_task_synapse_object(task),
                 miner_responses=(
                     [
-                        map_miner_response_to_task_synapse_object(miner_response)
+                        map_miner_response_to_task_synapse_object(miner_response, task)
                         for miner_response in task.miner_responses
                     ]
                     if task.miner_responses
@@ -148,7 +149,9 @@ class ORM:
                     validator_task=map_validator_task_to_task_synapse_object(task),
                     miner_responses=(
                         [
-                            map_miner_response_to_task_synapse_object(miner_response)
+                            map_miner_response_to_task_synapse_object(
+                                miner_response, task
+                            )
                             for miner_response in task.miner_responses
                         ]
                         if task.miner_responses
@@ -220,6 +223,75 @@ class ORM:
     async def get_num_processed_tasks() -> int:
         return await ValidatorTask.prisma().count(where={"is_processed": True})
 
+    @staticmethod
+    async def update_miner_task_results(
+        miner_hotkey: str,
+        dojo_task_id: str,
+        task_results: List[TaskResult],
+        max_retries: int = 3,
+    ) -> bool:
+        """Updates the task_result field of a MinerResponse with the provided task results.
+
+        Args:
+            miner_hotkey (str): The hotkey of the miner
+            dojo_task_id (str): The Dojo task ID
+            task_results (List[TaskResult]): List of task results to store
+            max_retries (int, optional): Maximum number of retry attempts. Defaults to 3.
+
+        Returns:
+            bool: True if update was successful, False otherwise
+        """
+        try:
+            for attempt in range(max_retries):
+                try:
+                    # Convert task_results to JSON-compatible format
+                    task_results_json = Json(
+                        [result.model_dump() for result in task_results]
+                    )
+
+                    # Update the miner response
+                    updated = await prisma.minerresponse.update_many(
+                        where={
+                            "hotkey": miner_hotkey,
+                            "dojo_task_id": dojo_task_id,
+                        },
+                        data={
+                            "task_result": task_results_json,
+                            "updated_at": datetime.now(timezone.utc),
+                        },
+                    )
+
+                    if updated:
+                        logger.success(
+                            f"Updated task results for miner {miner_hotkey}, dojo_task_id {dojo_task_id}"
+                        )
+                        return True
+                    else:
+                        if attempt == max_retries - 1:
+                            logger.error(
+                                f"Failed to update task results after {max_retries} attempts"
+                            )
+                        else:
+                            logger.warning(
+                                f"Retrying update, attempt {attempt+2}/{max_retries}"
+                            )
+                            await asyncio.sleep(2**attempt)
+
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        logger.error(f"Error updating task results: {e}")
+                    else:
+                        logger.warning(
+                            f"Error during attempt {attempt+1}, retrying: {e}"
+                        )
+                        await asyncio.sleep(2**attempt)
+
+            return False
+
+        except Exception as e:
+            logger.error(f"Unexpected error updating task results: {e}")
+            return False
+
     # TODO: How to store miner scores
     @staticmethod
     async def update_miner_raw_scores(
@@ -286,8 +358,8 @@ class ORM:
                                         {
                                             "completion_relation": {
                                                 "is": {
+                                                    "completion_id": completion.completion_id,
                                                     "validator_task_id": miner_response.task_id,
-                                                    "model": completion.model,
                                                 }
                                             }
                                         }
@@ -386,6 +458,14 @@ class ORM:
 
                 created_task = await tx.validatortask.create(data=validator_task_data)
 
+                # Create completions separately, ValidatorTaskCreateInput does not support CompletionCreateInput
+                completions = map_task_synapse_object_to_completions(
+                    validator_task, created_task.id
+                )
+
+                for completion in completions:
+                    await tx.completion.create(data=completion)
+
                 # Pre-process all valid miner responses
                 valid_miner_data = []
                 for miner_response in miner_responses:
@@ -419,7 +499,7 @@ class ORM:
     @staticmethod
     async def update_miner_scores(
         task_id: str,
-        hotkey_to_scores: Dict[str, Scores],
+        miner_responses: List[TaskSynapseObject],
         batch_size: int = 10,
         max_retries: int = 3,
     ) -> tuple[bool, list[str]]:
@@ -427,7 +507,7 @@ class ORM:
 
         Args:
             task_id: The validator task ID
-            hotkey_to_scores: Dictionary mapping miner hotkeys to their Scores
+            miner_responses: List of miner responses to update
             batch_size: Number of scores to process in each batch
             max_retries: Maximum number of retry attempts for failed updates
 
@@ -440,46 +520,117 @@ class ORM:
 
         try:
             # Get all miner responses for this task
-            miner_responses = await prisma.minerresponse.find_many(
+            db_miner_responses = await prisma.minerresponse.find_many(
                 where={
                     "validator_task_id": task_id,
-                    "hotkey": {"in": list(hotkey_to_scores.keys())},
+                    "hotkey": {
+                        "in": [
+                            mr.miner_hotkey for mr in miner_responses if mr.miner_hotkey
+                        ]
+                    },
                 },
-                include={"Score": {"include": {"criterion_relation": True}}},
+                include=MinerResponseInclude(
+                    {
+                        "scores": {
+                            "include": {
+                                "criterion_relation": {
+                                    "include": {"completion_relation": True}
+                                }
+                            }
+                        }
+                    }
+                ),
             )
 
             # Process in batches
-            for i in range(0, len(miner_responses), batch_size):
-                batch = miner_responses[i : i + batch_size]
+            for i in range(0, len(db_miner_responses), batch_size):
+                batch = db_miner_responses[i : i + batch_size]
 
                 for attempt in range(max_retries):
                     try:
                         async with prisma.tx() as tx:
-                            for miner_response in batch:
-                                scores = hotkey_to_scores.get(miner_response.hotkey)
-                                if not scores:
+                            for db_miner_response in batch:
+                                # Find matching miner response from input
+                                miner_response = next(
+                                    (
+                                        mr
+                                        for mr in miner_responses
+                                        if mr.miner_hotkey == db_miner_response.hotkey
+                                    ),
+                                    None,
+                                )
+                                if (
+                                    not miner_response
+                                    or not miner_response.completion_responses
+                                ):
                                     continue
 
                                 # Update each MinerScore record for this miner response
-                                for score_record in miner_response.Score or []:
-                                    # Merge existing scores with new scores
-                                    existing_scores = json.loads(score_record.scores)
-                                    updated_scores = {
-                                        **existing_scores,
-                                        **scores.model_dump(),
-                                    }
-
-                                    await tx.minerscore.update(
-                                        where={
-                                            "criterion_id_miner_response_id": {
-                                                "criterion_id": score_record.criterion_id,
-                                                "miner_response_id": miner_response.id,
-                                            }
-                                        },
-                                        data={
-                                            "scores": Json(json.dumps(updated_scores))
-                                        },
+                                for score_record in db_miner_response.scores or []:
+                                    completion_id = (
+                                        score_record.criterion_relation.completion_relation.completion_id
+                                        if score_record.criterion_relation
+                                        and score_record.criterion_relation.completion_relation
+                                        else None
                                     )
+
+                                    matching_completion = next(
+                                        (
+                                            cr
+                                            for cr in miner_response.completion_responses
+                                            if cr.completion_id == completion_id
+                                        ),
+                                        None,
+                                    )
+
+                                    if (
+                                        not matching_completion
+                                        or not matching_completion.criteria_types
+                                    ):
+                                        continue
+
+                                    # Find matching criteria type
+                                    matching_criteria = next(
+                                        (
+                                            ct
+                                            for ct in matching_completion.criteria_types
+                                            if hasattr(ct, "scores") and ct.scores
+                                        ),
+                                        None,
+                                    )
+
+                                    if not matching_criteria:
+                                        continue
+
+                                    if matching_criteria and matching_criteria.scores:
+                                        # Merge existing scores with new scores
+                                        existing_scores = json.loads(
+                                            score_record.scores
+                                        )
+                                        new_scores = (
+                                            matching_criteria.scores.model_dump()
+                                        )
+                                        updated_scores = {
+                                            k: (
+                                                new_scores.get(k)
+                                                if new_scores.get(k) is not None
+                                                else v
+                                            )
+                                            for k, v in existing_scores.items()
+                                        }
+                                        await tx.minerscore.update(
+                                            where={
+                                                "criterion_id_miner_response_id": {
+                                                    "criterion_id": score_record.criterion_id,
+                                                    "miner_response_id": db_miner_response.id,
+                                                }
+                                            },
+                                            data={
+                                                "scores": Json(
+                                                    json.dumps(updated_scores)
+                                                )
+                                            },
+                                        )
                         break
 
                     except Exception as e:
@@ -491,11 +642,14 @@ class ORM:
                         else:
                             await asyncio.sleep(2**attempt)
 
-            return len(failed_hotkeys) == 0, failed_hotkeys
+            return (
+                len(failed_hotkeys) == 0,
+                failed_hotkeys,
+            )
 
         except Exception as e:
             logger.error(f"Error updating miner scores: {e}")
-            return False, list(hotkey_to_scores.keys())
+            return False, [mr.miner_hotkey for mr in miner_responses if mr.miner_hotkey]
 
     # TODO: Remove this as this was only used for wandb logging
     @staticmethod

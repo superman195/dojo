@@ -50,12 +50,28 @@ def init_wandb(config: bt.config, my_uid, wallet: bt.wallet):
         "config": config,
         "dir": config.full_path,
         "reinit": True,
+        # settings to prevent timeout
+        "settings": wandb.Settings(
+            _disable_stats=True,
+            _disable_meta=True,
+            _disable_viewer=True,
+        ),
     }
-    run = wandb.init(**kwargs)
+
+    # Check if there's an existing run and resume it
+    try:
+        run = wandb.init(**kwargs, resume="allow")
+    except Exception as e:
+        logger.warning(f"Failed to resume wandb run: {e}, creating new run")
+        run = wandb.init(**kwargs)
 
     # Sign the run to ensure it's from the correct hotkey
     signature = wallet.hotkey.sign(run.id.encode()).hex()
     config.signature = signature
     wandb.config.update(config, allow_val_change=True)
+
+    # Mark the run as not finished when the process exits
+    if wandb.run is not None:
+        wandb.run.mark_preempting()
 
     logger.success(f"Started wandb run with {kwargs=}")

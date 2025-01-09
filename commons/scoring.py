@@ -7,10 +7,8 @@ from torch.nn import functional as F
 
 from commons.utils import _terminal_plot
 from dojo.protocol import (
-    CodeAnswer,
     CompletionResponse,
     CriteriaType,
-    MultiScoreCriteria,
     ScoreCriteria,
     Scores,
     TaskSynapseObject,
@@ -117,6 +115,11 @@ def minmax_scale(tensor: torch.Tensor | np.ndarray) -> torch.Tensor:
         tensor = torch.from_numpy(tensor)
     min = tensor.min()
     max = tensor.max()
+
+    # If max == min, return a tensor of ones
+    if max == min:
+        return torch.ones_like(tensor)
+
     return (tensor - min) / (max - min)
 
 
@@ -150,7 +153,14 @@ class Scoring:
         criteria: CriteriaType,
         ground_truth: dict[str, int],
         miner_responses: List[TaskSynapseObject],
-    ) -> tuple[torch.Tensor, np.ndarray, np.ndarray, torch.Tensor, torch.Tensor]:
+    ) -> tuple[
+        torch.Tensor,
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
         """
         - Calculate score between all miner outputs and ground truth.
         - Ensures that the resulting tensor is normalized to sum to 1.
@@ -185,7 +195,7 @@ class Scoring:
             curr_miner_outputs = []
             for completion in sorted(
                 response.completion_responses or [],
-                key=lambda r: cids_sorted.index(r.model),
+                key=lambda r: cids_sorted.index(r.completion_id),
             ):
                 curr_miner_outputs.append(
                     _get_miner_response_by_criteria(criteria, completion)
@@ -205,14 +215,12 @@ class Scoring:
             f"scoring: raw miner outputs with nans\n{miner_outputs_normalised}"
         )
 
-        miner_outputs = miner_outputs_normalised
-
         # use minmax scale to ensure ground truth is in the range [0, 1]
         ground_truth_arr = Scoring._convert_ground_truth_ranks_to_scores(
             cid_with_rank_sorted
         )
 
-        logger.info(f"scoring: Miner outputs\n{miner_outputs}")
+        logger.info(f"scoring: Miner outputs normalised\n{miner_outputs_normalised}")
         logger.info(f"scoring: Ground truth\n{ground_truth_arr}")
 
         # l1_norm = np.linalg.norm(miner_outputs - ground_truth_arr, axis=1)
@@ -247,6 +255,7 @@ class Scoring:
 
         return (
             torch.from_numpy(cubic_reward.copy()),
+            miner_outputs,
             miner_outputs_normalised,
             cosine_similarity_scores,
             normalised_cosine_similarity_scores,
@@ -261,7 +270,7 @@ class Scoring:
         cls,
         validator_task: TaskSynapseObject,
         miner_responses: List[TaskSynapseObject],
-    ) -> Dict[str, Scores]:
+    ) -> List[TaskSynapseObject]:
         """Calculates scores for miners.
 
         Args:
@@ -271,20 +280,16 @@ class Scoring:
         Returns:
             Dictionary mapping miner hotkeys to their calculated scores
         """
-        hotkey_to_scores: dict[str, Scores] = {}
-        # Initialize empty scores for all miners
-        for response in miner_responses:
-            if response.axon is None or response.axon.hotkey is None:
-                continue
-            hotkey_to_scores[response.axon.hotkey] = Scores()
+        updated_miner_responses = []
 
-        # validation
-        if (
-            not validator_task.completion_responses
-            or not validator_task.completion_responses[0].criteria_types
-        ):
-            logger.error("No criteria types found in completion responses")
-            return hotkey_to_scores
+        # Early validation
+        if not validator_task.completion_responses:
+            logger.error("No completion responses in validator task")
+            return updated_miner_responses
+
+        if not validator_task.ground_truth:
+            logger.error("No ground truth found in validator task")
+            return updated_miner_responses
 
         # Use criteria types from the first completion response. This assumes that all completions have the same criteria types
         criteria_types = validator_task.completion_responses[0].criteria_types
@@ -306,7 +311,7 @@ class Scoring:
 
             if not valid_miner_responses:
                 logger.info(f"📝 No valid responses for {validator_task.task_id}")
-                return hotkey_to_scores
+                return updated_miner_responses
 
             logger.info(
                 f"📝 Filtered {len(valid_miner_responses)} valid responses for task id {validator_task.task_id}"
@@ -315,14 +320,13 @@ class Scoring:
             # Check if ground truth is None
             if validator_task.ground_truth is None:
                 logger.error("No ground truth found in validator task")
-                return hotkey_to_scores
+                return updated_miner_responses
 
             try:
-                hotkey_to_scores = cls.score_by_criteria(
+                updated_miner_responses = cls.score_by_criteria(
                     criteria,
                     valid_miner_responses,
                     validator_task.ground_truth,
-                    hotkey_to_scores,
                 )
             except NotImplementedError:
                 logger.warning(
@@ -330,7 +334,7 @@ class Scoring:
                 )
                 continue
 
-        return hotkey_to_scores
+        return updated_miner_responses
 
     # ---------------------------------------------------------------------------- #
     #                           SCORING HELPER FUNCTIONS                           #
@@ -341,344 +345,47 @@ class Scoring:
         criteria: CriteriaType,
         valid_responses: List[TaskSynapseObject],
         ground_truth: Dict[str, int],
-        score_dict: Dict[str, Scores],
-    ) -> Dict[str, Scores]:
+    ) -> List[TaskSynapseObject]:
         """Calculates and assigns scores based on criteria type."""
-        if isinstance(criteria, ScoreCriteria):
-            (
-                gt_scores,
-                miner_outputs_normalised,
-                cosine_similarity_scores,
-                normalised_cosine_similarity_scores,
-                cubic_reward_scores,
-            ) = cls.ground_truth_scoring(criteria, ground_truth, valid_responses)
-            for i, response in enumerate(valid_responses):
-                if not response.axon or not response.axon.hotkey:
-                    continue
-                scores = score_dict[response.axon.hotkey]
-                scores.ground_truth_score = float(gt_scores[i])
-                scores.normalised_score = float(miner_outputs_normalised[i])
-                scores.cosine_similarity_score = float(cosine_similarity_scores[i])
-                scores.normalised_cosine_similarity_score = float(
-                    normalised_cosine_similarity_scores[i]
-                )
-                scores.cubic_reward_score = float(cubic_reward_scores[i])
-                score_dict[response.axon.hotkey] = scores
-            return score_dict
-        else:
+        if not isinstance(criteria, ScoreCriteria):
             raise NotImplementedError("Only score criteria is supported")
 
+        (
+            gt_score,
+            miner_outputs,
+            miner_outputs_normalised,
+            cosine_similarity_scores,
+            normalised_cosine_similarity_scores,
+            cubic_reward_scores,
+        ) = cls.ground_truth_scoring(criteria, ground_truth, valid_responses)
 
-def _test_ground_truth_score_v1():
-    gt = {
-        "a": 0,
-        "b": 1,
-        "c": 2,
-        "d": 3,
-    }
+        if miner_outputs_normalised.shape[0] == 1:
+            miner_outputs_normalised = miner_outputs_normalised.T
+            miner_outputs = miner_outputs.T
 
-    a = CompletionResponse(
-        model="a", completion=CodeAnswer(files=[]), completion_id="a"
-    )
-    b = CompletionResponse(
-        model="b", completion=CodeAnswer(files=[]), completion_id="b"
-    )
-    c = CompletionResponse(
-        model="c", completion=CodeAnswer(files=[]), completion_id="c"
-    )
-    d = CompletionResponse(
-        model="d", completion=CodeAnswer(files=[]), completion_id="d"
-    )
+        gt_score_float = float(gt_score[0])
+        cos_sim_float = float(cosine_similarity_scores[0])
+        norm_cos_sim_float = float(normalised_cosine_similarity_scores[0])
+        cubic_reward_float = float(cubic_reward_scores[0])
 
-    criteria = MultiScoreCriteria(options=["a", "b", "c", "d"], min=0, max=100)
+        for i, response in enumerate(valid_responses):
+            if not response.axon or not response.axon.hotkey:
+                continue
 
-    miner_responses = [
-        TaskSynapseObject(
-            prompt="test_prompt",
-            task_type="test_task",
-            criteria_types=[criteria],
-            expire_at="",
-            completion_responses=[
-                CompletionResponse(
-                    model="a", completion=a.completion, completion_id="a", score=56
-                ),
-                CompletionResponse(
-                    model="b", completion=b.completion, completion_id="b", score=78
-                ),
-                CompletionResponse(
-                    model="c", completion=c.completion, completion_id="c", score=89
-                ),
-                CompletionResponse(
-                    model="d", completion=d.completion, completion_id="d", score=100
-                ),
-            ],
-        ),
-        TaskSynapseObject(
-            prompt="test_prompt",
-            task_type="test_task",
-            criteria_types=[criteria],
-            expire_at="",
-            completion_responses=[
-                CompletionResponse(
-                    model="a", completion=a.completion, completion_id="a", score=12
-                ),
-                CompletionResponse(
-                    model="b", completion=b.completion, completion_id="b", score=12
-                ),
-                CompletionResponse(
-                    model="c", completion=c.completion, completion_id="c", score=12
-                ),
-                CompletionResponse(
-                    model="d", completion=d.completion, completion_id="d", score=12
-                ),
-            ],
-        ),
-        TaskSynapseObject(
-            prompt="test_prompt",
-            task_type="test_task",
-            criteria_types=[criteria],
-            expire_at="",
-            completion_responses=[
-                CompletionResponse(
-                    model="a", completion=a.completion, completion_id="a", score=12
-                ),
-                CompletionResponse(
-                    model="b", completion=b.completion, completion_id="b", score=23
-                ),
-                CompletionResponse(
-                    model="c", completion=c.completion, completion_id="c", score=12
-                ),
-                CompletionResponse(
-                    model="d", completion=d.completion, completion_id="d", score=12
-                ),
-            ],
-        ),
-        TaskSynapseObject(
-            prompt="test_prompt",
-            task_type="test_task",
-            criteria_types=[criteria],
-            expire_at="",
-            completion_responses=[
-                CompletionResponse(
-                    model="a", completion=a.completion, completion_id="a", score=56
-                ),
-                CompletionResponse(
-                    model="b", completion=b.completion, completion_id="b", score=34
-                ),
-                CompletionResponse(
-                    model="c", completion=c.completion, completion_id="c", score=23
-                ),
-                CompletionResponse(
-                    model="d", completion=d.completion, completion_id="d", score=23
-                ),
-            ],
-        ),
-        TaskSynapseObject(
-            prompt="test_prompt",
-            task_type="test_task",
-            criteria_types=[criteria],
-            expire_at="",
-            completion_responses=[
-                CompletionResponse(
-                    model="a", completion=a.completion, completion_id="a", score=23
-                ),
-                CompletionResponse(
-                    model="b", completion=b.completion, completion_id="b", score=23
-                ),
-                CompletionResponse(
-                    model="c", completion=c.completion, completion_id="c", score=34
-                ),
-                CompletionResponse(
-                    model="d", completion=d.completion, completion_id="d", score=12
-                ),
-            ],
-        ),
-        TaskSynapseObject(
-            prompt="test_prompt",
-            task_type="test_task",
-            criteria_types=[criteria],
-            expire_at="",
-            completion_responses=[
-                CompletionResponse(
-                    model="a", completion=a.completion, completion_id="a", score=23
-                ),
-                CompletionResponse(
-                    model="b", completion=b.completion, completion_id="b", score=23
-                ),
-                CompletionResponse(
-                    model="c", completion=c.completion, completion_id="c", score=76
-                ),
-                CompletionResponse(
-                    model="d", completion=d.completion, completion_id="d", score=100
-                ),
-            ],
-        ),
-        TaskSynapseObject(
-            prompt="test_prompt",
-            task_type="test_task",
-            criteria_types=[criteria],
-            expire_at="",
-            completion_responses=[
-                CompletionResponse(
-                    model="a", completion=a.completion, completion_id="a", score=1
-                ),
-                CompletionResponse(
-                    model="b", completion=b.completion, completion_id="b", score=1
-                ),
-                CompletionResponse(
-                    model="c", completion=c.completion, completion_id="c", score=76
-                ),
-                CompletionResponse(
-                    model="d", completion=d.completion, completion_id="d", score=100
-                ),
-            ],
-        ),
-        TaskSynapseObject(
-            prompt="test_prompt",
-            task_type="test_task",
-            criteria_types=[criteria],
-            expire_at="",
-            completion_responses=[
-                CompletionResponse(
-                    model="a", completion=a.completion, completion_id="a", score=1
-                ),
-                CompletionResponse(
-                    model="b", completion=b.completion, completion_id="b", score=12
-                ),
-                CompletionResponse(
-                    model="c", completion=c.completion, completion_id="c", score=23
-                ),
-                CompletionResponse(
-                    model="d", completion=d.completion, completion_id="d", score=34
-                ),
-            ],
-        ),
-        TaskSynapseObject(
-            prompt="test_prompt",
-            task_type="test_task",
-            criteria_types=[criteria],
-            expire_at="",
-            completion_responses=[
-                CompletionResponse(
-                    model="a", completion=a.completion, completion_id="a", score=1
-                ),
-                CompletionResponse(
-                    model="b", completion=b.completion, completion_id="b", score=23
-                ),
-                CompletionResponse(
-                    model="c", completion=c.completion, completion_id="c", score=76
-                ),
-                CompletionResponse(
-                    model="d", completion=d.completion, completion_id="d", score=100
-                ),
-            ],
-        ),
-    ]
+            for j, completion_response in enumerate(
+                response.completion_responses or []
+            ):
+                scores = Scores(
+                    raw_score=float(miner_outputs[j, 0]),
+                    ground_truth_score=gt_score_float,
+                    normalised_score=float(miner_outputs_normalised[j, 0]),
+                    cosine_similarity_score=cos_sim_float,
+                    normalised_cosine_similarity_score=norm_cos_sim_float,
+                    cubic_reward_score=cubic_reward_float,
+                )
 
-    import matplotlib.pyplot as plt
+                for criteria in completion_response.criteria_types:
+                    if isinstance(criteria, ScoreCriteria):
+                        criteria.scores = scores
 
-    scores = Scoring.ground_truth_scoring(criteria, gt, miner_responses)
-    scores, _ = torch.sort(scores, descending=False)
-    # Check if the sum of scores is 1
-    print(f"{scores=}")
-
-    plt.figure(figsize=(10, 6))
-    (line,) = plt.plot(range(len(scores)), scores, marker="o")
-    plt.xlabel("Miner Response Index")
-    plt.ylabel("Score")
-    plt.title("Ground Truth Scores")
-
-    annot = plt.gca().annotate(
-        "",
-        xy=(0, 0),
-        xytext=(20, 20),
-        textcoords="offset points",
-        bbox=dict(boxstyle="round", fc="w"),
-        arrowprops=dict(arrowstyle="->"),
-    )
-    annot.set_visible(False)
-
-    def update_annot(line, ind):
-        x, y = line.get_data()
-        annot.xy = (x[ind["ind"][0]], y[ind["ind"][0]])
-        text = f"{y[ind['ind'][0]]:.2f}"
-        annot.set_text(text)
-        annot.get_bbox_patch().set_alpha(0.4)
-
-    def hover(event):
-        vis = annot.get_visible()
-        if event.inaxes == plt.gca():
-            cont, ind = line.contains(event)
-            if cont:
-                update_annot(line, ind)
-                annot.set_visible(True)
-                plt.gcf().canvas.draw_idle()
-            else:
-                if vis:
-                    annot.set_visible(False)
-                    plt.gcf().canvas.draw_idle()
-
-    plt.gcf().canvas.mpl_connect("motion_notify_event", hover)
-    plt.show()
-
-
-def _test_reward_cubic():
-    miner_outputs = np.array(
-        [
-            [0.1, 0.2, 0.3, 0.4],
-            [0.5, 0.6, 0.7, 0.8],
-            [0.9, 0.1, 0.2, 0.3],
-            [0.4, 0.5, 0.6, 0.7],
-            [0.8, 0.9, 0.1, 0.2],
-            [0.3, 0.4, 0.5, 0.6],
-            [0.7, 0.8, 0.9, 0.1],
-            [0.2, 0.3, 0.4, 0.5],
-            [0.6, 0.7, 0.8, 0.9],
-            [np.nan, np.nan, np.nan, np.nan],
-            [0.15, 0.25, 0.35, 0.45],
-            [0.55, 0.65, 0.75, 0.85],
-            [0.95, 0.05, 0.15, 0.25],
-            [0.45, 0.55, 0.65, 0.75],
-            [0.85, 0.95, 0.05, 0.15],
-            [0.35, 0.45, 0.55, 0.65],
-            [0.75, 0.85, 0.95, 0.05],
-            [0.25, 0.35, 0.45, 0.55],
-            [0.65, 0.75, 0.85, 0.95],
-            [0.05, 0.15, 0.25, 0.35],
-            [1.0, 0.0, 0.0, 1.0],
-            [0.0, 1.0, 1.0, 0.0],
-            [0.99, 0.01, 0.01, 0.99],
-            [0.01, 0.99, 0.99, 0.01],
-            [0.5, 0.5, 0.5, 0.5],
-            [0.25, 0.75, 0.75, 0.25],
-            [0.75, 0.25, 0.25, 0.75],
-            [0.1, 0.9, 0.9, 0.1],
-            [1, 0.6666667, 0.33333334, 0],
-            [0.0, 0.0, 0.0, 0.0],
-        ]
-    )
-    ground_truth = np.array([0, 0.33333334, 0.6666667, 1])
-    scaling = 0.006
-    translation = 7
-    offset = 2
-
-    expected_shape = (30,)
-    result = _reward_cubic(miner_outputs, ground_truth, scaling, translation, offset)
-
-    assert isinstance(result, np.ndarray), "Result should be a numpy array"
-    assert (
-        result.shape == expected_shape
-    ), f"Expected shape {expected_shape}, but got {result.shape}"
-    assert np.all(result >= 0) and np.all(
-        result <= 1
-    ), "All values should be in the range [0, 1]"
-
-    # Visualize the result using _terminal_plot
-    _terminal_plot("Cubic Reward Test Result", result, sort=False)
-
-    print("test_reward_cubic passed.")
-
-
-if __name__ == "__main__":
-    # _test_ground_truth_score_v1()
-    _test_reward_cubic()
+        return valid_responses

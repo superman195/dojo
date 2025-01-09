@@ -22,7 +22,7 @@ class MockConfig:
 
 
 @pytest.fixture
-def validator(mock_initialise, tmp_path):
+def mock_validator(mock_initialise, tmp_path):
     """Fixture to setup validator with mock components for testing."""
     logger.info("Setting up validator fixture.")
     mock_initialise_func, mock_wallet, mock_subtensor, mock_metagraph, mock_dendrite = (
@@ -54,6 +54,12 @@ def validator(mock_initialise, tmp_path):
             yield validator
 
     logger.info("Validator fixture setup complete.")
+
+
+# @pytest.mark.asyncio
+# async def test_validator_set_weights(mock_validator: Validator):
+#     """Test the validator's set_weights method."""
+#     await mock_validator.set_weights()
 
 
 # TODO Implement with test database envrioment
