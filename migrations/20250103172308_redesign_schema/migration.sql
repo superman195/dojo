@@ -123,10 +123,10 @@ ALTER TABLE "ground_truth" ADD CONSTRAINT "ground_truth_validator_task_id_fkey" 
 INSERT INTO validator_task (
     id, prompt, task_type, is_processed, expire_at, created_at, updated_at
 )
-SELECT 
+SELECT
     id,
     prompt,
-    CASE 
+    CASE
         WHEN LOWER(task_type) LIKE '%image%' THEN 'TEXT_TO_IMAGE'::TaskTypeEnum
         WHEN LOWER(task_type) LIKE '%3d%' THEN 'TEXT_TO_THREE_D'::TaskTypeEnum
         ELSE 'CODE_GENERATION'::TaskTypeEnum
@@ -154,7 +154,7 @@ INSERT INTO miner_response (
     created_at,
     updated_at
 )
-SELECT 
+SELECT
     gen_random_uuid(),
     frm.id as validator_task_id,
     frm.dojo_task_id,
@@ -175,7 +175,7 @@ SELECT
     frm.created_at,
     frm.updated_at
 FROM "Feedback_Request_Model" frm
-WHERE frm.dojo_task_id IS NOT NULL 
+WHERE frm.dojo_task_id IS NOT NULL
 AND frm.hotkey IS NOT NULL
 AND EXISTS (SELECT 1 FROM "Ground_Truth_Model" gt WHERE gt.feedback_request_id = frm.id)
 AND EXISTS (SELECT 1 FROM "Completion_Response_Model" cr WHERE cr.feedback_request_id = frm.id)
@@ -193,7 +193,7 @@ INSERT INTO completion (
     created_at,
     updated_at
 )
-SELECT 
+SELECT
     crm.id,
     crm.completion_id,
     crm.feedback_request_id as validator_task_id,
@@ -216,15 +216,15 @@ INSERT INTO criterion (
     created_at,
     updated_at
 )
-SELECT 
+SELECT
     gen_random_uuid(),
     c.id as completion_id,
-    CASE 
+    CASE
         WHEN ctm.type = 'MULTI_SCORE' THEN 'SCORE'::CriteriaTypeEnum
         ELSE ctm.type::CriteriaTypeEnum
     END as criteria_type,
-    CASE 
-        WHEN ctm.type = 'MULTI_SCORE' THEN 
+    CASE
+        WHEN ctm.type = 'MULTI_SCORE' THEN
             jsonb_build_object('min', ctm.min, 'max', ctm.max)
         ELSE '{}'::jsonb
     END as config,
@@ -245,7 +245,7 @@ INSERT INTO ground_truth (
     created_at,
     updated_at
 )
-SELECT 
+SELECT
     gt.id,
     gt.feedback_request_id as validator_task_id,
     gt.obfuscated_model_id,
@@ -277,7 +277,7 @@ INSERT INTO miner_score (
     created_at,
     updated_at
 )
-SELECT 
+SELECT
     gen_random_uuid(),
     c.id as criterion_id,
     mr.id as miner_response_id,
