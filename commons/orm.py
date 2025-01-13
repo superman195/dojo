@@ -731,7 +731,102 @@ class ORM:
                 f"Error fetching completion scores and ground truths for dojo_task_id {dojo_task_id}: {e}"
             )
             return {}
+    
+    @staticmethod
+    async def get_processed_tasks(
+        batch_size: int = 10,
+        expire_from: datetime | None = None,
+        expire_to: datetime | None = None,
+    ) -> AsyncGenerator[tuple[List[ValidatorTask], bool], None]:
+        """Returns batches of processed ValidatorTask records and a boolean indicating if there are more batches.
 
+        Args:
+            batch_size (int, optional): Number of tasks to return in a batch. Defaults to 10.
+            expire_from: (datetime | None) If provided, only tasks with expire_at after expire_from will be returned.
+            expire_to: (datetime | None) If provided, only tasks with expire_at before expire_to will be returned.
+            You must determine the `expire_at` cutoff yourself, otherwise it defaults to current time UTC.
+
+        Raises:
+            ExpiredFromMoreThanExpireTo: If expire_from is greater than expire_to
+            @to-do: create a new exception for this
+            NoNewExpiredTasksYet: If no expired tasks are found for processing.
+
+        Yields:
+            tuple[validator_task, bool]: Each yield returns:
+            - List of ValidatorTask records with their related completions, miner_responses, and GroundTruth
+            - Boolean indicating if there are more batches to process
+        """
+         # find all validator requests first
+        include_query = ValidatorTaskInclude(
+            {
+                "completions": {
+                    "include": {"Criterion": {"include": {"scores": True}}}
+                },
+                "miner_responses": {"include": {"scores": True}},
+                "ground_truth": True,
+            }
+        )
+
+        # Set default expiry timeframe of 6 hours before the latest expired tasks
+        if not expire_from:
+            expire_from = (
+                datetime_as_utc(datetime.now(timezone.utc))
+                - timedelta(seconds=TASK_DEADLINE)
+                - timedelta(hours=6)
+            )
+        if not expire_to:
+            expire_to = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
+                seconds=TASK_DEADLINE
+            )
+
+        # Check that expire_from is lesser than expire_to
+        if expire_from > expire_to:
+            raise ExpiredFromMoreThanExpireTo(
+                "expire_from should be less than expire_to."
+            )
+
+        vali_where_query_processed = ValidatorTaskWhereInput(
+            {
+                # only check for expire at since miner may lie
+                "expire_at": {
+                    "gt": expire_from,
+                    "lt": expire_to,
+                },
+                "is_processed": True,
+            }
+        )
+
+        # Get total count and first batch of validator tasks in parallel
+        task_count_processed, first_batch = await asyncio.gather(
+            ValidatorTask.prisma().count(where=vali_where_query_processed),
+            ValidatorTask.prisma().find_many(
+                include=include_query,
+                where=vali_where_query_processed,
+                order={"created_at": "desc"},
+                take=batch_size,
+            ),
+        )
+
+        logger.debug(f"Count of processed validator tasks: {task_count_processed}")
+
+        if not task_count_processed:
+            raise NoNewExpiredTasksYet(
+                f"No expired validator tasks found for processing, please wait for tasks to pass the task deadline of {TASK_DEADLINE} seconds."
+            )
+
+        yield first_batch, task_count_processed > batch_size
+
+        # Process remaining batches
+        for skip in range(batch_size, task_count_processed, batch_size):
+            validator_tasks = await ValidatorTask.prisma().find_many(
+                include=include_query,
+                where=vali_where_query_processed,
+                order={"created_at": "desc"},
+                skip=skip,
+                take=batch_size,
+            )
+            has_more = (skip + batch_size) < task_count_processed
+            yield validator_tasks, has_more
 
 # ---------------------------------------------------------------------------- #
 #                          Test custom ORM functions                           #

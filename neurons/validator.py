@@ -62,7 +62,7 @@ from dojo.protocol import (
 )
 from dojo.utils.config import get_config
 from dojo.utils.uids import extract_miner_uids, is_miner
-
+from entrypoints.analytics import post_task_data_to_analytics
 ObfuscatedModelMap: TypeAlias = Dict[str, str]
 
 
@@ -1502,3 +1502,8 @@ class Validator:
                     }
                 )
         return hotkey_to_dojo_task_scores_and_gt
+
+    async def send_tasks_to_analytics(self):
+        while True:
+            await post_task_data_to_analytics(validator_hotkey=self.vali_hotkey)
+            await asyncio.sleep(240) 
