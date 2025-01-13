@@ -8,7 +8,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from commons.api.middleware import LimitContentLengthMiddleware
-from commons.api.reward_route import reward_router
 from commons.dataset.synthetic import SyntheticAPI
 from commons.objects import ObjectManager
 from database.client import connect_db, disconnect_db
@@ -39,7 +38,6 @@ app.add_middleware(
     CORSMiddleware,
 )
 app.add_middleware(LimitContentLengthMiddleware)
-app.include_router(reward_router)
 
 
 async def main():
