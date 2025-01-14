@@ -15,6 +15,8 @@ MAX_CONCURRENT_TASKS = 15  # Limit concurrent connections
 
 # Create semaphore for connection limiting
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
+# rank 0 is the best so score should be max, output is the result of `minmax_scale`
+rank_id_to_score_map = {0: 1.0, 1: 0.6666667, 2: 0.33333334, 3: 0.0}
 
 
 class MigrationStats:
@@ -408,8 +410,11 @@ async def process_ground_truths(ground_truths, validator_task_id):
 
         if not existing_ground_truth:
             # Map rank_id to corresponding score
-            rank_scores = {0: 0.0, 1: 0.33333334, 2: 0.6666667, 3: 1.0}
-            ground_truth_score = rank_scores.get(old_ground_truth.rank_id, 0.0)
+            try:
+                ground_truth_score = rank_id_to_score_map[old_ground_truth.rank_id]
+            except KeyError:
+                logger.fatal(f"Rank id of {old_ground_truth.id} is not expected")
+                raise
 
             await prisma.groundtruth.create(
                 data={
@@ -636,10 +641,16 @@ async def process_request_with_semaphore(request, task_type):
                 # Process ground truths
                 if request.ground_truths:
                     for old_ground_truth in request.ground_truths:
-                        rank_scores = {0: 0.0, 1: 0.33333334, 2: 0.6666667, 3: 1.0}
-                        ground_truth_score = rank_scores.get(
-                            old_ground_truth.rank_id, 0.0
-                        )
+                        # Map rank_id to corresponding score
+                        try:
+                            ground_truth_score = rank_id_to_score_map[
+                                old_ground_truth.rank_id
+                            ]
+                        except KeyError:
+                            logger.fatal(
+                                f"Rank id of {old_ground_truth.id} is not expected"
+                            )
+                            raise
 
                         await transaction.groundtruth.create(
                             data={
