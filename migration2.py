@@ -60,7 +60,7 @@ def setup_logger():
     logger.addHandler(file_handler)
 
     # Log the configuration
-    logger.info(
+    print(
         f"Migration Configuration:\n"
         f"- BATCH_SIZE: {BATCH_SIZE}\n"
         f"- MAX_CONCURRENT_TASKS: {MAX_CONCURRENT_TASKS}\n"
@@ -191,34 +191,56 @@ class MigrationStats:
 
         progress = processed / total
         filled = int(width * progress)
-        bar = "[" + "=" * filled + ">" + " " * (width - filled - 1) + "]"
+        bar = (
+            "["
+            + "=" * filled
+            + (">" if filled < width else "")
+            + " " * (width - filled - 1)
+            + "]"
+        )
         return f"{bar} {progress * 100:.1f}%"
 
     def log_progress(self):
         """Show progress bar and stats for current pass."""
-        elapsed = time.time() - self.start_time
-        progress_bar = self._get_progress_bar()
+        current_time = time.time()
+        elapsed = current_time - self.start_time
+        progress_bar = self._get_progress_bar(width=30)  # Shorter width for better fit
         self.update_rate()
 
+        # Calculate progress
         if self.current_pass == 1:
-            print(
-                f"\rStep 1: {progress_bar} ({self.processed_parent_requests}/{self.parent_requests}) "
-                f"[Tasks: {self.validator_tasks_count}, Completions: {self.completions_count}, "
-                f"Ground Truths: {self.ground_truths_count}, Criteria: {self.criteria_count}] "
-                f"[Rate: {self.tasks_per_minute:.0f} tasks/min] "
-                f"[{elapsed:.1f}s]",
-                end="",
-                flush=True,
-            )
+            total = self.parent_requests
+            processed = self.processed_parent_requests
+            stats_str = f"Tasks: {self.validator_tasks_count} Comp: {self.completions_count} GT: {self.ground_truths_count} Crit: {self.criteria_count}"
         else:
-            print(
-                f"\rStep 2: {progress_bar} ({self.processed_child_requests}/{self.child_requests}) "
-                f"[Miner Responses: {self.miner_responses_count}, Miner Scores: {self.miner_scores_count}] "
-                f"[Rate: {self.tasks_per_minute:.0f} tasks/min] "
-                f"[{elapsed:.1f}s]",
-                end="",
-                flush=True,
-            )
+            total = self.child_requests
+            processed = self.processed_child_requests
+            stats_str = f"MinerResp: {self.miner_responses_count} MinerScore: {self.miner_scores_count}"
+
+        # Calculate ETA
+        if processed > 0:
+            rate = processed / elapsed
+            remaining = total - processed
+            eta_seconds = remaining / rate if rate > 0 else 0
+            hours = int(eta_seconds // 3600)
+            minutes = int((eta_seconds % 3600) // 60)
+            seconds = int(eta_seconds % 60)
+            eta_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        else:
+            eta_str = "--:--:--"
+
+        # Format elapsed time
+        elapsed_hours = int(elapsed // 3600)
+        elapsed_minutes = int((elapsed % 3600) // 60)
+        elapsed_seconds = int(elapsed % 60)
+        elapsed_str = f"{elapsed_hours:02d}:{elapsed_minutes:02d}:{elapsed_seconds:02d}"
+
+        # Print progress with fixed width format and progress bar
+        print(
+            f"\rPass {self.current_pass} | {progress_bar} | {processed}/{total} | {stats_str} | {self.tasks_per_minute:.0f} t/min | Time: {elapsed_str} | ETA: {eta_str}",
+            end="",
+            flush=True,
+        )
 
     def print_final_stats(self):
         """Print detailed statistics at the end of migration."""
