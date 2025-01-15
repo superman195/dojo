@@ -8,17 +8,18 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import bittensor as bt
-from dotenv import load_dotenv
 
 from database.client import connect_db, disconnect_db, prisma
 from database.prisma import Json
 from database.prisma.enums import CriteriaTypeEnum
 from dojo.protocol import TaskTypeEnum
+from dojo.utils.config import source_dotenv
 
-load_dotenv()
+source_dotenv()
 
 # rank 0 is the best so score should be max, output is the result of `minmax_scale`
 rank_id_to_score_map = {0: 1.0, 1: 0.6666667, 2: 0.33333334, 3: 0.0}
+
 
 # Load configuration from environment variables with defaults
 BATCH_SIZE = int(os.getenv("MIGRATION_BATCH_SIZE", 1000))
@@ -257,12 +258,19 @@ stats = MigrationStats()
 
 
 @lru_cache(maxsize=1024)
-def get_coldkey_from_hotkey(subtensor: bt.Subtensor, hotkey: str) -> str:
-    coldkey_scale_encoded = subtensor.query_subtensor(
-        name="Owner",
-        params=[hotkey],
-    )
-    return coldkey_scale_encoded.value  # type: ignore
+def get_coldkey_from_hotkey(subtensor: bt.Subtensor, hotkey: str) -> str:  # type: ignore
+    max_retries = 3
+    for retry in range(max_retries):
+        try:
+            coldkey_scale_encoded = subtensor.query_subtensor(
+                name="Owner",
+                params=[hotkey],
+            )
+            return coldkey_scale_encoded.value  # type: ignore
+        except Exception as e:
+            if retry == max_retries - 1:
+                raise e
+            time.sleep(1)
 
 
 async def migrate():
@@ -350,6 +358,8 @@ async def migrate():
                         }
                     },
                 },
+                # none works too but fails typings
+                where={"parent_id": {"not": ""}},
             )
 
             if not batch:
