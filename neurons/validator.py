@@ -1505,5 +1505,5 @@ class Validator:
 
     async def send_tasks_to_analytics(self):
         while True:
-            await post_task_data_to_analytics(validator_hotkey=self.vali_hotkey)
-            await asyncio.sleep(240) 
+            await upload_analytics_data(validator_hotkey=self.vali_hotkey)
+            await asyncio.sleep(240)

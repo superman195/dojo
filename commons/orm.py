@@ -273,7 +273,7 @@ class ORM:
                             )
                         else:
                             logger.warning(
-                                f"Retrying update, attempt {attempt+2}/{max_retries}"
+                                f"Retrying update, attempt {attempt + 2}/{max_retries}"
                             )
                             await asyncio.sleep(2**attempt)
 
@@ -282,7 +282,7 @@ class ORM:
                         logger.error(f"Error updating task results: {e}")
                     else:
                         logger.warning(
-                            f"Error during attempt {attempt+1}, retrying: {e}"
+                            f"Error during attempt {attempt + 1}, retrying: {e}"
                         )
                         await asyncio.sleep(2**attempt)
 
@@ -403,18 +403,18 @@ class ORM:
                                 )
 
                     logger.debug(
-                        f"Updating completion responses: updated batch {batch_id+1}/{num_batches}"
+                        f"Updating completion responses: updated batch {batch_id + 1}/{num_batches}"
                     )
                     break
                 except Exception as e:
                     if attempt == max_retries - 1:
                         logger.error(
-                            f"Failed to update batch {batch_id+1}/{num_batches} after {max_retries} attempts: {e}"
+                            f"Failed to update batch {batch_id + 1}/{num_batches} after {max_retries} attempts: {e}"
                         )
                         failed_batch_indices.extend(range(start_idx, end_idx))
                     else:
                         logger.warning(
-                            f"Retrying batch {batch_id+1}/{num_batches}, attempt {attempt+2}/{max_retries}"
+                            f"Retrying batch {batch_id + 1}/{num_batches}, attempt {attempt + 2}/{max_retries}"
                         )
                         await asyncio.sleep(2**attempt)
 
@@ -731,7 +731,7 @@ class ORM:
                 f"Error fetching completion scores and ground truths for dojo_task_id {dojo_task_id}: {e}"
             )
             return {}
-    
+
     @staticmethod
     async def get_processed_tasks(
         batch_size: int = 10,
@@ -756,7 +756,7 @@ class ORM:
             - List of ValidatorTask records with their related completions, miner_responses, and GroundTruth
             - Boolean indicating if there are more batches to process
         """
-         # find all validator requests first
+        # find all validator requests first
         include_query = ValidatorTaskInclude(
             {
                 "completions": {
@@ -793,6 +793,9 @@ class ORM:
                     "lt": expire_to,
                 },
                 "is_processed": True,
+                "miner_responses": {
+                    "some": {}  # Ensures miner_responses array is not empty
+                },
             }
         )
 
@@ -827,6 +830,7 @@ class ORM:
             )
             has_more = (skip + batch_size) < task_count_processed
             yield validator_tasks, has_more
+
 
 # ---------------------------------------------------------------------------- #
 #                          Test custom ORM functions                           #
