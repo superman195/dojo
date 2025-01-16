@@ -11,6 +11,7 @@ CREATE TABLE "validator_task" (
     "expire_at" TIMESTAMP(3) NOT NULL,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
+    "metadata" JSONB,
 
     CONSTRAINT "validator_task_pkey" PRIMARY KEY ("id")
 );
@@ -32,6 +33,7 @@ CREATE TABLE "miner_response" (
 -- CreateTable
 CREATE TABLE "completion" (
     "id" TEXT NOT NULL,
+    "completion_id" TEXT NOT NULL,
     "validator_task_id" TEXT NOT NULL,
     "model" TEXT NOT NULL,
     "completion" JSONB NOT NULL,
@@ -54,7 +56,7 @@ CREATE TABLE "criterion" (
 );
 
 -- CreateTable
-CREATE TABLE "score" (
+CREATE TABLE "miner_score" (
     "id" TEXT NOT NULL,
     "criterion_id" TEXT NOT NULL,
     "miner_response_id" TEXT NOT NULL,
@@ -62,7 +64,7 @@ CREATE TABLE "score" (
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "score_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "miner_score_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -92,7 +94,10 @@ CREATE INDEX "validator_task_expire_at_idx" ON "validator_task"("expire_at");
 CREATE UNIQUE INDEX "miner_response_id_key" ON "miner_response"("id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "score_criterion_id_miner_response_id_key" ON "score"("criterion_id", "miner_response_id");
+CREATE INDEX "miner_response_dojo_task_id_idx" ON "miner_response"("dojo_task_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "miner_score_criterion_id_miner_response_id_key" ON "miner_score"("criterion_id", "miner_response_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "ground_truth_validator_task_id_obfuscated_model_id_rank_id_key" ON "ground_truth"("validator_task_id", "obfuscated_model_id", "rank_id");
@@ -110,10 +115,10 @@ ALTER TABLE "completion" ADD CONSTRAINT "completion_validator_task_id_fkey" FORE
 ALTER TABLE "criterion" ADD CONSTRAINT "criterion_completion_id_fkey" FOREIGN KEY ("completion_id") REFERENCES "completion"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "score" ADD CONSTRAINT "score_criterion_id_fkey" FOREIGN KEY ("criterion_id") REFERENCES "criterion"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "miner_score" ADD CONSTRAINT "miner_score_criterion_id_fkey" FOREIGN KEY ("criterion_id") REFERENCES "criterion"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "score" ADD CONSTRAINT "score_miner_response_id_fkey" FOREIGN KEY ("miner_response_id") REFERENCES "miner_response"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "miner_score" ADD CONSTRAINT "miner_score_miner_response_id_fkey" FOREIGN KEY ("miner_response_id") REFERENCES "miner_response"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ground_truth" ADD CONSTRAINT "ground_truth_validator_task_id_fkey" FOREIGN KEY ("validator_task_id") REFERENCES "validator_task"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
