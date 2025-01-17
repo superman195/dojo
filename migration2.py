@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import time
+from datetime import timedelta
 from functools import lru_cache
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -237,7 +238,7 @@ class MigrationStats:
 
         # Print progress with fixed width format and progress bar
         print(
-            f"\rPass {self.current_pass} | {progress_bar} | {processed}/{total} | {stats_str} | {self.tasks_per_minute:.0f} t/min | Time: {elapsed_str} | ETA: {eta_str}",
+            f"\rStep {self.current_pass} | {progress_bar} | {processed}/{total} | {stats_str} | {self.tasks_per_minute:.0f} t/min | Time: {elapsed_str} | ETA: {eta_str}",
             end="",
             flush=True,
         )
@@ -304,7 +305,7 @@ async def migrate():
     await stats.collect_new_stats()
 
     try:
-        # Pass 1: Process parent requests
+        # Step 1: Process parent requests
         print("\nProcessing parent requests...")
         stats.current_pass = 1
 
@@ -360,7 +361,7 @@ async def migrate():
 
             skip += BATCH_SIZE
 
-        # Pass 2: Process child requests
+        # Step 2: Process child requests
         print("\nProcessing child requests...")
         stats.current_pass = 2
 
@@ -512,7 +513,7 @@ async def process_child_request(old_request, subtensor):
             coldkey = "dummy_coldkey"
 
         try:
-            async with prisma.tx() as transaction:
+            async with prisma.tx(timeout=timedelta(seconds=10)) as transaction:
                 # Create new miner response
                 miner_response = await transaction.minerresponse.create(
                     data={
@@ -573,7 +574,7 @@ async def process_parent_request(request, task_type):
             stats.log_progress()
             return
 
-        async with prisma.tx() as transaction:
+        async with prisma.tx(timeout=timedelta(seconds=10)) as transaction:
             # Create parent validator task
             new_validator_task = await transaction.validatortask.create(
                 data={
