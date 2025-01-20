@@ -26,6 +26,8 @@ rank_id_to_score_map = {0: 1.0, 1: 0.6666667, 2: 0.33333334, 3: 0.0}
 BATCH_SIZE = int(os.getenv("MIGRATION_BATCH_SIZE", 1000))
 MAX_CONCURRENT_TASKS = int(os.getenv("MIGRATION_MAX_CONCURRENT_TASKS", 15))
 LOG_DIR = os.getenv("MIGRATION_LOG_DIR", os.path.join(os.getcwd(), "migration_logs"))
+MINER_TX_TIMEOUT = int(os.getenv("MINER_TX_TIMEOUT", 10))
+VALIDATOR_TX_TIMEOUT = int(os.getenv("VALIDATOR_TX_TIMEOUT", 10))
 
 # Ensure log directory exists
 Path(LOG_DIR).mkdir(parents=True, exist_ok=True)
@@ -513,7 +515,9 @@ async def process_child_request(old_request, subtensor):
             coldkey = "dummy_coldkey"
 
         try:
-            async with prisma.tx(timeout=timedelta(seconds=10)) as transaction:
+            async with prisma.tx(
+                timeout=timedelta(seconds=MINER_TX_TIMEOUT)
+            ) as transaction:
                 # Create new miner response
                 miner_response = await transaction.minerresponse.create(
                     data={
@@ -574,7 +578,9 @@ async def process_parent_request(request, task_type):
             stats.log_progress()
             return
 
-        async with prisma.tx(timeout=timedelta(seconds=10)) as transaction:
+        async with prisma.tx(
+            timeout=timedelta(seconds=VALIDATOR_TX_TIMEOUT)
+        ) as transaction:
             # Create parent validator task
             new_validator_task = await transaction.validatortask.create(
                 data={
