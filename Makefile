@@ -52,6 +52,9 @@ validator-down:
 miner-down:
 	docker compose --env-file .env.miner -f docker-compose.miner.yaml down
 
+migration-down:
+	docker compose --env-file .env.validator -f docker-compose.validator.yaml down migration
+
 # ---------------------------------------------------------------------------- #
 #                                 CORE SERVICES                                #
 # ---------------------------------------------------------------------------- #
@@ -76,6 +79,9 @@ dojo-cli:
 
 extract-dataset:
 	docker compose -f docker-compose.validator.yaml run --rm --remove-orphans extract-dataset
+
+migration:
+	docker compose --env-file .env.validator -f docker-compose.validator.yaml run --rm migration
 
 # ---------------------------------------------------------------------------- #
 #                             CORE SERVICE LOGGING                             #

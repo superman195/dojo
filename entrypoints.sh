@@ -100,9 +100,12 @@ fi
 
 if [ "$1" = 'migration' ]; then
     echo "Environment variables:"
-    echo "PORT: ${PORT}"
-    echo "S3_BUCKET_NAME: ${S3_BUCKET_NAME}"
-    echo "AWS_REGION: ${AWS_REGION}"
-    echo "MAX_CHUNK_SIZE_MB: ${MAX_CHUNK_SIZE_MB}"
-    python migration.py --subtensor.network finney
+    echo "DATABASE_URL: ${DATABASE_URL}"
+
+    echo "Running Prisma setup..."
+    prisma generate
+    prisma migrate deploy
+
+    echo "Starting migration..."
+    python migration2.py --subtensor.network finney
 fi
