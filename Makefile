@@ -52,9 +52,6 @@ validator-down:
 miner-down:
 	docker compose --env-file .env.miner -f docker-compose.miner.yaml down
 
-migration-down:
-	docker compose --env-file .env.validator -f docker-compose.validator.yaml down migration
-
 # ---------------------------------------------------------------------------- #
 #                                 CORE SERVICES                                #
 # ---------------------------------------------------------------------------- #

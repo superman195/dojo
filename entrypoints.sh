@@ -107,5 +107,5 @@ if [ "$1" = 'migration' ]; then
     prisma migrate deploy
 
     echo "Starting migration..."
-    python migration2.py --subtensor.network finney
+    python migration.py --subtensor.network finney
 fi
