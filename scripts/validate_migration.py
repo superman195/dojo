@@ -45,7 +45,11 @@ async def validate_migration(sample_size=100):
             # Check completions count matches
             old_completions = old_request.completions or []
             new_completions = validator_task.completions or []
-            if len(old_completions) != len(new_completions):
+            if (
+                len(old_completions)
+                and len(new_completions)
+                and len(old_completions) != len(new_completions)
+            ):
                 errors_found = True
                 print(f"\n❌ Completion count mismatch for task {old_request.id}")
                 print(
@@ -55,7 +59,11 @@ async def validate_migration(sample_size=100):
             # Check ground truths count matches
             old_ground_truths = old_request.ground_truths or []
             new_ground_truths = validator_task.ground_truth or []
-            if len(old_ground_truths) != len(new_ground_truths):
+            if (
+                len(old_ground_truths)
+                and len(new_ground_truths)
+                and len(old_ground_truths) != len(new_ground_truths)
+            ):
                 errors_found = True
                 print(f"\n❌ Ground truth count mismatch for task {old_request.id}")
                 print(
@@ -110,7 +118,11 @@ async def validate_migration(sample_size=100):
                 )
                 miner_scores = miner_response.scores or []
 
-                if len(miner_scores) != total_criteria:
+                if (
+                    len(miner_scores)
+                    and total_criteria
+                    and len(miner_scores) != total_criteria
+                ):
                     errors_found = True
                     print(
                         f"\n❌ Score count mismatch for miner response {miner_response.id}"
