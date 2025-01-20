@@ -191,6 +191,3 @@ database/prisma/
 
 # scores data
 scores/*.pt
-
-# migration logs
-migration_logs/

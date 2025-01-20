@@ -23,9 +23,9 @@ rank_id_to_score_map = {0: 1.0, 1: 0.6666667, 2: 0.33333334, 3: 0.0}
 
 
 # Load configuration from environment variables with defaults
-BATCH_SIZE = int(os.getenv("MIGRATION_BATCH_SIZE", 1000))
+BATCH_SIZE = int(os.getenv("MIGRATION_BATCH_SIZE", 5000))
 MAX_CONCURRENT_TASKS = int(os.getenv("MIGRATION_MAX_CONCURRENT_TASKS", 15))
-LOG_DIR = os.getenv("MIGRATION_LOG_DIR", os.path.join(os.getcwd(), "migration_logs"))
+LOG_DIR = os.getenv("MIGRATION_LOG_DIR", "logs/migration/")
 MINER_TX_TIMEOUT = int(os.getenv("MINER_TX_TIMEOUT", 10))
 VALIDATOR_TX_TIMEOUT = int(os.getenv("VALIDATOR_TX_TIMEOUT", 10))
 
@@ -44,16 +44,17 @@ def setup_logger():
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    # Console handler for general info
+    # Console handler for error log
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.DEBUG)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    # Rotating file handler for general logs (10MB per file, keep 5 backup files)
-    general_log_path = os.path.join(LOG_DIR, "migration.log")
+    # Rotating file handler for error logs (10MB per file, keep 5 backup files)
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    error_log_path = os.path.join(LOG_DIR, f"migration_errors_{timestamp}.log")
     file_handler = RotatingFileHandler(
-        general_log_path,
+        error_log_path,
         maxBytes=10 * 1024 * 1024,  # 10MB
         backupCount=5,
         encoding="utf-8",
