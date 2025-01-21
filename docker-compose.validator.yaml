@@ -17,6 +17,7 @@ networks:
 services:
   # ============== COMMON SERVICES ============== #
   redis-service:
+    container_name: redis-service
     image: redis/redis-stack-server:7.4.0-v0
     env_file:
       - .env.validator
