@@ -10,6 +10,7 @@ from commons.exceptions import (
     ExpiredFromMoreThanExpireTo,
     InvalidMinerResponse,
     NoNewExpiredTasksYet,
+    NoProcessedTasksYet,
 )
 from commons.utils import datetime_as_utc
 from database.client import prisma, transaction
@@ -61,7 +62,6 @@ class ORM:
             - Boolean indicating if there are more batches to process
         """
 
-        # find all validator requests first
         include_query = ValidatorTaskInclude(
             {
                 "completions": {
@@ -738,7 +738,7 @@ class ORM:
         expire_from: datetime | None = None,
         expire_to: datetime | None = None,
     ) -> AsyncGenerator[tuple[List[ValidatorTask], bool], None]:
-        """Returns batches of processed ValidatorTask records and a boolean indicating if there are more batches.
+        """Returns batches of processed ValidatorTask records and a boolean indicating if there are more batches. Used to collect analytics data.
 
         Args:
             batch_size (int, optional): Number of tasks to return in a batch. Defaults to 10.
@@ -748,20 +748,20 @@ class ORM:
 
         Raises:
             ExpiredFromMoreThanExpireTo: If expire_from is greater than expire_to
-            @to-do: create a new exception for this
-            NoNewExpiredTasksYet: If no expired tasks are found for processing.
+            NoProcessedTasksYet: If no processed tasks are found for uploading.
 
         Yields:
             tuple[validator_task, bool]: Each yield returns:
             - List of ValidatorTask records with their related completions, miner_responses, and GroundTruth
             - Boolean indicating if there are more batches to process
+
+        @to-do: replace TASK_DEADLINE in the NoProcessedTasksYet error check with a dedicated config var for processing.
+        @to-do: write unit test for this function.
         """
         # find all validator requests first
         include_query = ValidatorTaskInclude(
             {
-                "completions": {
-                    "include": {"Criterion": {"include": {"scores": True}}}
-                },
+                "completions": {"include": {"Criterion": True}},
                 "miner_responses": {"include": {"scores": True}},
                 "ground_truth": True,
             }
@@ -793,9 +793,6 @@ class ORM:
                     "lt": expire_to,
                 },
                 "is_processed": True,
-                "miner_responses": {
-                    "some": {}  # Ensures miner_responses array is not empty
-                },
             }
         )
 
@@ -813,8 +810,8 @@ class ORM:
         logger.debug(f"Count of processed validator tasks: {task_count_processed}")
 
         if not task_count_processed:
-            raise NoNewExpiredTasksYet(
-                f"No expired validator tasks found for processing, please wait for tasks to pass the task deadline of {TASK_DEADLINE} seconds."
+            raise NoProcessedTasksYet(
+                f"No processed validator tasks found for uploading, please wait for tasks to pass the processing deadline of {TASK_DEADLINE} seconds."
             )
 
         yield first_batch, task_count_processed > batch_size
