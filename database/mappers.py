@@ -2,16 +2,10 @@ import json
 
 import bittensor as bt
 
-from commons.utils import (
-    datetime_to_iso8601_str,
-    iso8601_str_to_datetime,
-)
+from commons.utils import datetime_to_iso8601_str, iso8601_str_to_datetime
 from database.prisma import Json
 from database.prisma.enums import CriteriaTypeEnum, TaskTypeEnum
-from database.prisma.models import (
-    MinerResponse,
-    ValidatorTask,
-)
+from database.prisma.models import MinerResponse, ValidatorTask
 from database.prisma.types import (
     CompletionCreateInput,
     CriterionCreateWithoutRelationsInput,
@@ -95,7 +89,7 @@ def map_task_synapse_object_to_completions(
                 )
                 for criterion in resp.criteria_types
             ]
-            completion["Criterion"] = {"create": criteria}
+            completion["criterion"] = {"create": criteria}
 
         completions.append(completion)
 
@@ -166,7 +160,7 @@ def map_validator_task_to_task_synapse_object(
     for completion in model.completions or []:
         # Map criteria types for each completion
         criteria_types = []
-        for criterion in completion.Criterion or []:
+        for criterion in completion.criterion or []:
             config = json.loads(criterion.config)
             if criterion.criteria_type == CriteriaTypeEnum.SCORE:
                 criteria_types.append(
@@ -233,7 +227,7 @@ def map_miner_response_to_task_synapse_object(
         criteria_types = []
         score = None
 
-        for criterion in completion.Criterion or []:
+        for criterion in completion.criterion or []:
             config = json.loads(criterion.config)
             # Find the corresponding score for this criterion from miner_response
             for miner_score in criterion.scores or []:

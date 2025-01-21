@@ -455,7 +455,7 @@ async def process_child_request(old_request, subtensor):
         # Get validator task with completions and their criteria
         validator_task = await prisma.validatortask.find_unique(
             where={"id": old_request.parent_request.id},
-            include={"completions": {"include": {"Criterion": True}}},
+            include={"completions": {"include": {"criterion": True}}},
         )
 
         if not validator_task:
@@ -536,8 +536,8 @@ async def process_child_request(old_request, subtensor):
                 # Process miner scores
                 if validator_task.completions:
                     for completion in validator_task.completions:
-                        if completion.Criterion:
-                            for criterion in completion.Criterion:
+                        if completion.criterion:
+                            for criterion in completion.criterion:
                                 # Create new miner score
                                 await transaction.minerscore.create(
                                     data={
@@ -569,7 +569,7 @@ async def process_parent_request(request, task_type):
         # Check if validator task already exists
         existing_validator_task = await prisma.validatortask.find_unique(
             where={"id": request.id},
-            include={"completions": {"include": {"Criterion": True}}},
+            include={"completions": {"include": {"criterion": True}}},
         )
 
         if existing_validator_task:

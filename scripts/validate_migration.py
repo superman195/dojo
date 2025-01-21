@@ -98,7 +98,7 @@ async def validate_parent_data(batch_size=1000):
             validator_task = await prisma.validatortask.find_unique(
                 where={"id": old_request.id},
                 include={
-                    "completions": {"include": {"Criterion": True}},
+                    "completions": {"include": {"criterion": True}},
                     "ground_truth": True,
                 },
             )
