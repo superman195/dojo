@@ -3,6 +3,7 @@ import random
 import time
 from typing import List  # noqa: UP035
 
+import aiohttp
 import bittensor as bt
 
 from neurons.validator import Validator
@@ -56,6 +57,7 @@ class MockDendrite(bt.dendrite):
     """
 
     def __init__(self, wallet):
+        self._session: aiohttp.ClientSession | None = None
         super().__init__(wallet)
 
     async def forward(
