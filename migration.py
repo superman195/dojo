@@ -303,6 +303,9 @@ async def migrate():
     await connect_db()
     subtensor = bt.subtensor(network="finney")
 
+    # Create semaphore for concurrent task limiting
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
+
     # Collect and display old and new table statistics
     await stats.collect_old_stats()
     await stats.collect_new_stats()
@@ -328,8 +331,7 @@ async def migrate():
             if not batch:
                 break
 
-            # Create tasks for all requests in the batch
-            batch_tasks = []
+            # Create and start tasks immediately
             for old_request in batch:
                 try:
                     # Map task type
@@ -339,17 +341,12 @@ async def migrate():
                     elif old_request.task_type.lower().find("3d") >= 0:
                         task_type = TaskTypeEnum.TEXT_TO_THREE_D
 
-                    # Add task to batch tasks with semaphore
-                    batch_tasks.append(
-                        asyncio.create_task(
-                            process_parent_request(old_request, task_type)
+                    # Fire and forget - semaphore handles concurrency control
+                    asyncio.create_task(
+                        process_parent_request_with_semaphore(
+                            semaphore, old_request, task_type
                         )
                     )
-
-                    # If we hit the concurrent task limit, wait for some to complete
-                    if len(batch_tasks) >= MAX_CONCURRENT_TASKS:
-                        await asyncio.gather(*batch_tasks[:MAX_CONCURRENT_TASKS])
-                        batch_tasks = batch_tasks[MAX_CONCURRENT_TASKS:]
 
                 except Exception as e:
                     logger.error(
@@ -357,10 +354,6 @@ async def migrate():
                     )
                     stats.failed_requests += 1
                     continue
-
-            # Process all tasks in the batch concurrently
-            if batch_tasks:
-                await asyncio.gather(*batch_tasks)
 
             skip += BATCH_SIZE
 
@@ -394,19 +387,13 @@ async def migrate():
             # Filter for child requests
             child_requests = [r for r in batch if r.parent_id is not None]
 
-            # Create tasks for all child requests in the batch
-            batch_tasks = []
             for old_request in child_requests:
                 try:
-                    batch_tasks.append(
-                        asyncio.create_task(
-                            process_child_request(old_request, subtensor)
+                    asyncio.create_task(
+                        process_child_request_with_semaphore(
+                            semaphore, old_request, subtensor
                         )
                     )
-                    # If we hit the concurrent task limit, wait for some to complete
-                    if len(batch_tasks) >= MAX_CONCURRENT_TASKS:
-                        await asyncio.gather(*batch_tasks[:MAX_CONCURRENT_TASKS])
-                        batch_tasks = batch_tasks[MAX_CONCURRENT_TASKS:]
 
                 except Exception as e:
                     logger.error(
@@ -414,10 +401,6 @@ async def migrate():
                     )
                     stats.failed_requests += 1
                     continue
-
-            # Process all tasks in the batch concurrently
-            if batch_tasks:
-                await asyncio.gather(*batch_tasks)
 
             skip += BATCH_SIZE
 
@@ -427,6 +410,11 @@ async def migrate():
     finally:
         stats.print_final_stats()
         await disconnect_db()
+
+
+async def process_child_request_with_semaphore(semaphore, old_request, subtensor):
+    async with semaphore:
+        await process_child_request(old_request, subtensor)
 
 
 async def process_child_request(old_request, subtensor):
@@ -561,6 +549,12 @@ async def process_child_request(old_request, subtensor):
     except Exception as e:
         logger.error(f"Failed to migrate child request {old_request.id}: {str(e)}")
         stats.failed_requests += 1
+
+
+async def process_parent_request_with_semaphore(semaphore, request, task_type):
+    """Wrapper to process parent request with semaphore control."""
+    async with semaphore:
+        await process_parent_request(request, task_type)
 
 
 async def process_parent_request(request, task_type):
