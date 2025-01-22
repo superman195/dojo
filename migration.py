@@ -2,13 +2,14 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import time
 from datetime import timedelta
-from functools import lru_cache
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import bittensor as bt
+import redis.asyncio as redis
 
 from database.client import connect_db, disconnect_db, prisma
 from database.prisma import Json
@@ -29,8 +30,38 @@ LOG_DIR = os.getenv("MIGRATION_LOG_DIR", "logs/migration/")
 MINER_TX_TIMEOUT = int(os.getenv("MINER_TX_TIMEOUT", 10))
 VALIDATOR_TX_TIMEOUT = int(os.getenv("VALIDATOR_TX_TIMEOUT", 10))
 
+REDIS_USERNAME = os.getenv("REDIS_USERNAME")
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
+REDIS_HOST = os.getenv("REDIS_HOST")
+REDIS_PORT = os.getenv("REDIS_PORT")
+
 # Ensure log directory exists
 Path(LOG_DIR).mkdir(parents=True, exist_ok=True)
+
+
+# Construct Redis URL with auth
+REDIS_URL = f"redis://{REDIS_USERNAME}:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}"
+
+if REDIS_USERNAME and REDIS_PASSWORD:
+    REDIS_URL = f"redis://{REDIS_USERNAME}:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}"
+elif REDIS_USERNAME:
+    REDIS_URL = f"redis://{REDIS_USERNAME}@{REDIS_HOST}:{REDIS_PORT}"
+else:
+    REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}"
+
+
+REDIS_COLDKEY_PREFIX = "migration:coldkey:"
+REDIS_MINER_RESPONSE_PREFIX = (
+    "migration:miner_response:"  # New prefix for miner response cache
+)
+REDIS_COLDKEY_TTL = 60 * 60 * 24 * 1  # 1 day in seconds
+REDIS_MINER_RESPONSE_TTL = 60 * 60 * 24 * 1  # 1 day in seconds
+
+# Initialize Redis client
+redis_client: redis.Redis | None = None
+
+# Remove the in-memory cache
+# hotkey_coldkey_cache = {}  # We'll use Redis instead
 
 
 def setup_logger():
@@ -283,31 +314,119 @@ class MigrationStats:
 stats = MigrationStats()
 
 
-@lru_cache(maxsize=1024)
-def get_coldkey_from_hotkey(subtensor: bt.Subtensor, hotkey: str) -> str:  # type: ignore
-    max_retries = 3
-    for retry in range(max_retries):
-        try:
-            coldkey_scale_encoded = subtensor.query_subtensor(
-                name="Owner",
-                params=[hotkey],
-            )
-            return coldkey_scale_encoded.value  # type: ignore
-        except Exception as e:
-            if retry == max_retries - 1:
-                raise e
-            time.sleep(1)
+async def init_redis():
+    """Initialize Redis connection."""
+    global redis_client
+    try:
+        redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+        await redis_client.ping()
+        print("Redis connected successfully")
+    except Exception as e:
+        print("\nError: Failed to connect to Redis")
+        print(f"Redis URL: redis://{REDIS_USERNAME}:****@{REDIS_HOST}:{REDIS_PORT}/0")
+        print(f"Error details: {str(e)}")
+        sys.exit(1)
+
+
+async def get_coldkey(hotkey: str) -> str:
+    """Get coldkey from Redis cache."""
+    if not redis_client:
+        raise Exception("Redis client not initialized")
+    try:
+        coldkey = await redis_client.get(f"{REDIS_COLDKEY_PREFIX}{hotkey}")
+        if coldkey:
+            return coldkey
+        return "dummy_coldkey"
+    except Exception as e:
+        logger.warning(f"Failed to get coldkey from Redis for {hotkey}: {str(e)}")
+        return "dummy_coldkey"
+
+
+async def set_coldkey(hotkey: str, coldkey: str):
+    """Set coldkey in Redis cache with TTL."""
+    if not redis_client:
+        raise Exception("Redis client not initialized")
+    try:
+        await redis_client.set(
+            f"{REDIS_COLDKEY_PREFIX}{hotkey}", coldkey, ex=REDIS_COLDKEY_TTL
+        )
+    except Exception as e:
+        logger.warning(f"Failed to set coldkey in Redis for {hotkey}: {str(e)}")
+
+
+async def preload_coldkeys(subtensor: bt.Subtensor):
+    """Preload all unique hotkeys and their coldkeys before processing child requests."""
+    print("\nPreloading coldkeys...")
+
+    # Get all unique hotkeys using raw query
+    unique_hotkeys = await prisma.query_raw(
+        """
+        SELECT DISTINCT hotkey
+        FROM "Feedback_Request_Model"
+        WHERE parent_id IS NOT NULL
+        """
+    )
+
+    hotkeys = [r["hotkey"] for r in unique_hotkeys]
+    total = len(hotkeys)
+    print(f"Found {total} unique hotkeys")
+
+    # Process in batches
+    batch_size = 50
+    processed = 0
+
+    for i in range(0, total, batch_size):
+        batch = hotkeys[i : i + batch_size]
+        for hotkey in batch:
+            # First check Redis cache
+            cached_coldkey = await get_coldkey(hotkey)
+            if cached_coldkey != "dummy_coldkey":
+                processed += 1
+                continue
+
+            # If not in cache, query subtensor
+            retry_count = 0
+            max_retries = 3
+            while retry_count < max_retries:
+                try:
+                    coldkey_scale_encoded = subtensor.query_subtensor(
+                        name="Owner",
+                        params=[hotkey],
+                    )
+                    coldkey = (
+                        str(coldkey_scale_encoded.value)
+                        if coldkey_scale_encoded
+                        else "dummy_coldkey"
+                    )
+                    await set_coldkey(hotkey, coldkey)
+                    break
+                except Exception as e:
+                    retry_count += 1
+                    if retry_count == max_retries:
+                        logger.warning(
+                            f"Failed to get coldkey for hotkey {hotkey}: {str(e)}"
+                        )
+                        await set_coldkey(hotkey, "dummy_coldkey")
+                    await asyncio.sleep(1)
+
+            processed += 1
+            if processed % 50 == 0:  # Print progress every 10 hotkeys
+                print(f"Loaded coldkeys: {processed}/{total}")
 
 
 async def migrate():
     await connect_db()
-    subtensor = bt.subtensor(network="finney")
-
-    # Collect and display old and new table statistics
-    await stats.collect_old_stats()
-    await stats.collect_new_stats()
-
     try:
+        await init_redis()  # Initialize Redis connection
+        subtensor = bt.subtensor(network="finney")
+
+        # Collect and display old and new table statistics
+        await stats.collect_old_stats()
+        await stats.collect_new_stats()
+
+        # Preload coldkeys before Step 2
+        await preload_coldkeys(subtensor)
+
         # Step 1: Process parent requests
         print("\nProcessing parent requests...")
         stats.current_pass = 1
@@ -375,12 +494,9 @@ async def migrate():
                 skip=skip,
                 include={
                     "completions": True,
-                    "criteria_types": True,
                     "parent_request": {
                         "include": {
                             "ground_truths": True,
-                            "completions": True,
-                            "criteria_types": True,
                         }
                     },
                 },
@@ -426,7 +542,48 @@ async def migrate():
         raise
     finally:
         stats.print_final_stats()
+        if redis_client:
+            await redis_client.aclose()  # Use aclose instead of close
         await disconnect_db()
+
+
+async def get_miner_response_cache_key(
+    validator_task_id: str, dojo_task_id: str, hotkey: str
+) -> str:
+    """Generate cache key for miner response."""
+    return f"{REDIS_MINER_RESPONSE_PREFIX}{validator_task_id}:{dojo_task_id}:{hotkey}"
+
+
+async def check_miner_response_exists(
+    validator_task_id: str, dojo_task_id: str, hotkey: str
+) -> bool:
+    """Check if miner response exists in Redis cache."""
+    if not redis_client:
+        raise Exception("Redis client not initialized")
+    try:
+        cache_key = await get_miner_response_cache_key(
+            validator_task_id, dojo_task_id, hotkey
+        )
+        exists = await redis_client.get(cache_key)
+        return exists == "1"
+    except Exception as e:
+        logger.warning(f"Failed to check miner response in Redis: {str(e)}")
+        return False
+
+
+async def set_miner_response_exists(
+    validator_task_id: str, dojo_task_id: str, hotkey: str
+):
+    """Set miner response as existing in Redis cache."""
+    if not redis_client:
+        raise Exception("Redis client not initialized")
+    try:
+        cache_key = await get_miner_response_cache_key(
+            validator_task_id, dojo_task_id, hotkey
+        )
+        await redis_client.set(cache_key, "1", ex=REDIS_MINER_RESPONSE_TTL)
+    except Exception as e:
+        logger.warning(f"Failed to set miner response in Redis: {str(e)}")
 
 
 async def process_child_request(old_request, subtensor):
@@ -465,16 +622,10 @@ async def process_child_request(old_request, subtensor):
             stats.failed_requests += 1
             return
 
-        # Check if miner_response already exists
-        existing_miner_response = await prisma.minerresponse.find_first(
-            where={
-                "validator_task_id": validator_task.id,
-                "dojo_task_id": old_request.dojo_task_id,
-                "hotkey": old_request.hotkey,
-            }
-        )
-
-        if existing_miner_response:
+        # Check if miner_response exists in Redis cache
+        if await check_miner_response_exists(
+            validator_task.id, old_request.dojo_task_id, old_request.hotkey
+        ):
             logger.debug(
                 f"Miner response for request {old_request.id} already exists, skipping"
             )
@@ -485,13 +636,11 @@ async def process_child_request(old_request, subtensor):
 
         # Prepare task result with scores
         task_result = {
-            "type": "score",  # Updated from 'multi-score'
+            "type": "score",
             "value": {},
         }
 
-        # Get all ground truths and their corresponding scores
         for ground_truth in old_request.parent_request.ground_truths:
-            # Find completion response for this ground truth
             completion_response = next(
                 (
                     comp
@@ -500,20 +649,13 @@ async def process_child_request(old_request, subtensor):
                 ),
                 None,
             )
-
             if completion_response:
                 task_result["value"][ground_truth.real_model_id] = (
                     completion_response.score
                 )
 
-        # Try to get coldkey, use dummy value if it fails
-        try:
-            coldkey = get_coldkey_from_hotkey(subtensor, old_request.hotkey)
-        except Exception as e:
-            logger.warning(
-                f"Failed to get coldkey for hotkey {old_request.hotkey}: {str(e)}, using dummy value"
-            )
-            coldkey = "dummy_coldkey"
+        # Get coldkey from Redis
+        coldkey = await get_coldkey(old_request.hotkey)
 
         try:
             async with prisma.tx(
@@ -538,7 +680,6 @@ async def process_child_request(old_request, subtensor):
                     for completion in validator_task.completions:
                         if completion.criterion:
                             for criterion in completion.criterion:
-                                # Create new miner score
                                 await transaction.minerscore.create(
                                     data={
                                         "criterion_id": criterion.id,
@@ -549,6 +690,11 @@ async def process_child_request(old_request, subtensor):
                                     }
                                 )
                                 stats.miner_scores_count += 1
+
+                # After successful creation, cache the existence
+                await set_miner_response_exists(
+                    validator_task.id, old_request.dojo_task_id, old_request.hotkey
+                )
 
             stats.processed_child_requests += 1
             stats.processed_requests += 1
@@ -680,4 +826,20 @@ async def process_parent_request(request, task_type):
 if __name__ == "__main__":
     import asyncio
 
-    asyncio.run(migrate())
+    async def main():
+        try:
+            await migrate()
+        except KeyboardInterrupt:
+            print("\n\nProcess interrupted by user. Printing stats before exit...")
+        except Exception as e:
+            print(f"\n\nProcess failed with error: {str(e)}")
+        finally:
+            stats.print_final_stats()
+            if redis_client:
+                await redis_client.aclose()  # Use aclose instead of close
+            await disconnect_db()
+
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nShutting down gracefully...")

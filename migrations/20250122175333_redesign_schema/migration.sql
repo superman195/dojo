@@ -97,10 +97,16 @@ CREATE UNIQUE INDEX "miner_response_id_key" ON "miner_response"("id");
 CREATE INDEX "miner_response_dojo_task_id_idx" ON "miner_response"("dojo_task_id");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "miner_response_validator_task_id_dojo_task_id_hotkey_key" ON "miner_response"("validator_task_id", "dojo_task_id", "hotkey");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "miner_score_criterion_id_miner_response_id_key" ON "miner_score"("criterion_id", "miner_response_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "ground_truth_validator_task_id_obfuscated_model_id_rank_id_key" ON "ground_truth"("validator_task_id", "obfuscated_model_id", "rank_id");
+
+-- CreateIndex
+CREATE INDEX "Feedback_Request_Model_parent_id_idx" ON "Feedback_Request_Model"("parent_id");
 
 -- AddForeignKey
 ALTER TABLE "validator_task" ADD CONSTRAINT "validator_task_previous_task_id_fkey" FOREIGN KEY ("previous_task_id") REFERENCES "validator_task"("id") ON DELETE SET NULL ON UPDATE CASCADE;

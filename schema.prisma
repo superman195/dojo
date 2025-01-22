@@ -59,6 +59,7 @@ model MinerResponse {
     validator_task_relation ValidatorTask @relation(fields: [validator_task_id], references: [id])
     scores                  MinerScore[]
 
+    @@unique([validator_task_id, dojo_task_id, hotkey])
     @@index([dojo_task_id])
     @@map("miner_response")
 }
@@ -163,6 +164,7 @@ model Feedback_Request_Model {
     child_requests Feedback_Request_Model[] @relation("ParentChild")
 
     @@unique([request_id, hotkey])
+    @@index([parent_id])
 }
 
 model Completion_Response_Model {

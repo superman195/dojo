@@ -109,3 +109,12 @@ if [ "$1" = 'migration' ]; then
     echo "Starting migration..."
     python migration.py --subtensor.network finney
 fi
+
+if [ "$1" = 'validate-migration' ]; then
+    echo "Environment variables:"
+    echo "DATABASE_URL: ${DATABASE_URL}"
+    prisma generate
+
+    echo "Starting migration validation..."
+    python scripts/validate_migration.py
+fi
