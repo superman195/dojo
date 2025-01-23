@@ -177,11 +177,6 @@ services:
       - prisma-binary:/root/prisma-python
       - prisma-pip-cache:/root/.cache/pip
       - $HOME/.bittensor:/root/.bittensor
-    depends_on:
-      postgres-vali:
-        condition: service_healthy
-      redis-service:
-        condition: service_healthy
     logging: *default-logging
 
   validate-migration:

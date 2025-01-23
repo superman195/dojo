@@ -386,7 +386,7 @@ async def preload_coldkeys(subtensor: bt.Subtensor):
 
             # If not in cache, query subtensor
             retry_count = 0
-            max_retries = 3
+            max_retries = 5
             while retry_count < max_retries:
                 try:
                     coldkey_scale_encoded = subtensor.query_subtensor(
@@ -547,43 +547,43 @@ async def migrate():
         await disconnect_db()
 
 
-async def get_miner_response_cache_key(
-    validator_task_id: str, dojo_task_id: str, hotkey: str
-) -> str:
-    """Generate cache key for miner response."""
-    return f"{REDIS_MINER_RESPONSE_PREFIX}{validator_task_id}:{dojo_task_id}:{hotkey}"
+# async def get_miner_response_cache_key(
+#     validator_task_id: str, dojo_task_id: str, hotkey: str
+# ) -> str:
+#     """Generate cache key for miner response."""
+#     return f"{REDIS_MINER_RESPONSE_PREFIX}{validator_task_id}:{dojo_task_id}:{hotkey}"
 
 
-async def check_miner_response_exists(
-    validator_task_id: str, dojo_task_id: str, hotkey: str
-) -> bool:
-    """Check if miner response exists in Redis cache."""
-    if not redis_client:
-        raise Exception("Redis client not initialized")
-    try:
-        cache_key = await get_miner_response_cache_key(
-            validator_task_id, dojo_task_id, hotkey
-        )
-        exists = await redis_client.get(cache_key)
-        return exists == "1"
-    except Exception as e:
-        logger.warning(f"Failed to check miner response in Redis: {str(e)}")
-        return False
+# async def check_miner_response_exists(
+#     validator_task_id: str, dojo_task_id: str, hotkey: str
+# ) -> bool:
+#     """Check if miner response exists in Redis cache."""
+#     if not redis_client:
+#         raise Exception("Redis client not initialized")
+#     try:
+#         cache_key = await get_miner_response_cache_key(
+#             validator_task_id, dojo_task_id, hotkey
+#         )
+#         exists = await redis_client.get(cache_key)
+#         return exists == "1"
+#     except Exception as e:
+#         logger.warning(f"Failed to check miner response in Redis: {str(e)}")
+#         return False
 
 
-async def set_miner_response_exists(
-    validator_task_id: str, dojo_task_id: str, hotkey: str
-):
-    """Set miner response as existing in Redis cache."""
-    if not redis_client:
-        raise Exception("Redis client not initialized")
-    try:
-        cache_key = await get_miner_response_cache_key(
-            validator_task_id, dojo_task_id, hotkey
-        )
-        await redis_client.set(cache_key, "1", ex=REDIS_MINER_RESPONSE_TTL)
-    except Exception as e:
-        logger.warning(f"Failed to set miner response in Redis: {str(e)}")
+# async def set_miner_response_exists(
+#     validator_task_id: str, dojo_task_id: str, hotkey: str
+# ):
+#     """Set miner response as existing in Redis cache."""
+#     if not redis_client:
+#         raise Exception("Redis client not initialized")
+#     try:
+#         cache_key = await get_miner_response_cache_key(
+#             validator_task_id, dojo_task_id, hotkey
+#         )
+#         await redis_client.set(cache_key, "1", ex=REDIS_MINER_RESPONSE_TTL)
+#     except Exception as e:
+#         logger.warning(f"Failed to set miner response in Redis: {str(e)}")
 
 
 async def process_child_request(old_request, subtensor):
@@ -622,10 +622,16 @@ async def process_child_request(old_request, subtensor):
             stats.failed_requests += 1
             return
 
-        # Check if miner_response exists in Redis cache
-        if await check_miner_response_exists(
-            validator_task.id, old_request.dojo_task_id, old_request.hotkey
-        ):
+        # Check if miner_response already exists
+        existing_miner_response = await prisma.minerresponse.find_first(
+            where={
+                "validator_task_id": validator_task.id,
+                "dojo_task_id": old_request.dojo_task_id,
+                "hotkey": old_request.hotkey,
+            }
+        )
+
+        if existing_miner_response:
             logger.debug(
                 f"Miner response for request {old_request.id} already exists, skipping"
             )
@@ -691,10 +697,10 @@ async def process_child_request(old_request, subtensor):
                                 )
                                 stats.miner_scores_count += 1
 
-                # After successful creation, cache the existence
-                await set_miner_response_exists(
-                    validator_task.id, old_request.dojo_task_id, old_request.hotkey
-                )
+                # # After successful creation, cache the existence
+                # await set_miner_response_exists(
+                #     validator_task.id, old_request.dojo_task_id, old_request.hotkey
+                # )
 
             stats.processed_child_requests += 1
             stats.processed_requests += 1
