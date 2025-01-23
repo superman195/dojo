@@ -186,7 +186,7 @@ services:
 
   validate-migration:
     container_name: validate-migration
-    image: ghcr.io/tensorplex-labs/dojo:dev
+    image: ghcr.io/tensorplex-labs/dojo:main
     platform: linux/amd64
     env_file:
       - .env.validator
