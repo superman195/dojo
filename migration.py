@@ -547,45 +547,6 @@ async def migrate():
         await disconnect_db()
 
 
-# async def get_miner_response_cache_key(
-#     validator_task_id: str, dojo_task_id: str, hotkey: str
-# ) -> str:
-#     """Generate cache key for miner response."""
-#     return f"{REDIS_MINER_RESPONSE_PREFIX}{validator_task_id}:{dojo_task_id}:{hotkey}"
-
-
-# async def check_miner_response_exists(
-#     validator_task_id: str, dojo_task_id: str, hotkey: str
-# ) -> bool:
-#     """Check if miner response exists in Redis cache."""
-#     if not redis_client:
-#         raise Exception("Redis client not initialized")
-#     try:
-#         cache_key = await get_miner_response_cache_key(
-#             validator_task_id, dojo_task_id, hotkey
-#         )
-#         exists = await redis_client.get(cache_key)
-#         return exists == "1"
-#     except Exception as e:
-#         logger.warning(f"Failed to check miner response in Redis: {str(e)}")
-#         return False
-
-
-# async def set_miner_response_exists(
-#     validator_task_id: str, dojo_task_id: str, hotkey: str
-# ):
-#     """Set miner response as existing in Redis cache."""
-#     if not redis_client:
-#         raise Exception("Redis client not initialized")
-#     try:
-#         cache_key = await get_miner_response_cache_key(
-#             validator_task_id, dojo_task_id, hotkey
-#         )
-#         await redis_client.set(cache_key, "1", ex=REDIS_MINER_RESPONSE_TTL)
-#     except Exception as e:
-#         logger.warning(f"Failed to set miner response in Redis: {str(e)}")
-
-
 async def process_child_request(old_request, subtensor):
     """Process a child request."""
     try:
@@ -696,11 +657,6 @@ async def process_child_request(old_request, subtensor):
                                     }
                                 )
                                 stats.miner_scores_count += 1
-
-                # # After successful creation, cache the existence
-                # await set_miner_response_exists(
-                #     validator_task.id, old_request.dojo_task_id, old_request.hotkey
-                # )
 
             stats.processed_child_requests += 1
             stats.processed_requests += 1
