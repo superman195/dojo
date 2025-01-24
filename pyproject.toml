@@ -33,6 +33,7 @@ dynamic = ["version"]
 dependencies = [
   "aiohttp==3.10.11",
   "bittensor @ git+https://github.com/opentensor/bittensor.git@release/8.5.1",
+  "bittensor-cli @ git+https://github.com/opentensor/btcli.git@release/8.4.2",
   "fastapi==0.110.1",
   "httpx==0.27.0",
   "loguru==0.7.2",
@@ -58,7 +59,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["commitizen", "curlify2", "pytest", "ruff", "tabulate", "termcolor"]
-test = ["pytest", "nox"]
+test = ["pytest", "nox", 'pytest-asyncio==0.25.1']
 dataset = ["aioboto3", "aiofiles", "python-multipart"]
 
 [project.scripts]

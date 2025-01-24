@@ -9,6 +9,12 @@ datasource db {
     url      = env("DATABASE_URL")
 }
 
+enum TaskTypeEnum {
+    CODE_GENERATION
+    TEXT_TO_IMAGE
+    TEXT_TO_THREE_D
+}
+
 enum CriteriaTypeEnum {
     RANKING_CRITERIA
     MULTI_SCORE
@@ -16,6 +22,113 @@ enum CriteriaTypeEnum {
     MULTI_SELECT
 }
 
+model ValidatorTask {
+    id               String       @id @unique @default(uuid())
+    previous_task_id String?
+    prompt           String
+    task_type        TaskTypeEnum
+    is_processed     Boolean      @default(false)
+    expire_at        DateTime
+    created_at       DateTime     @default(now())
+    updated_at       DateTime     @updatedAt
+    metadata         Json?        @db.JsonB
+
+    // Relationships
+    parent_task     ValidatorTask?  @relation("PreviousTask", fields: [previous_task_id], references: [id])
+    child_tasks     ValidatorTask[] @relation("PreviousTask")
+    completions     Completion[]
+    miner_responses MinerResponse[]
+    ground_truth    GroundTruth[]
+
+    @@index([task_type, is_processed])
+    @@index([expire_at])
+    @@map("validator_task")
+}
+
+model MinerResponse {
+    id                String   @id @unique @default(uuid())
+    validator_task_id String
+    dojo_task_id      String
+    hotkey            String
+    coldkey           String
+    task_result       Json     @db.JsonB
+    created_at        DateTime @default(now())
+    updated_at        DateTime @updatedAt
+
+    // Relationships
+    validator_task_relation ValidatorTask @relation(fields: [validator_task_id], references: [id])
+    scores                  MinerScore[]
+
+    @@unique([validator_task_id, dojo_task_id, hotkey])
+    @@index([dojo_task_id])
+    @@map("miner_response")
+}
+
+model Completion {
+    id                String   @id @default(uuid())
+    completion_id     String
+    validator_task_id String
+    model             String
+    completion        Json     @db.JsonB
+    created_at        DateTime @default(now())
+    updated_at        DateTime @updatedAt
+
+    // Relationships
+    validator_task_relation ValidatorTask @relation(fields: [validator_task_id], references: [id])
+    criterion               Criterion[]
+
+    @@map("completion")
+}
+
+model Criterion {
+    id            String           @id @default(uuid())
+    completion_id String
+    criteria_type CriteriaTypeEnum
+    config        Json             @db.JsonB // Type-specific configuration
+    created_at    DateTime         @default(now())
+    updated_at    DateTime         @updatedAt
+
+    // Relationships
+    completion_relation Completion   @relation(fields: [completion_id], references: [id], onDelete: Cascade)
+    scores              MinerScore[]
+
+    @@map("criterion")
+}
+
+model MinerScore {
+    id                String   @id @default(uuid())
+    criterion_id      String
+    miner_response_id String
+    scores            Json     @db.JsonB // Type-specific score value
+    created_at        DateTime @default(now())
+    updated_at        DateTime @updatedAt
+
+    // Relationships
+    criterion_relation      Criterion     @relation(fields: [criterion_id], references: [id], onDelete: Cascade)
+    miner_response_relation MinerResponse @relation(fields: [miner_response_id], references: [id], onDelete: Cascade)
+
+    @@unique([criterion_id, miner_response_id])
+    @@map("miner_score")
+}
+
+model GroundTruth {
+    id                  String   @id @default(uuid())
+    validator_task_id   String
+    obfuscated_model_id String
+    real_model_id       String
+    rank_id             Int
+    ground_truth_score  Float
+    created_at          DateTime @default(now())
+    updated_at          DateTime @updatedAt
+
+    // Relationships
+    validator_task_relation ValidatorTask @relation(fields: [validator_task_id], references: [id])
+
+    @@unique([validator_task_id, obfuscated_model_id, rank_id])
+    @@map("ground_truth")
+}
+
+// old schema
 model Ground_Truth_Model {
     id                  String                 @id @default(uuid())
     request_id          String
@@ -51,6 +164,7 @@ model Feedback_Request_Model {
     child_requests Feedback_Request_Model[] @relation("ParentChild")
 
     @@unique([request_id, hotkey])
+    @@index([parent_id])
 }
 
 model Completion_Response_Model {

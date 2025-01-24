@@ -5,6 +5,13 @@ from typing import List  # noqa: UP035
 
 import bittensor as bt
 
+from neurons.validator import Validator
+
+
+class MockValidator(Validator):
+    def __init__(self):
+        super().__init__()
+
 
 class MockSubtensor(bt.MockSubtensor):
     def __init__(self, netuid, n=16, wallet=None, network="mock"):
@@ -12,26 +19,6 @@ class MockSubtensor(bt.MockSubtensor):
 
         if not self.subnet_exists(netuid):
             self.create_subnet(netuid)
-
-        # Register ourself (the validator) as a neuron at uid=0
-        if wallet is not None:
-            self.force_register_neuron(
-                netuid=netuid,
-                hotkey=wallet.hotkey.ss58_address,
-                coldkey=wallet.coldkey.ss58_address,
-                balance=100000,
-                stake=100000,
-            )
-
-        # Register n mock neurons who will be miners
-        for i in range(1, n + 1):
-            self.force_register_neuron(
-                netuid=netuid,
-                hotkey=f"miner-hotkey-{i}",
-                coldkey="mock-coldkey",
-                balance=100000,
-                stake=100000,
-            )
 
 
 class MockMetagraph(bt.metagraph):

@@ -2,6 +2,11 @@ FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
+# Prisma-specific environment variables
+ENV PRISMA_USE_NODEJS_BIN=true
+ENV PRISMA_BINARY_PLATFORM=debian-openssl-3.0.x
+ENV PRISMA_BINARY_CACHE_DIR=/root/prisma-python
+
 ENV PATH="/root/.cargo/bin/:$PATH"
 ENV UV_SYSTEM_PYTHON=true
 ENV NVM_DIR=/root/.nvm
@@ -11,7 +16,7 @@ ENV PATH=$NVM_DIR/versions/node/$NODE_VERSION/bin:$PATH
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-    build-essential curl git ca-certificates \
+    build-essential curl git ca-certificates openssl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash \
@@ -20,6 +25,8 @@ RUN apt-get update \
     && nvm alias default $NODE_VERSION \
     && nvm use default \
     && npm install -g uglify-js
+
+RUN mkdir -p /root/prisma-python
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 COPY . .
@@ -30,6 +37,7 @@ ARG TARGETPLATFORM
 RUN echo "Building for TARGETPLATFORM: $TARGETPLATFORM"
 
 RUN git config --global --add safe.directory /app
+RUN git config --unset 'http.https://github.com/.extraheader' || true
 
 # jank because pytorch has different versions for cpu for darwin VS linux, see pyproject.toml for specifics
 RUN if [ "$TARGETPLATFORM" = "linux/amd64" ]; then \

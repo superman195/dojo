@@ -44,13 +44,13 @@ def mock_evalplus_leaderboard_results():
 
 @pytest.fixture
 def mock_initialise() -> (
-    tuple[patch, bt.MockWallet, MockSubtensor, MockMetagraph, MockDendrite]
+    tuple[patch, bt.Wallet, MockSubtensor, MockMetagraph, MockDendrite]
 ):
     """Fixture to initialise mock components for testing."""
     netuid = 1
 
     bt.MockSubtensor.reset()
-    mock_wallet = bt.MockWallet()
+    mock_wallet = bt.Wallet()
     mock_subtensor = MockSubtensor(netuid=netuid, wallet=mock_wallet)
     mock_metagraph = MockMetagraph(netuid=netuid, subtensor=mock_subtensor)
     mock_dendrite = MockDendrite(wallet=mock_wallet)
@@ -69,3 +69,34 @@ def mock_initialise() -> (
             mock_metagraph,
             mock_dendrite,
         )
+
+
+@pytest.fixture
+def disable_terminal_plot():
+    # disable terminal plots that usually are enabled for debugging purposes
+    # remember to add patches for wherever you're using this fixture
+    with (
+        patch("commons.scoring._terminal_plot", return_value=None),
+        patch("neurons.validator._terminal_plot", return_value=None),
+    ):
+        yield
+
+
+@pytest.fixture
+def mock_keyfile(tmp_path):
+    # create a mock wallet using pytest's tmp_path fixture
+    wallet_dir = tmp_path / ".bittensor" / "wallets" / "default" / "hotkeys"
+    wallet_dir.mkdir(parents=True)
+
+    # Create a mock keyfile
+    keyfile = wallet_dir / "default"
+    mock_key_data = {
+        "public_key": "0x1234...",
+        "private_key": "0x5678...",
+    }
+    keyfile.write_text(json.dumps(mock_key_data))
+
+    # Patch the home directory for bittensor
+    with patch("os.path.expanduser") as mock_expanduser:
+        mock_expanduser.return_value = str(tmp_path)
+        yield

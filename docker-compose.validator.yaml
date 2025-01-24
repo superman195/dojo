@@ -17,6 +17,7 @@ networks:
 services:
   # ============== COMMON SERVICES ============== #
   redis-service:
+    container_name: redis-service
     image: redis/redis-stack-server:7.4.0-v0
     env_file:
       - .env.validator
@@ -63,6 +64,7 @@ services:
     logging: *default-logging
 
   postgres-vali:
+    container_name: postgres-vali
     image: postgres:15.7
     env_file:
       - .env.validator
@@ -90,6 +92,7 @@ services:
     logging: *default-logging
 
   prisma-setup-vali:
+    container_name: prisma-setup-vali
     platform: linux/amd64
     build:
       context: .
@@ -110,6 +113,7 @@ services:
     logging: *default-logging
 
   validator:
+    container_name: validator
     image: ghcr.io/tensorplex-labs/dojo:main
     working_dir: /app
     env_file:
@@ -133,6 +137,7 @@ services:
     logging: *default-logging
 
   dataset-service:
+    container_name: dataset-service
     image: ghcr.io/tensorplex-labs/dojo:dataset
     env_file:
       - .env.validator
@@ -142,6 +147,7 @@ services:
     logging: *default-logging
 
   extract-dataset:
+    container_name: extract-dataset
     image: ghcr.io/tensorplex-labs/dojo:dataset
     env_file:
       - .env.validator
@@ -152,5 +158,41 @@ services:
       - ./:/app
       - ./.env.validator:/app/.env
       - prisma-binary:/root/prisma-python
+      - $HOME/.bittensor:/root/.bittensor
+    logging: *default-logging
+
+  migration:
+    container_name: migration
+    image: ghcr.io/tensorplex-labs/dojo:main
+    platform: linux/amd64
+    env_file:
+      - .env.validator
+    working_dir: /app
+    command: ["migration"]
+    networks:
+      - dojo-validator
+    volumes:
+      - ./:/app
+      - ./.env.validator:/app/.env
+      - prisma-binary:/root/prisma-python
+      - prisma-pip-cache:/root/.cache/pip
+      - $HOME/.bittensor:/root/.bittensor
+    logging: *default-logging
+
+  validate-migration:
+    container_name: validate-migration
+    image: ghcr.io/tensorplex-labs/dojo:main
+    platform: linux/amd64
+    env_file:
+      - .env.validator
+    working_dir: /app
+    command: ["validate-migration"]
+    networks:
+      - dojo-validator
+    volumes:
+      - ./:/app
+      - ./.env.validator:/app/.env
+      - prisma-binary:/root/prisma-python
+      - prisma-pip-cache:/root/.cache/pip
       - $HOME/.bittensor:/root/.bittensor
     logging: *default-logging

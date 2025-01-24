@@ -13,7 +13,13 @@ from commons.human_feedback.dojo import DojoAPI
 from commons.utils import get_epoch_time
 from dojo import MINER_STATUS, VALIDATOR_MIN_STAKE
 from dojo.base.miner import BaseMinerNeuron
-from dojo.protocol import FeedbackRequest, Heartbeat, ScoringResult, TaskResultRequest
+from dojo.protocol import (
+    Heartbeat,
+    ScoringResult,
+    TaskResult,
+    TaskResultRequest,
+    TaskSynapseObject,
+)
 from dojo.utils.config import get_config
 from dojo.utils.uids import is_miner
 
@@ -29,10 +35,12 @@ class Miner(BaseMinerNeuron):
         # Attach determiners which functions are called when servicing a request.
         logger.info("Attaching forward function to miner axon.")
         self.axon.attach(
-            forward_fn=self.forward_feedback_request,
-            blacklist_fn=self.blacklist_feedback_request,
+            forward_fn=self.forward_task_request,
+            blacklist_fn=self.blacklist_task_request,
             priority_fn=self.priority_ranking,
-        ).attach(forward_fn=self.forward_result).attach(forward_fn=self.ack_heartbeat)
+        ).attach(forward_fn=self.forward_score_result).attach(
+            forward_fn=self.ack_heartbeat
+        )
 
         # Attach a handler for TaskResultRequest to return task results
         self.axon.attach(forward_fn=self.forward_task_result_request)
@@ -40,10 +48,10 @@ class Miner(BaseMinerNeuron):
         # Instantiate runners
         self.should_exit: bool = False
         self.is_running: bool = False
-        self.thread: threading.Thread = None
+        self.thread: threading.Thread | None = None
         self.lock = asyncio.Lock()
         # log all incoming requests
-        self.hotkey_to_request: Dict[str, FeedbackRequest] = {}
+        self.hotkey_to_request: Dict[str, TaskSynapseObject] = {}
 
     async def ack_heartbeat(self, synapse: Heartbeat) -> Heartbeat:
         caller_hotkey = (
@@ -58,26 +66,51 @@ class Miner(BaseMinerNeuron):
         logger.debug(f"⬆️ Respondng to heartbeat synapse: {synapse}")
         return synapse
 
-    async def forward_result(self, synapse: ScoringResult) -> ScoringResult:
+    async def forward_score_result(self, synapse: ScoringResult) -> ScoringResult:
         logger.info("Received scoring result from validators")
         try:
             # Validate that synapse is not None and has the required fields
-            if not synapse or not synapse.hotkey_to_scores:
+            if not synapse or not synapse.hotkey_to_completion_responses:
                 logger.error(
-                    "Invalid synapse object or missing hotkey_to_scores attribute."
+                    "Invalid synapse object or missing hotkey_to_completion_responses attribute."
                 )
                 return synapse
 
-            found_miner_score = synapse.hotkey_to_scores.get(
+            miner_completion_responses = synapse.hotkey_to_completion_responses.get(
                 self.wallet.hotkey.ss58_address, None
             )
-            if found_miner_score is None:
+            if miner_completion_responses is None:
                 logger.error(
                     f"Miner hotkey {self.wallet.hotkey.ss58_address} not found in scoring result but yet was sent the result"
                 )
                 return synapse
 
-            logger.info(f"Miner received score: {found_miner_score}")
+            # Log shared scores once (from first completion that has them)
+            shared_scores_logged = False
+
+            # Log scores for each completion response
+            for idx, completion in enumerate(miner_completion_responses):
+                for criteria in completion.criteria_types:
+                    if hasattr(criteria, "scores") and criteria.scores:
+                        scores = criteria.scores
+                        # Log shared scores only once
+                        if not shared_scores_logged:
+                            logger.info(
+                                f"Task {synapse.task_id} shared scores:"
+                                f"\n\tGround Truth Score: {scores.ground_truth_score}"
+                                f"\n\tCosine Similarity: {scores.cosine_similarity_score}"
+                                f"\n\tNormalised Cosine Similarity: {scores.normalised_cosine_similarity_score}"
+                                f"\n\tCubic Reward Score: {scores.cubic_reward_score}"
+                            )
+                            shared_scores_logged = True
+
+                        # Log individual scores for each completion
+                        logger.info(
+                            f"Completion {idx + 1} scores:"
+                            f"\n\tRaw Score: {scores.raw_score}"
+                            f"\n\tNormalised Score: {scores.normalised_score}"
+                        )
+
         except KeyError as e:
             logger.error(f"KeyError in forward_result: {e}")
         except Exception as e:
@@ -85,38 +118,39 @@ class Miner(BaseMinerNeuron):
 
         return synapse
 
-    async def forward_feedback_request(
-        self, synapse: FeedbackRequest
-    ) -> FeedbackRequest:
+    async def forward_task_request(
+        self, synapse: TaskSynapseObject
+    ) -> TaskSynapseObject:
+        # Validate that synapse, dendrite, dendrite.hotkey, and response are not None
+        if not synapse or not synapse.completion_responses:
+            logger.error("Invalid synapse: missing required fields")
+            return synapse
+
+        if not synapse.dendrite or not synapse.dendrite.hotkey:
+            logger.error("Invalid synapse: missing dendrite information")
+            return synapse
+
         try:
-            # Validate that synapse, dendrite, dendrite.hotkey, and response are not None
-            if not synapse or not synapse.dendrite or not synapse.dendrite.hotkey:
-                logger.error("Invalid synapse: dendrite or dendrite.hotkey is None.")
-                return synapse
-
             logger.info(
-                f"Miner received request id: {synapse.request_id} from {synapse.dendrite.hotkey}, with expire_at: {synapse.expire_at}"
+                f"Miner received task id: {synapse.task_id} from {synapse.dendrite.hotkey}, with expire_at: {synapse.expire_at}"
             )
-
-            if not synapse.completion_responses:
-                logger.error("Invalid synapse: response field is None.")
-                return synapse
 
             self.hotkey_to_request[synapse.dendrite.hotkey] = synapse
 
-            task_ids = await DojoAPI.create_task(synapse)
-            assert len(task_ids) == 1
-            synapse.dojo_task_id = task_ids[0]
+            # Create task and store ID
+            if task_ids := await DojoAPI.create_task(synapse):
+                synapse.dojo_task_id = task_ids[0]
+                # Clear completion field in completion_responses to optimize network traffic
+                for response in synapse.completion_responses:
+                    response.completion = None
+            else:
+                logger.error("Failed to create task: no task IDs returned")
 
-            # Clear completion field in completion_responses to optimize network traffic
-            for completion_response in synapse.completion_responses:
-                completion_response.completion = None
-
-        except Exception:
-            traceback.print_exc()
+        except Exception as e:
             logger.error(
-                f"Error occurred while processing request id: {synapse.request_id}, error: {traceback.format_exc()}"
+                f"Error processing request id: {getattr(synapse, 'task_id', 'unknown')}: {str(e)}"
             )
+            logger.debug(f"Detailed error: {traceback.format_exc()}")
 
         return synapse
 
@@ -124,28 +158,44 @@ class Miner(BaseMinerNeuron):
         self, synapse: TaskResultRequest
     ) -> TaskResultRequest:
         """Handle a TaskResultRequest from a validator, fetching the task result from the DojoAPI."""
+        if not synapse or not synapse.dojo_task_id:
+            logger.error("Invalid TaskResultRequest: missing dojo_task_id")
+            return synapse
+
         try:
-            logger.info(f"Received TaskResultRequest for task id: {synapse.task_id}")
-            if not synapse or not synapse.task_id:
-                logger.error("Invalid TaskResultRequest: missing task_id")
-                return synapse
+            logger.info(
+                f"Received TaskResultRequest for dojo task id: {synapse.dojo_task_id}"
+            )
 
             # Fetch task results from DojoAPI using task_id
-            task_results = await DojoAPI.get_task_results_by_task_id(synapse.task_id)
-            if not task_results:
-                logger.debug(f"No task result found for task id: {synapse.task_id}")
-                return synapse
+            task_results = await DojoAPI.get_task_results_by_dojo_task_id(
+                synapse.dojo_task_id
+            )
 
-            synapse.task_results = task_results
-            return synapse
+            transformed_results = []
+            if task_results:
+                transformed_results = [
+                    {**result, "dojo_task_id": result.pop("task_id", None)}
+                    for result in (r.copy() for r in task_results)
+                ]
+
+                # Convert transformed results to TaskResult objects
+                synapse.task_results = [
+                    TaskResult(**result) for result in transformed_results
+                ]
+            else:
+                logger.debug(
+                    f"No task result found for dojo task id: {synapse.dojo_task_id}"
+                )
 
         except Exception as e:
-            traceback.print_exc()
             logger.error(f"Error handling TaskResultRequest: {e}")
-            return synapse
+            traceback.print_exc()
 
-    async def blacklist_feedback_request(
-        self, synapse: FeedbackRequest
+        return synapse
+
+    async def blacklist_task_request(
+        self, synapse: TaskSynapseObject
     ) -> Tuple[bool, str]:
         logger.info("checking blacklist function")
 
@@ -182,7 +232,7 @@ class Miner(BaseMinerNeuron):
 
         return False, "Valid request received from validator"
 
-    async def priority_ranking(self, synapse: FeedbackRequest) -> float:
+    async def priority_ranking(self, synapse: TaskSynapseObject) -> float:
         """
         The priority function determines the order in which requests are handled. Higher-priority
         requests are processed before others. Miners may receive messages from multiple entities at
