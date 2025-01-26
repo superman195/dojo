@@ -17,7 +17,8 @@ from bittensor.utils.btlogging import logging as logger
 from commons.exceptions import NoProcessedTasksYet
 from commons.objects import ObjectManager
 from commons.orm import ORM
-from commons.utils import datetime_as_utc
+from commons.utils import datetime_to_iso8601_str
+
 from database.client import connect_db
 from dojo import TASK_DEADLINE
 
@@ -80,7 +81,7 @@ async def _get_task_data(validator_hotkey: str, expire_from: datetime, expire_to
                     ]
                     if task.miner_responses
                     else [],
-                    created_at=task.created_at.isoformat(),
+                    created_at=datetime_to_iso8601_str(task.created_at),
                     metadata=json.loads(task.metadata) if task.metadata else None,
                 )
                 processed_tasks.append(task_data)
