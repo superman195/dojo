@@ -3,6 +3,7 @@ analytics_upload.py
     this file is periodically called by the validator to query and upload analytics data to analytics API.
 """
 
+import asyncio
 import datetime
 import gc
 import json
@@ -36,7 +37,7 @@ class AnalyticsData(TypedDict):
     metadata: dict | None
 
 
-async def _get_task_data(validator_hotkey: str) -> dict[str, list] | None:
+async def _get_task_data(validator_hotkey: str, expire_from: datetime, expire_to: datetime) -> dict[str, list] | None:
     """
     _get_task_data() is a helper function that:
     1. queries postgres for processed ValidatorTasks in a given time window.
@@ -49,20 +50,10 @@ async def _get_task_data(validator_hotkey: str) -> dict[str, list] | None:
     """
     processed_tasks = []
     await connect_db()
-
-    # TODO: confirm time window
-    from_5_days = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(days=5)
-    from_24_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(hours=24)
-    from_1_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(hours=1)
-    from_3_mins = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
-        seconds=TASK_DEADLINE
-    )
-    to_now = datetime_as_utc(datetime.now(timezone.utc))
-
     try:
         # get processed tasks in batches from db
         async for task_batch, has_more_batches in ORM.get_processed_tasks(
-            expire_from=from_5_days, expire_to=to_now
+            expire_from=expire_from, expire_to=expire_to
         ):
             if task_batch is None:
                 continue
@@ -153,33 +144,34 @@ async def _post_task_data(payload, hotkey, signature, message):
         raise
 
 
-async def run_analytics_upload():
+async def run_analytics_upload(scores_alock: asyncio.Lock, expire_from, expire_to):
     """
     run_analytics_upload() is a public function that:
     1. is called by validator.py every X hours
     2. to trigger the querying and uploading of analytics data to analytics API.
     @to-do: this flow should await scoring async lock to finish before uploading.
     """
-    config = ObjectManager.get_config()
-    wallet = bt.wallet(config=config)
-    validator_hotkey = wallet.hotkey.ss58_address
-    anal_data = await _get_task_data(validator_hotkey)
-    message = f"Uploading analytics data for validator with hotkey: {validator_hotkey}"
-    signature = wallet.hotkey.sign(message).hex()
+    async with scores_alock:
+        config = ObjectManager.get_config()
+        wallet = bt.wallet(config=config)
+        validator_hotkey = wallet.hotkey.ss58_address
+        anal_data = await _get_task_data(validator_hotkey, expire_from, expire_to)
+        message = f"Uploading analytics data for validator with hotkey: {validator_hotkey}"
+        signature = wallet.hotkey.sign(message).hex()
 
-    if not signature.startswith("0x"):
-        signature = f"0x{signature}"
+        if not signature.startswith("0x"):
+            signature = f"0x{signature}"
 
-    try:
-        await _post_task_data(
-            payload=anal_data,
-            hotkey=validator_hotkey,
-            signature=signature,
-            message=message,
-        )
-    except Exception as e:
-        logger.error(f"Error when run_analytics_upload(): {e}")
-        raise
+        try:
+            await _post_task_data(
+                payload=anal_data,
+                hotkey=validator_hotkey,
+                signature=signature,
+                message=message,
+            )
+        except Exception as e:
+            logger.error(f"Error when run_analytics_upload(): {e}")
+            raise
 
 
 # Main function for testing. Remove / Comment in prod.
@@ -187,7 +179,15 @@ if __name__ == "__main__":
     import asyncio
 
     async def main():
-        res = await run_analytics_upload()
+        # for testing
+        from_5_days = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(days=5)
+        from_24_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(hours=24)
+        from_1_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(hours=1)
+        from_3_mins = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
+            seconds=TASK_DEADLINE
+        )
+        to_now = datetime_as_utc(datetime.now(timezone.utc))
+        res = await run_analytics_upload(asyncio.Lock(), from_5_days, to_now)
         print(f"Response: {res}")
 
     asyncio.run(main())

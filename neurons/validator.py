@@ -763,7 +763,9 @@ class Validator:
                     f"📝 Got hotkey to score across all tasks between expire_at from:{expire_from} and expire_at to:{expire_to}: {final_hotkey_to_score}"
                 )
                 await self.update_scores(hotkey_to_scores=final_hotkey_to_score)
-
+                
+                # upload scores to analytics API after updating.
+                await run_analytics_upload(self._scores_alock, expire_from, expire_to)
             except Exception:
                 traceback.print_exc()
                 pass
@@ -1503,14 +1505,3 @@ class Validator:
                     }
                 )
         return hotkey_to_dojo_task_scores_and_gt
-
-    async def send_tasks_to_analytics(self):
-        while True:
-            # @to-do: set a dedicated config var for the sleep interval.
-            await asyncio.sleep(30)
-            logger.info("Uploading validator tasks to analytics API")
-            try:
-                await run_analytics_upload()
-            except Exception as e:
-                logger.error(f"Error when uploading analytics data: {str(e)}")
-                logger.debug(f"Traceback: {traceback.format_exc()}")
