@@ -92,9 +92,8 @@ services:
       com.centurylinklabs.watchtower.depends-on: "synthetic-api,postgres"
     env_file:
       - .env
-    working_dir: /app
+#    working_dir: /app
     volumes:
-      - ./:/app
       - ./.env:/app/.env
       - $BITTENSOR_DIR:/root/.bittensor
       - prisma-binary:/root/prisma-python
@@ -131,7 +130,6 @@ services:
     networks:
       - dojo-validator
     volumes:
-      - ./:/app
       - ./.env:/app/.env
       - prisma-binary:/root/prisma-python
       - $BITTENSOR_DIR:/root/.bittensor
@@ -143,16 +141,14 @@ services:
     platform: linux/amd64
     env_file:
       - .env
-    working_dir: /app
     command: ["migration"]
     networks:
       - dojo-validator
     volumes:
-      - ./:/app
-      - ./.env.validator:/app/.env
+      - ./.env:/app/.env
       - prisma-binary:/root/prisma-python
       - prisma-pip-cache:/root/.cache/pip
-      - $HOME/.bittensor:/root/.bittensor
+      - $BITTENSOR_DIR:/root/.bittensor
     logging: *default-logging
 
   validate-migration:
@@ -161,14 +157,12 @@ services:
     platform: linux/amd64
     env_file:
       - .env
-    working_dir: /app
     command: ["validate-migration"]
     networks:
       - dojo-validator
     volumes:
-      - ./:/app
-      - ./.env.validator:/app/.env
+      - ./.env:/app/.env
       - prisma-binary:/root/prisma-python
       - prisma-pip-cache:/root/.cache/pip
-      - $HOME/.bittensor:/root/.bittensor
+      - $BITTENSOR_DIR:/root/.bittensor
     logging: *default-logging

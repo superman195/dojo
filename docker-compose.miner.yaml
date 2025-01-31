@@ -21,7 +21,6 @@ services:
     container_name: dojo-cli
     image: ghcr.io/tensorplex-labs/dojo:main
     volumes:
-      - ./:/app
       - ./.env:/app/.env
       - $BITTENSOR_DIR:/root/.bittensor
     command: ["dojo-cli"]
@@ -38,9 +37,8 @@ services:
       com.centurylinklabs.watchtower.enable: "true"
     env_file:
       - .env
-    working_dir: /app
+#    working_dir: /app
     volumes:
-      - ./:/app
       - ./.env:/app/.env
       - $BITTENSOR_DIR:/root/.bittensor
     command: ["miner"]
