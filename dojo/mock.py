@@ -21,6 +21,12 @@ class MockSubtensor(bt.MockSubtensor):
             self.create_subnet(netuid)
 
 
+class MockTerminalInfo(bt.TerminalInfo):
+    def __init__(self, hotkey):
+        super().__init__()
+        self.hotkey = hotkey
+
+
 class MockMetagraph(bt.metagraph):
     def __init__(self, netuid=1, network="mock", subtensor=None):
         super().__init__(netuid=netuid, network=network, sync=False)
@@ -50,7 +56,7 @@ class MockMetagraph(bt.metagraph):
     #     self.total_stake = np.array(stakes, dtype=np.float32)
 
 
-class MockDendrite(bt.dendrite):
+class MockDendrite(bt.Dendrite):
     """
     Replaces a real bittensor network request with a mock request that just returns some static response for all axons that are passed and adds some random delay.
     """

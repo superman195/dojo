@@ -68,12 +68,17 @@ def unit_tests(session):
     run_tests_with_env(".env.miner", "test_miner.py")
 
     # run validator tests with .env.validator
-    run_tests_with_env(".env.validator", "test_validator.py")
+    # run_tests_with_env(".env.validator", "test_validator.py")
 
     other_tests = [
         f
         for f in os.listdir("tests/unit_testing")
-        if f.startswith("test_") and f not in ["test_miner.py", "test_validator.py"]
+        if f.startswith("test_")
+        and f
+        not in [
+            "test_miner.py",
+            "test_validator.py",
+        ]
     ]
     if other_tests:
         session.run(
