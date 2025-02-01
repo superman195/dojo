@@ -6,7 +6,7 @@ on:
       - dev
       - main
       - simulator
-      - test
+      - docker-test
 
 jobs:
   docker_publish:
