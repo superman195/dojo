@@ -11,7 +11,6 @@ services:
     container_name: btcli
     image: ghcr.io/tensorplex-labs/dojo:main
     volumes:
-#      - ./:/app
       - $BITTENSOR_DIR:/root/.bittensor
     networks:
       - subtensor

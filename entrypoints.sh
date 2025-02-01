@@ -2,6 +2,8 @@
 
 set -e
 
+git fetch --tags
+
 # run bash
 if [ "$1" = 'btcli' ]; then
     exec /bin/bash -c "btcli --help && exec /bin/bash"

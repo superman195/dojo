@@ -7,6 +7,7 @@ volumes:
   redis-validator-volume:
   prisma-pip-cache:
   prisma-binary:
+  prisma-client:
 
 networks:
   dojo-validator:
@@ -73,10 +74,10 @@ services:
       sh -c "prisma migrate deploy && prisma generate"
     env_file:
       - .env
-    working_dir: /app
     volumes:
       - prisma-pip-cache:/root/.cache/pip
       - prisma-binary:/root/prisma-python
+      - prisma-client:/app/database/prisma
       - ./:/app
     networks:
       - dojo-validator
@@ -92,12 +93,12 @@ services:
       com.centurylinklabs.watchtower.depends-on: "synthetic-api,postgres"
     env_file:
       - .env
-#    working_dir: /app
     volumes:
       - ./.env:/app/.env
       - $BITTENSOR_DIR:/root/.bittensor
       - prisma-binary:/root/prisma-python
       - prisma-pip-cache:/root/.cache/pip
+      - prisma-client:/app/database/prisma
     command: ["validator"]
     networks:
       - dojo-validator
@@ -146,6 +147,7 @@ services:
       - dojo-validator
     volumes:
       - ./.env:/app/.env
+      - prisma-client:/app/database/prisma
       - prisma-binary:/root/prisma-python
       - prisma-pip-cache:/root/.cache/pip
       - $BITTENSOR_DIR:/root/.bittensor
@@ -162,6 +164,7 @@ services:
       - dojo-validator
     volumes:
       - ./.env:/app/.env
+      - prisma-client:/app/database/prisma
       - prisma-binary:/root/prisma-python
       - prisma-pip-cache:/root/.cache/pip
       - $BITTENSOR_DIR:/root/.bittensor

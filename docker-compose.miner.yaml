@@ -37,7 +37,6 @@ services:
       com.centurylinklabs.watchtower.enable: "true"
     env_file:
       - .env
-#    working_dir: /app
     volumes:
       - ./.env:/app/.env
       - $BITTENSOR_DIR:/root/.bittensor
