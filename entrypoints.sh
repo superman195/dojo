@@ -3,6 +3,7 @@
 set -e
 
 git fetch --tags
+git checkout dev
 
 # run bash
 if [ "$1" = 'btcli' ]; then
