@@ -30,25 +30,6 @@ if MAX_CHUNK_SIZE_MB is None:
     raise ValueError("MAX_CHUNK_SIZE_MB must be set")
 
 
-# represents a row in the jsonl dataset
-"""
-1 row = 1 task, {'prompt': ..., 'completions': [{...}, {...}], 'miner_responses':
-
-[
-    (coldkey, hotkey, completion id, score)
-]
-
-[
-    {
-        'coldkey': '1234',
-        'hotkey': '1234',
-        'scores': # take directly from database
-        'created_at': '2024-01-01 00:00:00'
-    }
-]
-"""
-
-
 class MinerResponseDataset(BaseModel):
     miner_coldkey: str
     miner_hotkey: str
@@ -56,6 +37,7 @@ class MinerResponseDataset(BaseModel):
     completion_id_to_scores: dict[str, MinerScore]
 
 
+# 1 row represents 1 task in the dataset
 class Row(BaseModel):
     prompt: str
     completions: list[Completion]
@@ -64,6 +46,49 @@ class Row(BaseModel):
 
     class Config:
         arbitrary_types_allowed = True
+
+
+"""
+
+{
+    "prompt": "Write a function to calculate fibonacci numbers",
+    "completions": [
+        {
+            "completion": {
+                "files": [
+                    {
+                        "filename": "fib.py",
+                        "content": "def fib(n):\n    if n <= 1:\n        return n\n    return fib(n-1) + fib(n-2)",
+                        "language": "python",
+                    }
+                ]
+            },
+            "completion_id": "comp_123",
+            "model": "gpt-4",
+        }
+    ],
+    "created_at": "2024-01-01T00:00:00Z",
+    "miner_responses": [
+        {
+            "miner_coldkey": "asdfg",
+            "miner_hotkey": "asdfg",
+            "completion_id_to_scores": {
+                "comp_123": {
+                    "scores": {
+                        "raw_score": 0.85,
+                        "normalised_score": 0.9,
+                        "ground_truth_score": 1.0,
+                        "cosine_similarity_score": 0.95,
+                        "normalised_cosine_similarity_score": 0.92,
+                        "cubic_reward_score": 0.88,
+                    }
+                }
+            },
+        }
+    ],
+}
+
+"""
 
 
 async def build_jsonl(filename: str):
