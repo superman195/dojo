@@ -1,7 +1,7 @@
 import asyncio
 import os
 from datetime import datetime
-from typing import AsyncGenerator, List
+from typing import AsyncGenerator
 
 import aiofiles
 import bittensor as bt
@@ -10,25 +10,16 @@ import numpy as np
 from bittensor.utils.btlogging import logging as logger
 from pydantic import BaseModel, model_serializer
 
-from commons.exceptions import (
-    NoNewExpiredTasksYet,
-)
 from commons.objects import ObjectManager
-from database.client import connect_db, disconnect_db
-from database.mappers import (
-    map_feedback_request_model_to_feedback_request,
-)
+from database.client import connect_db, disconnect_db, prisma
 from database.prisma.models import (
-    Feedback_Request_Model,
+    ValidatorTask,
 )
 from database.prisma.types import (
-    Feedback_Request_ModelInclude,
-    Feedback_Request_ModelWhereInput,
+    ValidatorTaskWhereInput,
 )
-from dojo import TASK_DEADLINE
 from dojo.protocol import (
     CompletionResponse,
-    DendriteQueryResponse,
 )
 from dojo.utils.config import source_dotenv
 
@@ -132,98 +123,30 @@ async def build_jsonl(filename: str):
 
 async def get_processed_tasks(
     batch_size: int = 10,
-) -> AsyncGenerator[tuple[List[DendriteQueryResponse], bool], None]:
-    """Yields batches of processed Feedback_Request_Model records along with a boolean flag indicating the presence of additional batches.
-
-    This function retrieves tasks that have been fully processed. The batch size can be specified to control the number of tasks returned in each batch.
-
-    Args:
-        batch_size (int, optional): The number of tasks to include in each batch. Defaults to 10.
-
-    Raises:
-        NoNewExpiredTasksYet: Raised if no processed tasks are available for retrieval.
-
-    Yields:
-        AsyncGenerator[tuple[List[DendriteQueryResponse], bool], None]: An asynchronous generator yielding a tuple containing a list of DendriteQueryResponse objects and a boolean indicating if more batches are available.
-    """
-
-    # find all validator requests first
-    include_query = Feedback_Request_ModelInclude(
+) -> AsyncGenerator[tuple[list[ValidatorTask], bool]]:
+    vali_where_query = ValidatorTaskWhereInput(
         {
-            "completions": True,
-            "criteria_types": True,
-            "ground_truths": True,
-            "parent_request": True,
+            "is_processed": True,
         }
     )
+    num_processed_tasks = await prisma.validatortask.count(where=vali_where_query)
 
-    vali_where_query = Feedback_Request_ModelWhereInput(
-        {
-            "parent_id": None,  # no parent means it's a validator request
-            # only check for tasks that are completely done
-            "is_processed": {"equals": True},
-        }
-    )
-
-    # count first total including non
-    task_count = await Feedback_Request_Model.prisma().count(
-        where=vali_where_query,
-    )
-
-    logger.info(f"Count of processed tasks: {task_count}")
-
-    if not task_count:
-        raise NoNewExpiredTasksYet(
-            f"No expired tasks found for processing, please wait for tasks to pass the task deadline of {TASK_DEADLINE} seconds."
-        )
-
-    for i in range(0, task_count, batch_size):
-        # find all unprocesed validator requests
-        validator_requests = await Feedback_Request_Model.prisma().find_many(
-            include=include_query,
-            where=vali_where_query,
-            order={"created_at": "desc"},
-            skip=i,
+    for skip in range(0, num_processed_tasks, batch_size):
+        validator_tasks = await prisma.validatortask.find_many(
+            skip=skip,
             take=batch_size,
-        )
-
-        # find all miner responses
-        processed_vali_request_ids = [r.id for r in validator_requests]
-        miner_responses = await Feedback_Request_Model.prisma().find_many(
-            include=include_query,
-            where={
-                "parent_id": {"in": processed_vali_request_ids},
-                "is_processed": {"equals": True},
+            where=vali_where_query,
+            include={
+                "completions": {"include": {"criterion": True}},
+                "ground_truth": True,
+                "miner_responses": {
+                    "include": {
+                        "scores": True,
+                    }
+                },
             },
-            order={"created_at": "desc"},
         )
-
-        # NOTE: technically a DendriteQueryResponse represents a task
-        tasks: list[DendriteQueryResponse] = []
-        for validator_request in validator_requests:
-            validator_task = map_feedback_request_model_to_feedback_request(
-                validator_request
-            )
-            logger.info(f"Vali request ground truths: {validator_task.ground_truth}")
-
-            miner_responses = list(
-                map(
-                    lambda x: map_feedback_request_model_to_feedback_request(
-                        x, is_miner=True
-                    ),
-                    [m for m in miner_responses if m.parent_id == validator_request.id],
-                )
-            )
-
-            tasks.append(
-                DendriteQueryResponse(
-                    validator_task=validator_task, miner_responses=miner_responses
-                )
-            )
-
-        # yield responses, so caller can do something
-        has_more_batches = True
-        yield tasks, has_more_batches
+        yield validator_tasks, skip + batch_size < num_processed_tasks
 
     yield [], False
 
