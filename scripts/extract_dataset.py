@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from datetime import datetime
 from typing import AsyncGenerator
@@ -6,20 +7,15 @@ from typing import AsyncGenerator
 import aiofiles
 import bittensor as bt
 import httpx
-import numpy as np
 from bittensor.utils.btlogging import logging as logger
-from pydantic import BaseModel, model_serializer
+from pydantic import BaseModel
 
 from commons.objects import ObjectManager
+from commons.utils import datetime_to_iso8601_str
 from database.client import connect_db, disconnect_db, prisma
-from database.prisma.models import (
-    ValidatorTask,
-)
+from database.prisma.models import Completion, MinerScore, ValidatorTask
 from database.prisma.types import (
     ValidatorTaskWhereInput,
-)
-from dojo.protocol import (
-    CompletionResponse,
 )
 from dojo.utils.config import source_dotenv
 
@@ -35,31 +31,39 @@ if MAX_CHUNK_SIZE_MB is None:
 
 
 # represents a row in the jsonl dataset
+"""
+1 row = 1 task, {'prompt': ..., 'completions': [{...}, {...}], 'miner_responses':
+
+[
+    (coldkey, hotkey, completion id, score)
+]
+
+[
+    {
+        'coldkey': '1234',
+        'hotkey': '1234',
+        'scores': # take directly from database
+        'created_at': '2024-01-01 00:00:00'
+    }
+]
+"""
+
+
+class MinerResponseDataset(BaseModel):
+    miner_coldkey: str
+    miner_hotkey: str
+    # scores object, directly taken from database
+    completion_id_to_scores: dict[str, MinerScore]
+
+
 class Row(BaseModel):
     prompt: str
-    completions: list[CompletionResponse]
-    # shape (num_miners, num_completions)
-    raw_scores: list[list[float]]
-    # shape (num_completions)
-    mean_scores: list[float]
-    # ground truth ranks
-    cid_to_ground_truth_rank: dict[str, int]
-    expire_at: str
+    completions: list[Completion]
+    created_at: str
+    miner_responses: list[MinerResponseDataset]
 
     class Config:
         arbitrary_types_allowed = True
-
-    @model_serializer
-    def serialize_model(self):
-        """Custom serializer method to ensure that types such as np.ndarray and torch.tensor are serialized correctly"""
-        return {
-            "prompt": self.prompt,
-            "completions": self.completions,
-            "raw_scores": self.raw_scores,
-            "mean_scores": self.mean_scores,
-            "cid_to_ground_truth_rank": self.cid_to_ground_truth_rank,
-            "expire_at": self.expire_at,
-        }
 
 
 async def build_jsonl(filename: str):
@@ -70,52 +74,78 @@ async def build_jsonl(filename: str):
             if not has_more_batches and not task_batch:
                 break
 
+            mresponses = []
             for task in task_batch:
-                # Extract prompt from validator request
-                prompt = task.validator_task.prompt
+                prompt = task.prompt
+                completions = task.completions
+                assert completions is not None, "Completions should not be None"
 
-                # Extract completions from miner responses
-                completions = task.validator_task.completion_responses
+                row = Row(
+                    prompt=prompt,
+                    completions=[json.loads(c.completion) for c in completions],
+                    created_at=datetime_to_iso8601_str(task.created_at),
+                    miner_responses=mresponses,
+                )
 
-                raw_scores = []
-                for miner_response in task.miner_responses:
-                    # TODO ensure ordering
-                    miner_ratings = [
-                        c.score for c in miner_response.completion_responses or []
-                    ]
-                    if any(rating is None for rating in miner_ratings):
+                # ensure ordering of scores based on the validator's completions ordering
+                # ensure ordering of scores based on the validator's completions ordering
+                # ensure ordering of scores based on the validator's completions ordering
+                criterion_ids = []
+
+                criterion_id_to_completion: dict[str, Completion] = {}
+                for c in completions:
+                    assert c.criterion is not None, "Criterion should not be None"
+                    # at the moment it should only be 1
+                    assert (
+                        len(c.criterion) == 1
+                    ), "Only 1 criterion per completion is supported at the moment"
+
+                    for criterion in c.criterion:
+                        criterion_ids.append(criterion.id)
+                        criterion_id_to_completion[criterion.id] = c
+
+                miner_responses = task.miner_responses
+                if miner_responses is None:
+                    logger.warning(f"No miner responses for task {task.id}")
+                    continue
+
+                assert (
+                    task.miner_responses is not None
+                ), "Miner responses should not be None"
+                for m_response in task.miner_responses:
+                    if not m_response.scores:
+                        logger.warning(f"No scores for miner response {m_response.id}")
                         continue
-                    raw_scores.append(miner_ratings)
 
-                # shape (num_completions, num_miners)
-                raw_scores_vec = np.array(raw_scores)
-                logger.info(f"raw_scores_vec shape: {raw_scores_vec.shape}")
-                logger.info(f"raw_scores_vec: {raw_scores_vec}")
+                    ordered_scores: list[MinerScore] = []
+                    for criterion_id in criterion_ids:
+                        score = next(
+                            (
+                                s
+                                for s in m_response.scores
+                                if s.criterion_id == criterion_id
+                            ),
+                            None,
+                        )
+                        if score:
+                            ordered_scores.append(score)
+                        else:
+                            logger.error(
+                                f"Criterion id {criterion_id} not found in scores"
+                            )
 
-                if raw_scores_vec.size > 0:
-                    # ensure we're taking mean for each completion, across all miners
-                    mean_scores = raw_scores_vec.mean(axis=0)
-                    logger.info(f"mean_scores shape: {mean_scores.shape}")
-                    jsonl_row = Row(
-                        prompt=prompt,
-                        completions=completions or [],
-                        raw_scores=raw_scores,
-                        mean_scores=mean_scores.tolist(),
-                        cid_to_ground_truth_rank=task.validator_task.ground_truth or {},
-                        expire_at=task.request.expire_at,
-                    )
-                else:
-                    jsonl_row = Row(
-                        prompt=prompt,
-                        completions=completions or [],
-                        raw_scores=[],
-                        mean_scores=[],
-                        cid_to_ground_truth_rank={},
-                        expire_at=task.request.expire_at,
-                    )
+                        row.miner_responses.append(
+                            MinerResponseDataset(
+                                miner_coldkey=m_response.coldkey,
+                                miner_hotkey=m_response.hotkey,
+                                completion_id_to_scores={
+                                    criterion_id_to_completion[criterion_id].id: score  # type: ignore
+                                },
+                            )
+                        )
 
                 # Write the entry as a JSON line
-                file.write(jsonl_row.model_dump_json() + "\n")
+                file.write(row.model_dump_json() + "\n")
 
             task_count += len(task_batch)
             logger.info(f"Scraped task count: {task_count}")

@@ -273,7 +273,7 @@ class ORM:
                             )
                         else:
                             logger.warning(
-                                f"Retrying update, attempt {attempt+2}/{max_retries}"
+                                f"Retrying update, attempt {attempt + 2}/{max_retries}"
                             )
                             await asyncio.sleep(2**attempt)
 
@@ -282,7 +282,7 @@ class ORM:
                         logger.error(f"Error updating task results: {e}")
                     else:
                         logger.warning(
-                            f"Error during attempt {attempt+1}, retrying: {e}"
+                            f"Error during attempt {attempt + 1}, retrying: {e}"
                         )
                         await asyncio.sleep(2**attempt)
 
@@ -300,6 +300,7 @@ class ORM:
         max_retries: int = 20,
     ) -> tuple[bool, list[int]]:
         """Update the miner's provided raw scores for a list of miner responses.
+        NOTE: this is to be used when the task is first saved to validator's database.
 
         Args:
             miner_responses: List of TaskSynapseObject containing miner responses
@@ -403,18 +404,18 @@ class ORM:
                                 )
 
                     logger.debug(
-                        f"Updating completion responses: updated batch {batch_id+1}/{num_batches}"
+                        f"Updating completion responses: updated batch {batch_id + 1}/{num_batches}"
                     )
                     break
                 except Exception as e:
                     if attempt == max_retries - 1:
                         logger.error(
-                            f"Failed to update batch {batch_id+1}/{num_batches} after {max_retries} attempts: {e}"
+                            f"Failed to update batch {batch_id + 1}/{num_batches} after {max_retries} attempts: {e}"
                         )
                         failed_batch_indices.extend(range(start_idx, end_idx))
                     else:
                         logger.warning(
-                            f"Retrying batch {batch_id+1}/{num_batches}, attempt {attempt+2}/{max_retries}"
+                            f"Retrying batch {batch_id + 1}/{num_batches}, attempt {attempt + 2}/{max_retries}"
                         )
                         await asyncio.sleep(2**attempt)
 
