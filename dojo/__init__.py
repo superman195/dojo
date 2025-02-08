@@ -20,6 +20,20 @@ def get_latest_git_tag():
         raise RuntimeError("Failed to get latest Git tag")
 
 
+def get_commit_hash():
+    try:
+        # Get the latest git commit hash
+        latest_commit_hash = (
+            subprocess.check_output(["git", "rev-parse", "HEAD"])
+            .strip()
+            .decode("utf-8")
+        )
+        return latest_commit_hash
+    except subprocess.CalledProcessError as e:
+        print(f"Error getting the latest Git commit hash: {e}")
+        raise RuntimeError("Failed to get latest Git commit hash")
+
+
 # Define the version of the template module.
 __version__ = get_latest_git_tag()
 version_split = __version__.split(".")

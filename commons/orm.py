@@ -65,7 +65,7 @@ class ORM:
         include_query = ValidatorTaskInclude(
             {
                 "completions": {
-                    "include": {"Criterion": {"include": {"scores": True}}}
+                    "include": {"criterion": {"include": {"scores": True}}}
                 },
                 "miner_responses": {"include": {"scores": True}},
                 "ground_truth": True,

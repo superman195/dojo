@@ -1,17 +1,12 @@
 import json
 
 import bittensor as bt
+from pydantic import BaseModel
 
-from commons.utils import (
-    datetime_to_iso8601_str,
-    iso8601_str_to_datetime,
-)
+from commons.utils import datetime_to_iso8601_str, iso8601_str_to_datetime
 from database.prisma import Json
 from database.prisma.enums import CriteriaTypeEnum, TaskTypeEnum
-from database.prisma.models import (
-    MinerResponse,
-    ValidatorTask,
-)
+from database.prisma.models import MinerResponse, ValidatorTask
 from database.prisma.types import (
     CompletionCreateInput,
     CriterionCreateWithoutRelationsInput,
@@ -19,12 +14,18 @@ from database.prisma.types import (
     MinerResponseCreateInput,
     ValidatorTaskCreateInput,
 )
+from dojo import get_commit_hash, get_latest_git_tag
 from dojo.protocol import (
     CompletionResponse,
     CriteriaType,
     ScoreCriteria,
     TaskSynapseObject,
 )
+
+
+class Metadata(BaseModel):
+    git_tag: str
+    commit_hash: str
 
 
 # ---------------------------------------------------------------------------- #
@@ -55,6 +56,7 @@ def map_task_synapse_object_to_validator_task(
         if synapse.ground_truth
         else []
     )
+    metadata = Metadata(git_tag=get_latest_git_tag(), commit_hash=get_commit_hash())
 
     return ValidatorTaskCreateInput(
         id=synapse.task_id,
@@ -65,6 +67,7 @@ def map_task_synapse_object_to_validator_task(
         is_processed=False,
         miner_responses={"create": []},
         ground_truth={"create": ground_truths},
+        metadata=Json(json.dumps(metadata.model_dump())),
     )
 
 
@@ -95,7 +98,7 @@ def map_task_synapse_object_to_completions(
                 )
                 for criterion in resp.criteria_types
             ]
-            completion["Criterion"] = {"create": criteria}
+            completion["criterion"] = {"create": criteria}
 
         completions.append(completion)
 
@@ -166,7 +169,7 @@ def map_validator_task_to_task_synapse_object(
     for completion in model.completions or []:
         # Map criteria types for each completion
         criteria_types = []
-        for criterion in completion.Criterion or []:
+        for criterion in completion.criterion or []:
             config = json.loads(criterion.config)
             if criterion.criteria_type == CriteriaTypeEnum.SCORE:
                 criteria_types.append(
@@ -233,7 +236,7 @@ def map_miner_response_to_task_synapse_object(
         criteria_types = []
         score = None
 
-        for criterion in completion.Criterion or []:
+        for criterion in completion.criterion or []:
             config = json.loads(criterion.config)
             # Find the corresponding score for this criterion from miner_response
             for miner_score in criterion.scores or []:

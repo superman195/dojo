@@ -51,7 +51,7 @@
   - [Data Collection](#data-collection)
 - [Auto-updater](#auto-updater)
 - [Dojo CLI](#dojo-cli)
-- [For Dojo developerss](#for-dojo-developerss)
+- [For Dojo developers](#for-dojo-developers)
 - [License](#license)
 
 </details>
@@ -532,7 +532,7 @@ api_key delete
 subscription_key delete
 ```
 
-# For Dojo developerss
+# For Dojo developers
 
 You most likely won't be running a dockerized version of the subnet code as you ship. Use the following guide to get up and running
 
