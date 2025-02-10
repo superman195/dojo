@@ -178,7 +178,7 @@ async def build_jsonl(filename: str):
 
 async def get_processed_tasks(
     batch_size: int = 10,
-) -> AsyncGenerator[tuple[list[ValidatorTask], bool]]:
+) -> AsyncGenerator[tuple[list[ValidatorTask], bool], None]:
     vali_where_query = ValidatorTaskWhereInput(
         {
             "is_processed": True,
