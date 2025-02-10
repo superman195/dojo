@@ -1,5 +1,4 @@
 import asyncio
-import json
 import os
 from datetime import datetime
 from typing import AsyncGenerator
@@ -107,7 +106,7 @@ async def build_jsonl(filename: str):
 
                 row = Row(
                     prompt=prompt,
-                    completions=[json.loads(c.completion) for c in completions],
+                    completions=completions,
                     created_at=datetime_to_iso8601_str(task.created_at),
                     miner_responses=mresponses,
                 )
