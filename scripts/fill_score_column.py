@@ -4,7 +4,13 @@ from typing import AsyncGenerator
 
 from loguru import logger
 
+from commons.orm import ORM
+from commons.scoring import Scoring
 from database.client import connect_db, disconnect_db, prisma
+from database.mappers import (
+    map_miner_response_to_task_synapse_object,
+    map_validator_task_to_task_synapse_object,
+)
 from database.prisma import Json
 from database.prisma.models import ValidatorTask
 from database.prisma.types import (
@@ -99,6 +105,27 @@ async def main():
                             scores=Json(json.dumps(scores.model_dump()))
                         ),
                     )
+
+            updated_miner_responses = Scoring.calculate_score(
+                validator_task=map_validator_task_to_task_synapse_object(task),
+                miner_responses=[
+                    map_miner_response_to_task_synapse_object(
+                        miner_response,
+                        validator_task=task,
+                    )
+                    for miner_response in task.miner_responses
+                ],
+            )
+
+            success, failed_hotkeys = await ORM.update_miner_scores(
+                task_id=task.id,
+                miner_responses=updated_miner_responses,
+            )
+
+            if not success or failed_hotkeys:
+                logger.error(
+                    f"Failed to update scores for task: {task.id}. Failed hotkeys: {failed_hotkeys}"
+                )
 
         if not has_more_batches:
             logger.info("No more task batches to process")
