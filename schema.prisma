@@ -127,3 +127,75 @@ model GroundTruth {
     @@unique([validator_task_id, obfuscated_model_id, rank_id])
     @@map("ground_truth")
 }
+
+// old schema
+model Ground_Truth_Model {
+    id                  String                 @id @default(uuid())
+    request_id          String
+    obfuscated_model_id String
+    real_model_id       String
+    rank_id             Int
+    feedback_request    Feedback_Request_Model @relation(fields: [feedback_request_id], references: [id])
+    feedback_request_id String
+    created_at          DateTime               @default(now())
+    updated_at          DateTime               @updatedAt
+
+    @@unique([request_id, obfuscated_model_id, rank_id])
+}
+
+model Feedback_Request_Model {
+    id             String                      @id @unique @default(uuid())
+    request_id     String
+    prompt         String
+    completions    Completion_Response_Model[]
+    task_type      String
+    criteria_types Criteria_Type_Model[]
+    is_processed   Boolean                     @default(false)
+    dojo_task_id   String?
+    hotkey         String
+    expire_at      DateTime
+    created_at     DateTime                    @default(now())
+    updated_at     DateTime                    @updatedAt
+
+    ground_truths Ground_Truth_Model[]
+
+    parent_request Feedback_Request_Model?  @relation("ParentChild", fields: [parent_id], references: [id])
+    parent_id      String?
+    child_requests Feedback_Request_Model[] @relation("ParentChild")
+
+    @@unique([request_id, hotkey])
+    @@index([parent_id])
+}
+
+model Completion_Response_Model {
+    id                        String                 @id @default(uuid())
+    completion_id             String
+    model                     String
+    completion                Json
+    rank_id                   Int?
+    score                     Float?
+    created_at                DateTime               @default(now())
+    updated_at                DateTime               @updatedAt
+    feedback_request_relation Feedback_Request_Model @relation(fields: [feedback_request_id], references: [id])
+    feedback_request_id       String
+}
+
+model Criteria_Type_Model {
+    id                        String                  @id @default(uuid())
+    type                      CriteriaTypeEnum
+    options                   Json
+    min                       Float?
+    max                       Float?
+    feedback_request_relation Feedback_Request_Model? @relation(fields: [feedback_request_id], references: [id])
+    feedback_request_id       String?
+    created_at                DateTime                @default(now())
+    updated_at                DateTime                @updatedAt
+}
+
+model Score_Model {
+    id         String   @id @default(uuid())
+    // json array of scores
+    score      Json
+    created_at DateTime @default(now())
+    updated_at DateTime @updatedAt
+}
