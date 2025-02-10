@@ -140,6 +140,10 @@ async def build_jsonl(filename: str):
                     if not m_response.scores:
                         logger.warning(f"No scores for miner response {m_response.id}")
                         continue
+                    else:
+                        logger.debug(
+                            f"Scores for miner response {m_response.id}: {m_response.scores}"
+                        )
 
                     ordered_scores: list[MinerScore] = []
                     for criterion_id in criterion_ids:
