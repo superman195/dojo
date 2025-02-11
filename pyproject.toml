@@ -54,7 +54,8 @@ dependencies = [
   "prisma==0.15.0",
   "beautifulsoup4==4.12.3",
   "jsmin==3.0.1",
-  "plotext==5.3.2"
+  "plotext==5.3.2",
+  "aioboto3==13.4.0"
 ]
 
 [project.optional-dependencies]

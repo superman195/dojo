@@ -1,6 +1,6 @@
 """
 analytics_upload.py
-    this file is periodically called by the validator to query and upload analytics data to analytics API.
+    this file is periodically called by the validator to query and upload analytics data to analytics_endpoint.py
 """
 
 import asyncio
@@ -21,24 +21,25 @@ from commons.utils import datetime_to_iso8601_str
 
 from database.client import connect_db
 from dojo import TASK_DEADLINE
+from dojo.protocol import AnalyticsData, AnalyticsPayload
 
 
-class AnalyticsData(TypedDict):
-    """
-    AnalyticsData is a schema that defines the structure of the analytics data.
-    This schema must match up with the schema in analytics_endpoint.py for successful uploads.
-    """
+# class AnalyticsData(TypedDict):
+#     """
+#     AnalyticsData is a schema that defines the structure of the analytics data.
+#     This schema must match up with the schema in analytics_endpoint.py for successful uploads.
+#     """
 
-    validator_task_id: str
-    validator_hotkey: str
-    completions: List[dict]
-    ground_truths: List[dict]
-    miner_responses: List[dict]  # contains responses from each miner
-    created_at: str
-    metadata: dict | None
+#     validator_task_id: str
+#     validator_hotkey: str
+#     completions: List[dict]
+#     ground_truths: List[dict]
+#     miner_responses: List[dict]  # contains responses from each miner
+#     created_at: str
+#     metadata: dict | None
 
 
-async def _get_task_data(validator_hotkey: str, expire_from: datetime, expire_to: datetime) -> dict[str, list] | None:
+async def _get_task_data(validator_hotkey: str, expire_from: datetime, expire_to: datetime) -> AnalyticsPayload | None:
     """
     _get_task_data() is a helper function that:
     1. queries postgres for processed ValidatorTasks in a given time window.
@@ -89,7 +90,7 @@ async def _get_task_data(validator_hotkey: str, expire_from: datetime, expire_to
             if not has_more_batches:
                 gc.collect()
                 break
-        payload = {"tasks": processed_tasks}
+        payload = AnalyticsPayload(tasks=processed_tasks)
         return payload
 
     except NoProcessedTasksYet as e:
@@ -181,6 +182,7 @@ if __name__ == "__main__":
 
     async def main():
         # for testing
+        from commons.utils import datetime_as_utc
         from_5_days = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(days=5)
         from_24_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(hours=24)
         from_1_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(hours=1)
