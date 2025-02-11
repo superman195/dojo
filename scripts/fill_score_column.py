@@ -121,6 +121,13 @@ async def main():
                             cubic_reward_score=None,
                         )
 
+                        # Check if all fields in scores are None
+                        if all(value is None for value in scores.model_dump().values()):
+                            logger.warning(
+                                f"All scores are None for completion {completion.completion_id}"
+                            )
+                            continue
+
                         logger.debug(
                             f"Attempting to update with scores data: {scores.model_dump()}"
                         )
