@@ -118,3 +118,9 @@ if [ "$1" = 'validate-migration' ]; then
     echo "Starting migration validation..."
     python scripts/validate_migration.py
 fi
+
+if [ "$1" = 'fill-score-column' ]; then
+    echo "Environment variables:"
+    echo "DATABASE_URL: ${DATABASE_URL}"
+    python scripts/fill_score_column.py --logging.info
+fi
