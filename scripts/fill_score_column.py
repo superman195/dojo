@@ -48,7 +48,7 @@ async def _process_miner_response(miner_response: MinerResponse, task: Validator
         logger.trace("No scores for miner response, attempting to fill from old tables")
 
     # find the scores from old tables
-    logger.debug(f"where query: task_id:{task.id}, hotkey: {miner_response.hotkey}")
+    # logger.debug(f"where query: task_id:{task.id}, hotkey: {miner_response.hotkey}")
 
     feedback_request = await prisma.feedback_request_model.find_first(
         where={
@@ -57,7 +57,7 @@ async def _process_miner_response(miner_response: MinerResponse, task: Validator
         }
     )
     if feedback_request is None:
-        logger.debug("Feedback request not found, skipping")
+        logger.warning("Feedback request not found, skipping")
         return
     # assert feedback_request is not None, (
     #     "Feedback request id should not be None"
