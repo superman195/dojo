@@ -1,5 +1,6 @@
 import asyncio
 import json
+import multiprocessing
 from typing import AsyncGenerator
 
 from loguru import logger
@@ -22,7 +23,11 @@ from dojo.protocol import Scores
 from dojo.utils.config import source_dotenv
 
 source_dotenv()
-sem = asyncio.Semaphore(100)  # Limit concurrent operations
+
+# Get number of CPU cores
+nproc = multiprocessing.cpu_count()
+
+sem = asyncio.Semaphore(nproc * 2 + 1)  # Limit concurrent operations
 
 
 # 1. for each record from `miner_response` find the corresponding record from `Completion_Response_Model`
@@ -114,7 +119,7 @@ async def _process_miner_response(miner_response: MinerResponse, task: Validator
                 continue
 
             logger.debug(
-                f"Attempting to update with scores data: {scores.model_dump()}"
+                f"Attempting to update with initial scores data: {scores.model_dump()}"
             )
 
             await tx.minerscore.update(
