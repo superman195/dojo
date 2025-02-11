@@ -12,7 +12,7 @@ from database.mappers import (
     map_validator_task_to_task_synapse_object,
 )
 from database.prisma import Json
-from database.prisma.models import ValidatorTask
+from database.prisma.models import MinerScore, ValidatorTask
 from database.prisma.types import (
     CriterionWhereInput,
     MinerScoreUpdateInput,
@@ -27,6 +27,17 @@ source_dotenv()
 # 1. for each record from `miner_response` find the corresponding record from `Completion_Response_Model`
 # 2. gather all scores from multiple `Completion_Response_Model` records and fill the relevant records inside `miner_response.scores`
 # 3. based on all the raw scores provided by miners, apply the `Scoring.score_by_criteria` to calculate the scores for each criterion
+
+
+def _is_empty_scores(record: MinerScore) -> bool:
+    scores = json.loads(record.scores)
+    return not scores
+
+
+def _is_all_empty_scores(records: list[MinerScore]) -> bool:
+    return all(_is_empty_scores(record) for record in records)
+
+
 async def main():
     await connect_db()
     async for validator_tasks, has_more_batches in get_processed_tasks():
@@ -37,25 +48,33 @@ async def main():
 
             for miner_response in task.miner_responses:
                 scores = miner_response.scores
-                if scores is not None or scores:
-                    logger.info(
+
+                if scores is not None and not _is_all_empty_scores(scores):
+                    logger.debug(
                         f"Scores data exists for miner response: {miner_response.id}, skipping"
                     )
+                    continue
                 else:
-                    logger.warning(
+                    logger.trace(
                         "No scores for miner response, attempting to fill from old tables"
                     )
 
                 # find the scores from old tables
+                logger.debug(
+                    f"where query: task_id:{task.id}, hotkey: {miner_response.hotkey}"
+                )
                 feedback_request = await prisma.feedback_request_model.find_first(
                     where={
-                        "id": task.id,
+                        "parent_id": task.id,
                         "hotkey": miner_response.hotkey,
                     }
                 )
-                assert (
-                    feedback_request is not None
-                ), "Feedback request id should not be None"
+                if feedback_request is None:
+                    logger.debug("Feedback request not found, skipping")
+                    continue
+                # assert feedback_request is not None, (
+                #     "Feedback request id should not be None"
+                # )
                 completions = await prisma.completion_response_model.find_many(
                     where={"feedback_request_id": feedback_request.id}
                 )
@@ -83,6 +102,14 @@ async def main():
                         continue
 
                     # the basics, just create raw scores
+                    if completion.score is None:
+                        logger.warning(
+                            f"Score is None for completion {completion.completion_id}"
+                        )
+                        continue
+
+                    # TODO: figure out why the completion.score is None
+                    # TODO: figure out completion.rank_id is None, need to reconstruct from ground truth
                     scores = Scores(
                         raw_score=completion.score,
                         rank_id=completion.rank_id,
@@ -92,6 +119,10 @@ async def main():
                         cosine_similarity_score=None,
                         normalised_cosine_similarity_score=None,
                         cubic_reward_score=None,
+                    )
+
+                    logger.debug(
+                        f"Attempting to update with scores data: {scores.model_dump()}"
                     )
 
                     await tx.minerscore.update(
@@ -106,6 +137,22 @@ async def main():
                         ),
                     )
 
+            # ensure completions are all json strings
+            assert task.completions is not None, "Completions should not be None"
+            # Ensure completions are in string format for the mapper
+            for completion in task.completions:
+                # logger.info(f"{type(completion.completion)}")
+                if isinstance(completion.completion, dict):
+                    # NOTE: hack because otherwise the mapper.py functgion fails
+                    completion.completion = json.dumps(completion.completion)  # type: ignore
+                elif isinstance(completion.completion, str):
+                    # Already in the right format
+                    pass
+                else:
+                    logger.warning(
+                        f"Unexpected completion type: {type(completion.completion)}"
+                    )
+
             updated_miner_responses = Scoring.calculate_score(
                 validator_task=map_validator_task_to_task_synapse_object(task),
                 miner_responses=[
@@ -116,6 +163,7 @@ async def main():
                     for miner_response in task.miner_responses
                 ],
             )
+            logger.info(f"Updated miner responses for task {task.id}")
 
             success, failed_hotkeys = await ORM.update_miner_scores(
                 task_id=task.id,
@@ -126,6 +174,8 @@ async def main():
                 logger.error(
                     f"Failed to update scores for task: {task.id}. Failed hotkeys: {failed_hotkeys}"
                 )
+
+            await asyncio.sleep(5)
 
         if not has_more_batches:
             logger.info("No more task batches to process")
