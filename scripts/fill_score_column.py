@@ -95,47 +95,47 @@ async def main():
                             )
                         )
 
-                    if not criterion:
-                        logger.warning(
-                            "Criterion not found, but it should already exist"
+                        if not criterion:
+                            logger.warning(
+                                "Criterion not found, but it should already exist"
+                            )
+                            continue
+
+                        # the basics, just create raw scores
+                        if completion.score is None:
+                            logger.warning(
+                                f"Score is None for completion {completion.completion_id}"
+                            )
+                            continue
+
+                        # TODO: figure out why the completion.score is None
+                        # TODO: figure out completion.rank_id is None, need to reconstruct from ground truth
+                        scores = Scores(
+                            raw_score=completion.score,
+                            rank_id=completion.rank_id,
+                            # Initialize other scores as None - they'll be computed later
+                            normalised_score=None,
+                            ground_truth_score=None,
+                            cosine_similarity_score=None,
+                            normalised_cosine_similarity_score=None,
+                            cubic_reward_score=None,
                         )
-                        continue
 
-                    # the basics, just create raw scores
-                    if completion.score is None:
-                        logger.warning(
-                            f"Score is None for completion {completion.completion_id}"
+                        logger.debug(
+                            f"Attempting to update with scores data: {scores.model_dump()}"
                         )
-                        continue
 
-                    # TODO: figure out why the completion.score is None
-                    # TODO: figure out completion.rank_id is None, need to reconstruct from ground truth
-                    scores = Scores(
-                        raw_score=completion.score,
-                        rank_id=completion.rank_id,
-                        # Initialize other scores as None - they'll be computed later
-                        normalised_score=None,
-                        ground_truth_score=None,
-                        cosine_similarity_score=None,
-                        normalised_cosine_similarity_score=None,
-                        cubic_reward_score=None,
-                    )
-
-                    logger.debug(
-                        f"Attempting to update with scores data: {scores.model_dump()}"
-                    )
-
-                    await tx.minerscore.update(
-                        where={
-                            "criterion_id_miner_response_id": {
-                                "criterion_id": criterion.id,
-                                "miner_response_id": miner_response.id,
-                            }
-                        },
-                        data=MinerScoreUpdateInput(
-                            scores=Json(json.dumps(scores.model_dump()))
-                        ),
-                    )
+                        await tx.minerscore.update(
+                            where={
+                                "criterion_id_miner_response_id": {
+                                    "criterion_id": criterion.id,
+                                    "miner_response_id": miner_response.id,
+                                }
+                            },
+                            data=MinerScoreUpdateInput(
+                                scores=Json(json.dumps(scores.model_dump()))
+                            ),
+                        )
 
             # ensure completions are all json strings
             assert task.completions is not None, "Completions should not be None"
