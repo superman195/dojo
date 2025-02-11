@@ -1,5 +1,6 @@
 import asyncio
 import os
+from collections import defaultdict
 from datetime import datetime
 from typing import AsyncGenerator
 
@@ -16,6 +17,7 @@ from database.prisma.models import Completion, MinerScore, ValidatorTask
 from database.prisma.types import (
     ValidatorTaskWhereInput,
 )
+from dojo.protocol import Scores
 from dojo.utils.config import source_dotenv
 
 source_dotenv()
@@ -36,10 +38,14 @@ class MinerResponseDataset(BaseModel):
     completion_id_to_scores: dict[str, MinerScore]
 
 
+class CompletionWithHeuristics(Completion):
+    mean_scores: Scores
+
+
 # 1 row represents 1 task in the dataset
 class Row(BaseModel):
     prompt: str
-    completions: list[Completion]
+    completions: list[CompletionWithHeuristics]
     created_at: str
     miner_responses: list[MinerResponseDataset]
 
@@ -63,6 +69,14 @@ class Row(BaseModel):
                 ]
             },
             "completion_id": "comp_123",
+            "mean_score": {
+                "raw_score": 0.85,
+                "normalised_score": 0.9,
+                "ground_truth_score": 1.0,
+                "cosine_similarity_score": 0.95,
+                "normalised_cosine_similarity_score": 0.92,
+                "cubic_reward_score": 0.88,
+            }
             "model": "gpt-4",
         }
     ],
@@ -136,6 +150,20 @@ async def build_jsonl(filename: str):
                 assert (
                     task.miner_responses is not None
                 ), "Miner responses should not be None"
+
+                # NOTE: calculate heuristics here
+                completion_id_to_mean_scores = defaultdict(
+                    lambda: Scores(
+                        raw_score=0.0,
+                        rank_id=None,
+                        normalised_score=0.0,
+                        ground_truth_score=0.0,
+                        cosine_similarity_score=0.0,
+                        normalised_cosine_similarity_score=0.0,
+                        cubic_reward_score=0.0,
+                    )
+                )
+
                 for m_response in task.miner_responses:
                     if not m_response.scores:
                         logger.warning(f"No scores for miner response {m_response.id}")
@@ -162,21 +190,47 @@ async def build_jsonl(filename: str):
                                 f"Criterion id {criterion_id} not found in scores"
                             )
 
+                        completion_id = criterion_id_to_completion[criterion_id].id
+                        completion_id_to_mean_scores[completion_id] = sum_scores(
+                            completion_id_to_mean_scores[completion_id],
+                            score,  # type: ignore
+                        )
+
                         row.miner_responses.append(
                             MinerResponseDataset(
                                 miner_coldkey=m_response.coldkey,
                                 miner_hotkey=m_response.hotkey,
                                 completion_id_to_scores={
-                                    criterion_id_to_completion[criterion_id].id: score  # type: ignore
+                                    completion_id: score  # type: ignore
                                 },
                             )
                         )
+
+                for completion in row.completions:
+                    completion.mean_scores = completion_id_to_mean_scores[completion.id]
 
                 # Write the entry as a JSON line
                 file.write(row.model_dump_json() + "\n")
 
             task_count += len(task_batch)
             logger.info(f"Scraped task count: {task_count}")
+
+
+def sum_scores(scores1: Scores, scores2: Scores) -> Scores:
+    return Scores(
+        raw_score=(scores1.raw_score or 0) + (scores2.raw_score or 0),
+        rank_id=(scores1.rank_id or 0) + (scores2.rank_id or 0),
+        normalised_score=(scores1.normalised_score or 0)
+        + (scores2.normalised_score or 0),
+        ground_truth_score=(scores1.ground_truth_score or 0)
+        + (scores2.ground_truth_score or 0),
+        cosine_similarity_score=(scores1.cosine_similarity_score or 0)
+        + (scores2.cosine_similarity_score or 0),
+        normalised_cosine_similarity_score=(
+            scores1.normalised_cosine_similarity_score or 0
+        )
+        + (scores2.normalised_cosine_similarity_score or 0),
+    )
 
 
 async def get_processed_tasks(
