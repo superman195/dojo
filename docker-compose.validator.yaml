@@ -35,6 +35,7 @@ services:
     logging: *default-logging
 
   synthetic-api:
+    container_name: synthetic-api
     image: ghcr.io/tensorplex-labs/dojo-synthetic-api:main
     env_file:
       - .env.validator
