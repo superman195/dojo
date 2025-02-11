@@ -22,7 +22,7 @@ from dojo.protocol import Scores
 from dojo.utils.config import source_dotenv
 
 source_dotenv()
-sem = asyncio.Semaphore(40)  # Limit concurrent operations
+sem = asyncio.Semaphore(100)  # Limit concurrent operations
 
 
 # 1. for each record from `miner_response` find the corresponding record from `Completion_Response_Model`
@@ -185,9 +185,11 @@ async def _process_task(task: ValidatorTask):
 async def main():
     await connect_db()
 
-    async for validator_tasks, has_more_batches in get_processed_tasks():
+    async for validator_tasks, has_more_batches in get_processed_tasks(batch_size=20):
+        bg_tasks = []
         for task in validator_tasks:
-            asyncio.create_task(_process_task(task))
+            bg_task = asyncio.create_task(_process_task(task))
+            bg_tasks.append(bg_task)
 
         if not has_more_batches:
             logger.info("No more task batches to process")
