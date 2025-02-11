@@ -176,15 +176,31 @@ async def _process_task(task: ValidatorTask):
     )
     logger.info(f"Updated miner responses for task {task.id}")
 
-    success, failed_hotkeys = await ORM.update_miner_scores(
-        task_id=task.id,
-        miner_responses=updated_miner_responses,
-    )
+    max_retries = 3
+    retry_delay = 0.5  # seconds
+    attempt = 0
 
-    if not success or failed_hotkeys:
-        logger.error(
-            f"Failed to update scores for task: {task.id}. Failed hotkeys: {failed_hotkeys}"
+    while attempt < max_retries:
+        success, failed_hotkeys = await ORM.update_miner_scores(
+            task_id=task.id,
+            miner_responses=updated_miner_responses,
         )
+
+        if success and not failed_hotkeys:
+            break
+
+        attempt += 1
+        if attempt < max_retries:
+            logger.warning(
+                f"Failed to update scores for task: {task.id} on attempt {attempt}. "
+                f"Failed hotkeys: {failed_hotkeys}. Retrying in {retry_delay} seconds..."
+            )
+            await asyncio.sleep(retry_delay)
+        else:
+            logger.error(
+                f"Failed to update scores for task: {task.id} after {max_retries} attempts. "
+                f"Failed hotkeys: {failed_hotkeys}"
+            )
 
 
 async def main():
