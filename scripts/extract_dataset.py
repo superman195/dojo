@@ -206,10 +206,15 @@ async def build_jsonl(filename: str):
                             )
                             continue
 
+                        existing_scores = (
+                            Scores()
+                            if score.scores == '"{}"'
+                            else Scores.model_validate_json(json.dumps(score.scores))
+                        )
+
                         completion_id = criterion_id_to_completion[criterion_id].id
                         completion_id_to_mean_scores[completion_id] = sum_scores(
-                            completion_id_to_mean_scores[completion_id],
-                            Scores.model_validate_json(json.dumps(score.scores)),
+                            completion_id_to_mean_scores[completion_id], existing_scores
                         )
 
                         row.miner_responses.append(
