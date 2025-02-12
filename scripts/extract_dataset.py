@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import traceback
 from collections import defaultdict
 from datetime import datetime
 from typing import AsyncGenerator
@@ -380,7 +381,9 @@ async def main():
             logger.info("Upload successful! Removing local dataset file.")
             os.remove(filename)
     except Exception as e:
-        logger.error(f"Error occurred while trying to upload dataset: {e}")
+        logger.error(
+            f"Error occurred while trying to upload dataset: {e}, traceback: {traceback.format_exc()}"
+        )
     finally:
         await disconnect_db()
 
