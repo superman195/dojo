@@ -120,7 +120,19 @@ async def build_jsonl(filename: str):
 
                 row = Row(
                     prompt=prompt,
-                    completions=completions,
+                    completions=[
+                        CompletionWithHeuristics(
+                            id=c.id,
+                            completion_id=c.completion_id,
+                            validator_task_id=c.validator_task_id,
+                            model=c.model,
+                            completion=c.completion,
+                            created_at=c.created_at,
+                            updated_at=c.updated_at,
+                            mean_scores=Scores(),
+                        )
+                        for c in completions
+                    ],
                     created_at=datetime_to_iso8601_str(task.created_at),
                     miner_responses=mresponses,
                 )
