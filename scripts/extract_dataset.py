@@ -204,11 +204,12 @@ async def build_jsonl(filename: str):
                             logger.error(
                                 f"Criterion id {criterion_id} not found in scores"
                             )
+                            continue
 
                         completion_id = criterion_id_to_completion[criterion_id].id
                         completion_id_to_mean_scores[completion_id] = sum_scores(
                             completion_id_to_mean_scores[completion_id],
-                            score,  # type: ignore
+                            Scores.model_validate_json(json.dumps(score.scores)),
                         )
 
                         row.miner_responses.append(
