@@ -9,7 +9,7 @@ import aiofiles
 import bittensor as bt
 import httpx
 from bittensor.utils.btlogging import logging as logger
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from commons.objects import ObjectManager
 from commons.utils import datetime_to_iso8601_str
@@ -206,11 +206,14 @@ async def build_jsonl(filename: str):
                             )
                             continue
 
-                        existing_scores = (
-                            Scores()
-                            if score.scores == '"{}"'
-                            else Scores.model_validate_json(json.dumps(score.scores))
-                        )
+                        existing_scores = Scores()
+                        try:
+                            existing_scores = Scores.model_validate_json(
+                                json.dumps(score.scores)
+                            )
+                            logger.debug("Successfully parsed scores from database")
+                        except ValidationError:
+                            pass
 
                         completion_id = criterion_id_to_completion[criterion_id].id
                         completion_id_to_mean_scores[completion_id] = sum_scores(
