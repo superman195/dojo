@@ -52,6 +52,7 @@
 - [Auto-updater](#auto-updater)
 - [Dojo CLI](#dojo-cli)
 - [For Dojo developers](#for-dojo-developers)
+  - [Dataset Extraction](#dataset-extraction)
 - [License](#license)
 
 </details>
@@ -569,6 +570,17 @@ source dojo_venv/bin/activate
 make install-dev
 # install test dependencies
 make install-test
+```
+
+## Dataset Extraction
+
+The dataset should be in different parts, currently `MAX_CHUNK_SIZE_MB` is set to 50MB on the dataset service, due to limitations on the load balancer. Use the commands to combine all into a single dataset file:
+
+```bash
+aws s3 cp s3://amzn-s3-demo-bucket1/ <PATH_ON_LOCAL> --recursive --exclude "*" --include "hotkey_<vali_hotkey>_dataset_20250212*.jsonl"
+cd <PATH_ON_LOCAL>
+# to merge all chunks into a single dataset file
+cat *.jsonl > hotkey_<vali_hotkey>_dataset_combined.jsonl
 ```
 
 # License
