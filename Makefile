@@ -77,6 +77,9 @@ dojo-cli:
 extract-dataset:
 	docker compose -f docker-compose.validator.yaml run --rm --remove-orphans extract-dataset
 
+fill-score-column:
+	docker compose -f docker-compose.validator.yaml run --rm --remove-orphans fill-score-column
+
 migration:
 	docker compose --env-file .env.validator -f docker-compose.validator.yaml run --rm migration
 
