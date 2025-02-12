@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from collections import defaultdict
 from datetime import datetime
@@ -13,6 +14,7 @@ from pydantic import BaseModel
 from commons.objects import ObjectManager
 from commons.utils import datetime_to_iso8601_str
 from database.client import connect_db, disconnect_db, prisma
+from database.prisma import Json
 from database.prisma.models import Completion, MinerScore, ValidatorTask
 from database.prisma.types import (
     ValidatorTaskWhereInput,
@@ -126,7 +128,9 @@ async def build_jsonl(filename: str):
                             completion_id=c.completion_id,
                             validator_task_id=c.validator_task_id,
                             model=c.model,
-                            completion=c.completion,
+                            # # NOTE: hack because otherwise the mapper.py functgion fails
+                            # completion.completion = json.dumps(completion.completion)  # type: ignore
+                            completion=Json(json.dumps(c.completion)),
                             created_at=c.created_at,
                             updated_at=c.updated_at,
                             mean_scores=Scores(),
