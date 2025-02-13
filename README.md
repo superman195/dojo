@@ -52,6 +52,7 @@
 - [Auto-updater](#auto-updater)
 - [Dojo CLI](#dojo-cli)
 - [For Dojo developers](#for-dojo-developers)
+  - [Dataset Extraction](#dataset-extraction)
 - [License](#license)
 
 </details>
@@ -102,7 +103,6 @@ By creating an open platform for gathering human-generated datasets, Tensorplex 
 - docker
 - GNU make
 - openrouter api key
-- wandb api key
 
 ### System Requirements
 
@@ -203,6 +203,9 @@ For Docker Compose installation, see https://docs.docker.com/compose/install/lin
 # verify both docker and docker compose are installed
 docker --version
 docker compose version
+
+# for validator please install docker loki plugin
+docker plugin install grafana/loki-docker-driver:3.3.2-amd64 --alias loki --grant-all-permissions
 ```
 
 4. Start local subtensor node (**optional**)
@@ -420,8 +423,6 @@ WALLET_COLDKEY=# the name of the coldkey
 WALLET_HOTKEY=# the name of the hotkey
 DATASET_SERVICE_BASE_URL=https://dojo-validator-api.tensorplex.ai
 
-# head to https://wandb.ai/authorize to get your API key
-WANDB_API_KEY="<wandb_key>"
 
 # for dojo-synthetic-api
 OPENROUTER_API_KEY="sk-or-v1-<KEY>"
@@ -438,6 +439,10 @@ DB_NAME=db
 DB_USERNAME=#set a non-default username
 DB_PASSWORD=#generate and set a secure password
 DATABASE_URL=postgresql://${DB_USERNAME}:${DB_PASSWORD}@${DB_HOST}/${DB_NAME}
+
+# dojo loki
+DOJO_LOKI_URL=# get from TPLX TEAM
+VALIDATOR_HOTKEY=# your running validator hotkey address
 ```
 
 > **Note:** To ensure your validator runs smoothly, enable the auto top-up feature for Openrouter, this ensures that your validator will not fail to call synthetic API during task generation. The estimate cost of generating a task is approximately $0.20 USD.
@@ -569,6 +574,17 @@ source dojo_venv/bin/activate
 make install-dev
 # install test dependencies
 make install-test
+```
+
+## Dataset Extraction
+
+The dataset should be in different parts, currently `MAX_CHUNK_SIZE_MB` is set to 50MB on the dataset service, due to limitations on the load balancer. Use the commands to combine all into a single dataset file:
+
+```bash
+aws s3 cp s3://amzn-s3-demo-bucket1/ <PATH_ON_LOCAL> --recursive --exclude "*" --include "hotkey_<vali_hotkey>_dataset_20250212*.jsonl"
+cd <PATH_ON_LOCAL>
+# to merge all chunks into a single dataset file
+cat *.jsonl > hotkey_<vali_hotkey>_dataset_combined.jsonl
 ```
 
 # License

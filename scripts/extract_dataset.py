@@ -1,35 +1,25 @@
 import asyncio
+import json
 import os
+import traceback
+from collections import defaultdict
 from datetime import datetime
-from typing import AsyncGenerator, List
+from typing import AsyncGenerator
 
 import aiofiles
 import bittensor as bt
 import httpx
-import numpy as np
 from bittensor.utils.btlogging import logging as logger
-from pydantic import BaseModel, model_serializer
+from pydantic import BaseModel, ValidationError
 
-from commons.exceptions import (
-    NoNewExpiredTasksYet,
-)
 from commons.objects import ObjectManager
-from database.client import connect_db, disconnect_db
-from database.mappers import (
-    map_feedback_request_model_to_feedback_request,
-)
-from database.prisma.models import (
-    Feedback_Request_Model,
-)
+from commons.utils import datetime_to_iso8601_str
+from database.client import connect_db, disconnect_db, prisma
+from database.prisma.models import Completion, MinerScore, ValidatorTask
 from database.prisma.types import (
-    Feedback_Request_ModelInclude,
-    Feedback_Request_ModelWhereInput,
+    ValidatorTaskWhereInput,
 )
-from dojo import TASK_DEADLINE
-from dojo.protocol import (
-    CompletionResponse,
-    DendriteQueryResponse,
-)
+from dojo.protocol import Scores
 from dojo.utils.config import source_dotenv
 
 source_dotenv()
@@ -43,30 +33,77 @@ if MAX_CHUNK_SIZE_MB is None:
     raise ValueError("MAX_CHUNK_SIZE_MB must be set")
 
 
-# represents a row in the jsonl dataset
+class MinerResponseDataset(BaseModel):
+    miner_coldkey: str
+    miner_hotkey: str
+    # scores object, directly taken from database
+    completion_id_to_scores: dict[str, MinerScore]
+
+
+class CompletionWithHeuristics(Completion):
+    mean_scores: Scores
+
+
+# 1 row represents 1 task in the dataset
 class Row(BaseModel):
     prompt: str
-    completions: list[CompletionResponse]
-    # shape (num_miners, num_completions)
-    raw_scores: list[list[float]]
-    # shape (num_completions)
-    mean_scores: list[float]
-    # ground truth ranks
-    cid_to_ground_truth_rank: dict[str, int]
+    completions: list[CompletionWithHeuristics]
+    created_at: str
+    miner_responses: list[MinerResponseDataset]
 
     class Config:
         arbitrary_types_allowed = True
 
-    @model_serializer
-    def serialize_model(self):
-        """Custom serializer method to ensure that types such as np.ndarray and torch.tensor are serialized correctly"""
-        return {
-            "prompt": self.prompt,
-            "completions": self.completions,
-            "raw_scores": self.raw_scores,
-            "mean_scores": self.mean_scores,
-            "cid_to_ground_truth_rank": self.cid_to_ground_truth_rank,
+
+"""
+
+{
+    "prompt": "Write a function to calculate fibonacci numbers",
+    "completions": [
+        {
+            "completion": {
+                "files": [
+                    {
+                        "filename": "fib.py",
+                        "content": "def fib(n):\n    if n <= 1:\n        return n\n    return fib(n-1) + fib(n-2)",
+                        "language": "python",
+                    }
+                ]
+            },
+            "completion_id": "comp_123",
+            "mean_score": {
+                "raw_score": 0.85,
+                "normalised_score": 0.9,
+                "ground_truth_score": 1.0,
+                "cosine_similarity_score": 0.95,
+                "normalised_cosine_similarity_score": 0.92,
+                "cubic_reward_score": 0.88,
+            }
+            "model": "gpt-4",
         }
+    ],
+    "created_at": "2024-01-01T00:00:00Z",
+    "miner_responses": [
+        {
+            "miner_coldkey": "asdfg",
+            "miner_hotkey": "asdfg",
+            "completion_id_to_scores": {
+                "comp_123": {
+                    "scores": {
+                        "raw_score": 0.85,
+                        "normalised_score": 0.9,
+                        "ground_truth_score": 1.0,
+                        "cosine_similarity_score": 0.95,
+                        "normalised_cosine_similarity_score": 0.92,
+                        "cubic_reward_score": 0.88,
+                    }
+                }
+            },
+        }
+    ],
+}
+
+"""
 
 
 async def build_jsonl(filename: str):
@@ -77,149 +114,176 @@ async def build_jsonl(filename: str):
             if not has_more_batches and not task_batch:
                 break
 
+            mresponses = []
             for task in task_batch:
-                # Extract prompt from validator request
-                prompt = task.validator_task.prompt
+                prompt = task.prompt
+                completions = task.completions
+                assert completions is not None, "Completions should not be None"
 
-                # Extract completions from miner responses
-                completions = task.validator_task.completion_responses
+                row = Row(
+                    prompt=prompt,
+                    completions=[
+                        CompletionWithHeuristics(
+                            id=c.id,
+                            completion_id=c.completion_id,
+                            validator_task_id=c.validator_task_id,
+                            model=c.model,
+                            # # NOTE: hack because otherwise the mapper.py functgion fails
+                            # completion.completion = json.dumps(completion.completion)  # type: ignore
+                            completion=json.dumps(c.completion),  # type: ignore
+                            created_at=c.created_at,
+                            updated_at=c.updated_at,
+                            mean_scores=Scores(),
+                        )
+                        for c in completions
+                    ],
+                    created_at=datetime_to_iso8601_str(task.created_at),
+                    miner_responses=mresponses,
+                )
 
-                raw_scores = []
-                for miner_response in task.miner_responses:
-                    # TODO ensure ordering
-                    miner_ratings = [
-                        c.score for c in miner_response.completion_responses or []
-                    ]
-                    if any(rating is None for rating in miner_ratings):
+                # ensure ordering of scores based on the validator's completions ordering
+                # ensure ordering of scores based on the validator's completions ordering
+                # ensure ordering of scores based on the validator's completions ordering
+                criterion_ids = []
+
+                criterion_id_to_completion: dict[str, Completion] = {}
+                for c in completions:
+                    assert c.criterion is not None, "Criterion should not be None"
+                    # at the moment it should only be 1
+                    assert (
+                        len(c.criterion) == 1
+                    ), "Only 1 criterion per completion is supported at the moment"
+
+                    for criterion in c.criterion:
+                        criterion_ids.append(criterion.id)
+                        criterion_id_to_completion[criterion.id] = c
+
+                miner_responses = task.miner_responses
+                if miner_responses is None:
+                    logger.warning(f"No miner responses for task {task.id}")
+                    continue
+
+                assert (
+                    task.miner_responses is not None
+                ), "Miner responses should not be None"
+
+                # NOTE: calculate heuristics here
+                completion_id_to_mean_scores = defaultdict(
+                    lambda: Scores(
+                        raw_score=0.0,
+                        rank_id=None,
+                        normalised_score=0.0,
+                        ground_truth_score=0.0,
+                        cosine_similarity_score=0.0,
+                        normalised_cosine_similarity_score=0.0,
+                        cubic_reward_score=0.0,
+                    )
+                )
+
+                for m_response in task.miner_responses:
+                    if not m_response.scores:
+                        logger.warning(f"No scores for miner response {m_response.id}")
                         continue
-                    raw_scores.append(miner_ratings)
+                    else:
+                        logger.debug(
+                            f"Scores for miner response {m_response.id}: {m_response.scores}"
+                        )
 
-                # shape (num_completions, num_miners)
-                raw_scores_vec = np.array(raw_scores)
-                logger.info(f"raw_scores_vec shape: {raw_scores_vec.shape}")
-                logger.info(f"raw_scores_vec: {raw_scores_vec}")
+                    ordered_scores: list[MinerScore] = []
+                    for criterion_id in criterion_ids:
+                        score = next(
+                            (
+                                s
+                                for s in m_response.scores
+                                if s.criterion_id == criterion_id
+                            ),
+                            None,
+                        )
+                        if score:
+                            ordered_scores.append(score)
+                        else:
+                            logger.error(
+                                f"Criterion id {criterion_id} not found in scores"
+                            )
+                            continue
 
-                if raw_scores_vec.size > 0:
-                    # ensure we're taking mean for each completion, across all miners
-                    mean_scores = raw_scores_vec.mean(axis=0)
-                    logger.info(f"mean_scores shape: {mean_scores.shape}")
-                    jsonl_row = Row(
-                        prompt=prompt,
-                        completions=completions or [],
-                        raw_scores=raw_scores,
-                        mean_scores=mean_scores.tolist(),
-                        cid_to_ground_truth_rank=task.validator_task.ground_truth or {},
-                    )
-                else:
-                    jsonl_row = Row(
-                        prompt=prompt,
-                        completions=completions or [],
-                        raw_scores=[],
-                        mean_scores=[],
-                        cid_to_ground_truth_rank={},
-                    )
+                        existing_scores = Scores()
+                        try:
+                            existing_scores = Scores.model_validate_json(
+                                json.dumps(score.scores)
+                            )
+                            logger.debug("Successfully parsed scores from database")
+                        except ValidationError:
+                            pass
+
+                        completion_id = criterion_id_to_completion[criterion_id].id
+                        completion_id_to_mean_scores[completion_id] = sum_scores(
+                            completion_id_to_mean_scores[completion_id], existing_scores
+                        )
+
+                        row.miner_responses.append(
+                            MinerResponseDataset(
+                                miner_coldkey=m_response.coldkey,
+                                miner_hotkey=m_response.hotkey,
+                                completion_id_to_scores={
+                                    completion_id: score  # type: ignore
+                                },
+                            )
+                        )
+
+                for completion in row.completions:
+                    completion.mean_scores = completion_id_to_mean_scores[completion.id]
 
                 # Write the entry as a JSON line
-                file.write(jsonl_row.model_dump_json() + "\n")
+                file.write(row.model_dump_json() + "\n")
 
             task_count += len(task_batch)
             logger.info(f"Scraped task count: {task_count}")
 
 
+def sum_scores(scores1: Scores, scores2: Scores) -> Scores:
+    return Scores(
+        raw_score=(scores1.raw_score or 0) + (scores2.raw_score or 0),
+        rank_id=(scores1.rank_id or 0) + (scores2.rank_id or 0),
+        normalised_score=(scores1.normalised_score or 0)
+        + (scores2.normalised_score or 0),
+        ground_truth_score=(scores1.ground_truth_score or 0)
+        + (scores2.ground_truth_score or 0),
+        cosine_similarity_score=(scores1.cosine_similarity_score or 0)
+        + (scores2.cosine_similarity_score or 0),
+        normalised_cosine_similarity_score=(
+            scores1.normalised_cosine_similarity_score or 0
+        )
+        + (scores2.normalised_cosine_similarity_score or 0),
+    )
+
+
 async def get_processed_tasks(
     batch_size: int = 10,
-) -> AsyncGenerator[tuple[List[DendriteQueryResponse], bool], None]:
-    """Yields batches of processed Feedback_Request_Model records along with a boolean flag indicating the presence of additional batches.
-
-    This function retrieves tasks that have been fully processed. The batch size can be specified to control the number of tasks returned in each batch.
-
-    Args:
-        batch_size (int, optional): The number of tasks to include in each batch. Defaults to 10.
-
-    Raises:
-        NoNewExpiredTasksYet: Raised if no processed tasks are available for retrieval.
-
-    Yields:
-        AsyncGenerator[tuple[List[DendriteQueryResponse], bool], None]: An asynchronous generator yielding a tuple containing a list of DendriteQueryResponse objects and a boolean indicating if more batches are available.
-    """
-
-    # find all validator requests first
-    include_query = Feedback_Request_ModelInclude(
+) -> AsyncGenerator[tuple[list[ValidatorTask], bool], None]:
+    vali_where_query = ValidatorTaskWhereInput(
         {
-            "completions": True,
-            "criteria_types": True,
-            "ground_truths": True,
-            "parent_request": True,
+            "is_processed": True,
         }
     )
+    num_processed_tasks = await prisma.validatortask.count(where=vali_where_query)
 
-    vali_where_query = Feedback_Request_ModelWhereInput(
-        {
-            "parent_id": None,  # no parent means it's a validator request
-            # only check for tasks that are completely done
-            "is_processed": {"equals": True},
-        }
-    )
-
-    # count first total including non
-    task_count = await Feedback_Request_Model.prisma().count(
-        where=vali_where_query,
-    )
-
-    logger.info(f"Count of processed tasks: {task_count}")
-
-    if not task_count:
-        raise NoNewExpiredTasksYet(
-            f"No expired tasks found for processing, please wait for tasks to pass the task deadline of {TASK_DEADLINE} seconds."
-        )
-
-    for i in range(0, task_count, batch_size):
-        # find all unprocesed validator requests
-        validator_requests = await Feedback_Request_Model.prisma().find_many(
-            include=include_query,
-            where=vali_where_query,
-            order={"created_at": "desc"},
-            skip=i,
+    for skip in range(0, num_processed_tasks, batch_size):
+        validator_tasks = await prisma.validatortask.find_many(
+            skip=skip,
             take=batch_size,
-        )
-
-        # find all miner responses
-        processed_vali_request_ids = [r.id for r in validator_requests]
-        miner_responses = await Feedback_Request_Model.prisma().find_many(
-            include=include_query,
-            where={
-                "parent_id": {"in": processed_vali_request_ids},
-                "is_processed": {"equals": True},
+            where=vali_where_query,
+            include={
+                "completions": {"include": {"criterion": True}},
+                "ground_truth": True,
+                "miner_responses": {
+                    "include": {
+                        "scores": True,
+                    }
+                },
             },
-            order={"created_at": "desc"},
         )
-
-        # NOTE: technically a DendriteQueryResponse represents a task
-        tasks: list[DendriteQueryResponse] = []
-        for validator_request in validator_requests:
-            validator_task = map_feedback_request_model_to_feedback_request(
-                validator_request
-            )
-            logger.info(f"Vali request ground truths: {validator_task.ground_truth}")
-
-            miner_responses = list(
-                map(
-                    lambda x: map_feedback_request_model_to_feedback_request(
-                        x, is_miner=True
-                    ),
-                    [m for m in miner_responses if m.parent_id == validator_request.id],
-                )
-            )
-
-            tasks.append(
-                DendriteQueryResponse(
-                    validator_task=validator_task, miner_responses=miner_responses
-                )
-            )
-
-        # yield responses, so caller can do something
-        has_more_batches = True
-        yield tasks, has_more_batches
+        yield validator_tasks, skip + batch_size < num_processed_tasks
 
     yield [], False
 
@@ -317,7 +381,9 @@ async def main():
             logger.info("Upload successful! Removing local dataset file.")
             os.remove(filename)
     except Exception as e:
-        logger.error(f"Error occurred while trying to upload dataset: {e}")
+        logger.error(
+            f"Error occurred while trying to upload dataset: {e}, traceback: {traceback.format_exc()}"
+        )
     finally:
         await disconnect_db()
 

@@ -300,6 +300,7 @@ class ORM:
         max_retries: int = 20,
     ) -> tuple[bool, list[int]]:
         """Update the miner's provided raw scores for a list of miner responses.
+        NOTE: this is to be used when the task is first saved to validator's database.
 
         Args:
             miner_responses: List of TaskSynapseObject containing miner responses

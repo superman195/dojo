@@ -1,6 +1,7 @@
 import json
 import os
-from unittest.mock import patch
+from typing import Any, Tuple
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import bittensor as bt
 import pytest
@@ -43,32 +44,27 @@ def mock_evalplus_leaderboard_results():
 
 
 @pytest.fixture
-def mock_initialise() -> (
-    tuple[patch, bt.Wallet, MockSubtensor, MockMetagraph, MockDendrite]
-):
+def mock_initialise() -> Tuple[Any, MagicMock, MockSubtensor, MockMetagraph, MagicMock]:
     """Fixture to initialise mock components for testing."""
     netuid = 1
 
     bt.MockSubtensor.reset()
-    mock_wallet = bt.Wallet()
+
+    # Create and configure mock wallet
+    mock_wallet = MagicMock(spec=bt.Wallet)
+    mock_wallet.hotkey = MagicMock()
+    mock_wallet.config = MagicMock()
+
+    # Set up other mocks
     mock_subtensor = MockSubtensor(netuid=netuid, wallet=mock_wallet)
     mock_metagraph = MockMetagraph(netuid=netuid, subtensor=mock_subtensor)
-    mock_dendrite = MockDendrite(wallet=mock_wallet)
 
-    with patch("commons.utils.initialise") as mock_initialise:
-        mock_initialise.return_value = (
-            mock_wallet,
-            mock_subtensor,
-            mock_metagraph,
-            mock_dendrite,
-        )
-        yield (
-            mock_initialise,
-            mock_wallet,
-            mock_subtensor,
-            mock_metagraph,
-            mock_dendrite,
-        )
+    # Create mock dendrite without calling parent class init
+    mock_dendrite = MagicMock(spec=MockDendrite)
+    mock_dendrite.query = AsyncMock(return_value=None)
+    mock_dendrite.forward = AsyncMock(return_value=None)
+
+    return patch, mock_wallet, mock_subtensor, mock_metagraph, mock_dendrite
 
 
 @pytest.fixture

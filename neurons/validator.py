@@ -14,10 +14,8 @@ import aiohttp
 import bittensor as bt
 import numpy as np
 import torch
-import wandb
 from bittensor.utils.btlogging import logging as logger
 from bittensor.utils.weight_utils import process_weights_for_netuid
-from fastapi.encoders import jsonable_encoder
 from tenacity import RetryError
 from torch.nn import functional as F
 from websocket import create_connection
@@ -30,7 +28,6 @@ from commons.exceptions import (
     NoNewExpiredTasksYet,
     SetWeightsFailed,
 )
-from commons.logging.wandb import init_wandb
 from commons.obfuscation.obfuscation_utils import obfuscate_html_and_js
 from commons.objects import ObjectManager
 from commons.orm import ORM
@@ -116,8 +113,6 @@ class Validator:
             len(self.metagraph.hotkeys), dtype=torch.float32
         )
         self.check_registered()
-
-        init_wandb(config=self.config, my_uid=self.uid, wallet=self.wallet)
 
         # Run score migration before loading state
         migration_success = self.loop.run_until_complete(ScoreStorage.migrate_from_db())
@@ -1404,84 +1399,7 @@ class Validator:
             hotkeys=list(hotkey_to_completion_responses.keys()),
         )
 
-        # TODO: Remove wandb logging and save to db instead
-        # criteria_to_miner_score = {}
-        # asyncio.create_task(
-        #     self._log_wandb(task, criteria_to_miner_score, updated_hotkey_to_scores)
-        # )
-
         return task.validator_task.task_id, hotkey_to_scores
-
-    async def _log_wandb(
-        self,
-        task: DendriteQueryResponse,
-        criteria_to_miner_score: dict,
-        hotkey_to_score: dict,
-    ):
-        """Log the task results to wandb for visualization."""
-        if not criteria_to_miner_score.values() or not hotkey_to_score:
-            logger.warning(
-                "📝 No criteria to miner scores available. Skipping calculating averages for wandb."
-            )
-            return
-
-        mean_weighted_consensus_scores = (
-            torch.stack(
-                [
-                    miner_scores.consensus.score
-                    for miner_scores in criteria_to_miner_score.values()
-                ]
-            )
-            .mean(dim=0)
-            .tolist()
-        )
-
-        mean_weighted_gt_scores = (
-            torch.stack(
-                [
-                    miner_scores.ground_truth
-                    for miner_scores in criteria_to_miner_score.values()
-                ]
-            )
-            .mean(dim=0)
-            .tolist()
-        )
-
-        logger.info(
-            f"📝 Mean miner scores across different criteria: consensus shape:{mean_weighted_consensus_scores}, gt shape:{mean_weighted_gt_scores}"
-        )
-
-        score_data = {
-            "scores_by_hotkey": [hotkey_to_score],
-            "mean": {
-                "consensus": mean_weighted_consensus_scores,
-                "ground_truth": mean_weighted_gt_scores,
-            },
-            "hotkey_to_dojo_task_scores_and_gt": await self._get_dojo_task_scores_and_gt(
-                task.miner_responses
-            ),
-        }
-
-        wandb_data = jsonable_encoder(
-            {
-                "request_id": task.validator_task.task_id,
-                "task": task.validator_task.task_type,
-                "criteria": (
-                    task.validator_task.completion_responses[0].criteria_types
-                    if task.validator_task.completion_responses
-                    else []
-                ),
-                "prompt": task.validator_task.prompt,
-                "completions": jsonable_encoder(
-                    task.validator_task.completion_responses
-                ),
-                "num_completions": len(task.validator_task.completion_responses or []),
-                "scores": score_data,
-                "num_responses": len(task.miner_responses),
-            }
-        )
-
-        wandb.log(wandb_data, commit=True)
 
     async def _get_dojo_task_scores_and_gt(
         self, miner_responses: List[TaskSynapseObject]

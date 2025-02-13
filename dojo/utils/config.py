@@ -218,14 +218,6 @@ def add_args(parser):
             default=0.3,
         )
 
-        wandb_project_names = ["dojo-devnet", "dojo-testnet", "dojo-mainnet"]
-        parser.add_argument(
-            "--wandb.project_name",
-            type=str,
-            choices=wandb_project_names,
-            help="Name of the wandb project to use.",
-        )
-
     elif neuron_type == "miner":
         pass
 

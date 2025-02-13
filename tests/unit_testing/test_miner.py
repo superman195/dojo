@@ -11,24 +11,21 @@ from loguru import logger
 from commons.utils import get_epoch_time
 from dojo import VALIDATOR_MIN_STAKE
 from dojo.protocol import (
-    CompletionResponses,
-    FeedbackRequest,
-    MultiScoreCriteria,
+    CompletionResponse,
+    ScoreCriteria,
+    Scores,
     ScoringResult,
-    TaskType,
+    TaskSynapseObject,
+    TaskTypeEnum,
 )
 from neurons.miner import Miner
 
-valid_feedback_request = FeedbackRequest(
-    request_id="test_request_id",
-    dendrite=bt.TerminalInfo(hotkey="mock_hotkey"),
+valid_task_synapse = TaskSynapseObject(
     prompt="test_prompt",
-    task_type=TaskType.CODE_GENERATION,
-    criteria_types=[
-        MultiScoreCriteria(type="multi-score", options=[], min=0.0, max=100.0)
-    ],
+    dendrite=bt.TerminalInfo(hotkey="mock_hotkey"),
+    task_type=TaskTypeEnum.CODE_GENERATION,
     completion_responses=[
-        CompletionResponses(
+        CompletionResponse(
             model="test_model",
             completion="test_completion",
             completion_id="test_uuid1234",
@@ -37,22 +34,17 @@ valid_feedback_request = FeedbackRequest(
     expire_at="2024-10-12T09:45:25Z",
 )
 
-invalid_feedback_request = FeedbackRequest(
-    request_id="test_request_id",
-    dendrite=bt.TerminalInfo(hotkey="mock_hotkey"),
+invalid_task_synapse = TaskSynapseObject(
     prompt="test_prompt",
-    task_type=TaskType.CODE_GENERATION,
-    criteria_types=[
-        MultiScoreCriteria(type="multi-score", options=[], min=0.0, max=100.0)
-    ],
+    task_type=TaskTypeEnum.CODE_GENERATION,
     completion_responses=[],  # Invalid because responses list is empty
     expire_at="2024-10-12T09:45:25Z",
 )
 
-MOCK_HOTKEYS: list[str] = [
-    "o7PE28T0L1iU5s4pecJvYLGlfGZ5sljMVv4OkL5cRXHz",
-    "OHBpuTVsYcKlNfP8oF2UgyfAPdm5mNEgjeV4ezAfXhXh",
-]
+miner_hotkey = "mock_miner_hotkey"
+validator_hotkey = "mock_validator_hotkey"
+
+MOCK_HOTKEYS: list[str] = [miner_hotkey, validator_hotkey]
 
 
 # Fixture to propagate loguru logs to standard logging
@@ -80,6 +72,22 @@ def mock_miner(mock_initialise):
         miner.subtensor = mock_subtensor
         miner.metagraph = mock_metagraph
         miner.metagraph.hotkeys = MOCK_HOTKEYS
+        miner.metagraph.neurons = [
+            MagicMock(
+                stake=MagicMock(tao=float(VALIDATOR_MIN_STAKE - 5.0)),
+                hotkey=miner_hotkey,
+            ),
+            MagicMock(
+                stake=MagicMock(tao=float(VALIDATOR_MIN_STAKE + 5.0)),
+                hotkey=validator_hotkey,
+            ),
+        ]
+        miner.metagraph.total_stake = np.array(
+            [
+                float(VALIDATOR_MIN_STAKE - 5.0),  # this means miner stake
+                float(VALIDATOR_MIN_STAKE + 5.0),  # this means validator stake
+            ]
+        )
         miner.dendrite = mock_dendrite
         miner.config = mock_wallet.config
 
@@ -92,28 +100,73 @@ async def test_forward_result_valid(mock_miner: Miner):
     # Mock a valid scoring result
     mock_hotkey = str(mock_miner.wallet.hotkey.ss58_address)  # Convert hotkey to string
     synapse = ScoringResult(
-        request_id="test_request_id", hotkey_to_scores={mock_hotkey: 0.5}
+        task_id="test_request_id",
+        hotkey_to_completion_responses={
+            mock_hotkey: [
+                CompletionResponse(
+                    model="test_model",
+                    completion="test_completion",
+                    completion_id="test_uuid1234",
+                    criteria_types=[
+                        ScoreCriteria(
+                            type="score",
+                            min=0.0,
+                            max=100.0,
+                            scores=Scores(
+                                ground_truth_score=0.5,
+                                cosine_similarity_score=0.5,
+                                normalised_cosine_similarity_score=0.5,
+                                cubic_reward_score=0.5,
+                            ),
+                        )
+                    ],
+                )
+            ]
+        },
     )
 
-    response = await mock_miner.forward_result(synapse)
+    response: ScoringResult = await mock_miner.forward_score_result(synapse)
 
-    assert response.hotkey_to_scores[mock_hotkey] == 0.5
+    assert response.hotkey_to_completion_responses[mock_hotkey] == [
+        CompletionResponse(
+            model="test_model",
+            completion="test_completion",
+            completion_id="test_uuid1234",
+            criteria_types=[
+                ScoreCriteria(
+                    type="score",
+                    min=0.0,
+                    max=100.0,
+                    scores=Scores(
+                        ground_truth_score=0.5,
+                        cosine_similarity_score=0.5,
+                        normalised_cosine_similarity_score=0.5,
+                        cubic_reward_score=0.5,
+                    ),
+                )
+            ],
+        )
+    ]
 
 
 @pytest.mark.asyncio
 async def test_forward_result_missing_hotkey_to_scores(mock_miner: Miner, caplog):
     """Test that a miner's ScoringResult is None or hotkey_to_scores attribute is missing or empty object"""
     synapse = None
-    response = await mock_miner.forward_result(synapse)
+    with caplog.at_level(logging.ERROR):
+        response = await mock_miner.forward_score_result(synapse)
     assert response is None
 
-    synapse = ScoringResult(request_id="test_request_id", hotkey_to_scores={})
+    synapse = ScoringResult(
+        task_id="test_request_id", hotkey_to_completion_responses={}
+    )
     with caplog.at_level(logging.ERROR):
-        response = await mock_miner.forward_result(synapse)
+        response = await mock_miner.forward_score_result(synapse)
 
-    assert response.hotkey_to_scores == {}
+    assert response.hotkey_to_completion_responses == {}
     assert (
-        "Invalid synapse object or missing hotkey_to_scores attribute." in caplog.text
+        "Invalid synapse object or missing hotkey_to_completion_responses attribute."
+        in caplog.text
     )
 
 
@@ -121,14 +174,22 @@ async def test_forward_result_missing_hotkey_to_scores(mock_miner: Miner, caplog
 async def test_forward_result_hotkey_not_found(mock_miner: Miner, caplog):
     """Test that a miner's hotkey not found in hotkey_to_scores triggers an error."""
     synapse = ScoringResult(
-        request_id="test_request_id",
-        hotkey_to_scores={"another_hotkey": 0.5},  # different hotkey
+        task_id="test_request_id",
+        hotkey_to_completion_responses={
+            "another_hotkey": [
+                CompletionResponse(
+                    model="test_model",
+                    completion="test_completion",
+                    completion_id="test_uuid1234",
+                )
+            ]
+        },  # different hotkey
     )
     expected_log = f"Miner hotkey {mock_miner.wallet.hotkey.ss58_address} not found in scoring result but yet was sent the result"
 
     # Call the forward_result function
     with caplog.at_level(logging.ERROR):
-        response = await mock_miner.forward_result(synapse)
+        response = await mock_miner.forward_score_result(synapse)
 
     # Assert that the response is handled correctly
     assert response == synapse
@@ -138,20 +199,25 @@ async def test_forward_result_hotkey_not_found(mock_miner: Miner, caplog):
 @pytest.mark.asyncio
 async def test_forward_feedback_request_invalid_synapse(mock_miner: Miner, caplog):
     """Test the case where the synapse or its properties are None."""
-    synapse = None
+    synapse = invalid_task_synapse
     with caplog.at_level(logging.ERROR):
-        response = await mock_miner.forward_feedback_request(synapse)
-    assert response is None
-    assert "dendrite or dendrite.hotkey is None" in caplog.text
+        _ = await mock_miner.forward_task_request(synapse)
+        logger.info(caplog.text)
+        assert "Invalid synapse: missing synapse or completion_responses" in caplog.text
 
-
-@pytest.mark.asyncio
-async def test_forward_feedback_request_none_responses(mock_miner: Miner, caplog):
-    """Test the case where the responses field is None."""
+    synapse = invalid_task_synapse
+    synapse.completion_responses = [
+        CompletionResponse(
+            model="test_model",
+            completion="test_completion",
+            completion_id="test_uuid1234",
+        )
+    ]
+    synapse.dendrite = None
     with caplog.at_level(logging.ERROR):
-        response = await mock_miner.forward_feedback_request(invalid_feedback_request)
-    assert response == invalid_feedback_request
-    assert "Invalid synapse: response field is None." in caplog.text
+        _ = await mock_miner.forward_task_request(synapse)
+        logger.info(caplog.text)
+        assert "Invalid synapse: missing dendrite information" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -160,11 +226,11 @@ async def test_forward_feedback_request_dojo_method(
     mock_create_task, mock_miner: Miner
 ):
     """Test the case where the scoring method is DOJO and the task creation is successful."""
-    synapse = valid_feedback_request
+    synapse = valid_task_synapse
     mock_miner.hotkey_to_request = {"mock_hotkey": synapse}
     mock_create_task.return_value = ["task_id"]
 
-    response = await mock_miner.forward_feedback_request(synapse)
+    response = await mock_miner.forward_task_request(synapse)
 
     assert response == synapse
     assert response.dojo_task_id == "task_id"
@@ -174,10 +240,10 @@ async def test_forward_feedback_request_dojo_method(
 @pytest.mark.asyncio
 async def test_miner_blacklisting_invalid_hotkey(mock_miner: Miner, caplog):
     """Test the case where miner blacklisting the unrecognized hotkey"""
-    synapse = valid_feedback_request
-    synapse.dendrite.hotkey = "unrecognized_hotkey"
+    synapse = valid_task_synapse
+    synapse.dendrite = bt.TerminalInfo(hotkey="unrecognized_hotkey")
 
-    response = await mock_miner.blacklist_feedback_request(synapse)
+    response = await mock_miner.blacklist_task_request(synapse)
     is_blacklist, msg = response
 
     assert is_blacklist is True
@@ -187,15 +253,11 @@ async def test_miner_blacklisting_invalid_hotkey(mock_miner: Miner, caplog):
 @pytest.mark.asyncio
 async def test_miner_blacklisting_miner_hotkey(mock_miner: Miner, caplog):
     """Test the case where the hotkey corresponds to a miner"""
-    miner_hotkey = mock_miner.wallet.hotkey.ss58_address
-    mock_miner.metagraph.hotkeys = [miner_hotkey]
-    mock_miner.metagraph.neurons = [MagicMock(stake=MagicMock(tao=10.0))]
 
-    synapse = valid_feedback_request
+    synapse = valid_task_synapse
     synapse.dendrite.hotkey = miner_hotkey
 
-    with patch("template.utils.uids.is_miner", return_value=True):
-        response = await mock_miner.blacklist_feedback_request(synapse)
+    response = await mock_miner.blacklist_task_request(synapse)
     is_blacklist, msg = response
 
     assert is_blacklist is True
@@ -205,19 +267,13 @@ async def test_miner_blacklisting_miner_hotkey(mock_miner: Miner, caplog):
 @pytest.mark.asyncio
 async def test_miner_blacklisting_is_not_a_validator(mock_miner: Miner, caplog):
     """Test the case where the validator has insufficient stake"""
-    validator_hotkey = "validator_hotkey"
-    mock_miner.metagraph.hotkeys = [validator_hotkey]
-    mock_miner.metagraph.total_stake = np.array(
-        [
-            float(VALIDATOR_MIN_STAKE - 5.0)  # this means not validator
-        ]
-    )
 
-    synapse = valid_feedback_request
-    synapse.dendrite.hotkey = validator_hotkey
+    synapse = valid_task_synapse
+    # we test with miner hotkey, which has insufficient stake
+    synapse.dendrite.hotkey = miner_hotkey
 
     with caplog.at_level(logging.WARNING):
-        response = await mock_miner.blacklist_feedback_request(synapse)
+        response = await mock_miner.blacklist_task_request(synapse)
     is_miner, msg = response
 
     assert is_miner is True
@@ -227,24 +283,18 @@ async def test_miner_blacklisting_is_not_a_validator(mock_miner: Miner, caplog):
 @pytest.mark.asyncio
 async def test_miner_blacklisting_insufficient_stake(mock_miner: Miner, caplog):
     """Test the case where the validator has insufficient stake"""
-    validator_hotkey = "validator_hotkey"
-    mock_miner.metagraph.hotkeys = [validator_hotkey]
-    mock_miner.metagraph.total_stake = np.array(
-        [
-            float(VALIDATOR_MIN_STAKE + 5.0)  # this means validator
-        ]
-    )
 
-    # Mock the neurons with insufficient stake
-    mock_miner.metagraph.neurons = [
-        MagicMock(stake=MagicMock(tao=float(VALIDATOR_MIN_STAKE - 5.0)))
-    ]
-
-    synapse = valid_feedback_request
+    synapse = valid_task_synapse
     synapse.dendrite.hotkey = validator_hotkey
 
+    # we mock the stake of the validator to be insufficient
+    caller_uid = mock_miner.metagraph.hotkeys.index(validator_hotkey)
+    mock_miner.metagraph.neurons[caller_uid].stake.tao = float(
+        VALIDATOR_MIN_STAKE - 5.0
+    )
+
     with caplog.at_level(logging.WARNING):
-        response = await mock_miner.blacklist_feedback_request(synapse)
+        response = await mock_miner.blacklist_task_request(synapse)
     is_blacklisted, msg = response
 
     assert is_blacklisted is True
@@ -257,24 +307,11 @@ async def test_miner_blacklisting_insufficient_stake(mock_miner: Miner, caplog):
 
 @pytest.mark.asyncio
 async def test_miner_blacklisting_sufficient_stake(mock_miner: Miner, caplog):
-    """Test the case where the validator has insufficient stake"""
-    validator_hotkey = "validator_hotkey"
-    mock_miner.metagraph.hotkeys = [validator_hotkey]
-    mock_miner.metagraph.total_stake = np.array(
-        [
-            float(VALIDATOR_MIN_STAKE + 5.0)  # this means validator
-        ]
-    )
-
-    # Mock the neurons with insufficient stake
-    mock_miner.metagraph.neurons = [
-        MagicMock(stake=MagicMock(tao=float(VALIDATOR_MIN_STAKE + 5.0)))
-    ]
-
-    synapse = valid_feedback_request
+    """Test the case where the validator has sufficient stake"""
+    synapse = valid_task_synapse
     synapse.dendrite.hotkey = validator_hotkey
 
-    response = await mock_miner.blacklist_feedback_request(synapse)
+    response = await mock_miner.blacklist_task_request(synapse)
     is_blacklisted, msg = response
 
     assert is_blacklisted is False
@@ -284,7 +321,7 @@ async def test_miner_blacklisting_sufficient_stake(mock_miner: Miner, caplog):
 @pytest.mark.asyncio
 async def test_priority_ranking_basic(mock_miner: Miner):
     """Test the basic functionality of the priority_ranking function."""
-    synapse = valid_feedback_request
+    synapse = valid_task_synapse
     current_time = datetime.fromtimestamp(get_epoch_time())
     synapse.epoch_timestamp = (
         current_time - timedelta(seconds=10)
@@ -298,7 +335,7 @@ async def test_priority_ranking_basic(mock_miner: Miner):
 @pytest.mark.asyncio
 async def test_priority_ranking_different_timestamps(mock_miner: Miner):
     """Test the priority_ranking function with different epoch timestamps."""
-    synapse = valid_feedback_request
+    synapse = valid_task_synapse
     current_time = datetime.fromtimestamp(get_epoch_time())
 
     # Case 1: 20 seconds ago

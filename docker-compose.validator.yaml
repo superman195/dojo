@@ -35,6 +35,7 @@ services:
     logging: *default-logging
 
   synthetic-api:
+    container_name: synthetic-api
     image: ghcr.io/tensorplex-labs/dojo-synthetic-api:main
     env_file:
       - .env.validator
@@ -134,7 +135,12 @@ services:
         condition: service_healthy
       prisma-setup-vali:
         condition: service_completed_successfully
-    logging: *default-logging
+    logging:
+      driver: loki
+      options:
+        mode: non-blocking
+        loki-url: "https://${DOJO_LOKI_URL}"
+        loki-external-labels: "validator=${VALIDATOR_HOTKEY}"
 
   dataset-service:
     container_name: dataset-service
@@ -194,5 +200,20 @@ services:
       - ./.env.validator:/app/.env
       - prisma-binary:/root/prisma-python
       - prisma-pip-cache:/root/.cache/pip
+      - $HOME/.bittensor:/root/.bittensor
+    logging: *default-logging
+
+  fill-score-column:
+    container_name: fill-score-column
+    image: ghcr.io/tensorplex-labs/dojo:main
+    env_file:
+      - .env.validator
+    command: ["fill-score-column"]
+    networks:
+      - dojo-validator
+    volumes:
+      - ./:/app
+      - ./.env.validator:/app/.env
+      - prisma-binary:/root/prisma-python
       - $HOME/.bittensor:/root/.bittensor
     logging: *default-logging

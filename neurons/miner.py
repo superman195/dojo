@@ -123,7 +123,7 @@ class Miner(BaseMinerNeuron):
     ) -> TaskSynapseObject:
         # Validate that synapse, dendrite, dendrite.hotkey, and response are not None
         if not synapse or not synapse.completion_responses:
-            logger.error("Invalid synapse: missing required fields")
+            logger.error("Invalid synapse: missing synapse or completion_responses")
             return synapse
 
         if not synapse.dendrite or not synapse.dendrite.hotkey:
