@@ -38,8 +38,12 @@ class Miner(BaseMinerNeuron):
             forward_fn=self.forward_task_request,
             blacklist_fn=self.blacklist_task_request,
             priority_fn=self.priority_ranking,
-        ).attach(forward_fn=self.forward_score_result).attach(
-            forward_fn=self.ack_heartbeat
+        ).attach(
+            forward_fn=self.forward_score_result,
+            blacklist_fn=self.blacklist_score_result_request,
+        ).attach(
+            forward_fn=self.ack_heartbeat,
+            blacklist_fn=self.blacklist_heartbeat_request,
         )
 
         # Attach a handler for TaskResultRequest to return task results
@@ -200,76 +204,70 @@ class Miner(BaseMinerNeuron):
     async def blacklist_task_request(
         self, synapse: TaskSynapseObject
     ) -> Tuple[bool, str]:
-        logger.info("checking blacklist function")
-        # Log the IP address of the incoming request.
-        ip_addr = (
-            synapse.dendrite.ip
-            if synapse.dendrite and synapse.dendrite.ip
-            else "Unknown IP"
+        return self._blacklist_function(
+            synapse, "validator", "Valid task request received from validator"
         )
-        logger.info(f"Incoming validator request from IP: {ip_addr}")
-
-        caller_hotkey = synapse.dendrite.hotkey
-        if caller_hotkey is None or caller_hotkey not in self.metagraph.hotkeys:
-            # Ignore requests from unrecognized entities.
-            logger.warning(f"Blacklisting unrecognized hotkey {caller_hotkey}")
-            return True, "Unrecognized hotkey"
-
-        logger.debug(f"Got request from {caller_hotkey}")
-
-        caller_uid = self.metagraph.hotkeys.index(caller_hotkey)
-        validator_neuron: bt.NeuronInfo = self.metagraph.neurons[caller_uid]
-
-        if get_config().ignore_min_stake:
-            message = f"""Ignoring min stake stake required: {VALIDATOR_MIN_STAKE} \
-                for {caller_hotkey}, YOU SHOULD NOT SEE THIS when you are running a miner on mainnet"""
-            logger.warning(message)
-            return (
-                False,
-                f"Ignored minimum validator stake requirement of {VALIDATOR_MIN_STAKE}",
-            )
-
-        if is_miner(self.metagraph, caller_uid):
-            return True, "Not a validator"
-
-        if validator_neuron.total_stake.tao < float(VALIDATOR_MIN_STAKE):
-            logger.warning(
-                f"Blacklisting hotkey: {caller_hotkey} with insufficient stake, minimum stake required: {VALIDATOR_MIN_STAKE}, current stake: {validator_neuron.stake.tao}"
-            )
-            return True, "Insufficient validator stake"
-
-        return False, "Valid request received from validator"
 
     async def blacklist_task_result_request(
         self, synapse: TaskResultRequest
     ) -> Tuple[bool, str]:
         # Log the IP address of the incoming request.
-        ip_addr = (
-            synapse.dendrite.ip
-            if synapse.dendrite and synapse.dendrite.ip
-            else "Unknown IP"
-        )
-        logger.info(f"Incoming task result request from IP: {ip_addr}")
-
-        # Validate that the dojo_task_id exists.
         if not synapse.dojo_task_id:
             logger.error("TaskResultRequest missing dojo_task_id")
             return True, "Missing dojo_task_id"
 
-        caller_hotkey = synapse.dendrite.hotkey
-        if caller_hotkey is None or caller_hotkey not in self.metagraph.hotkeys:
-            # Ignore requests from unrecognized entities.
+        return self._blacklist_function(
+            synapse, "task result", "Valid task result request from validator"
+        )
+
+    async def blacklist_heartbeat_request(self, synapse: Heartbeat) -> Tuple[bool, str]:
+        return self._blacklist_function(
+            synapse, "heartbeat", "Valid heartbeat request from validator"
+        )
+
+    async def blacklist_score_result_request(
+        self, synapse: ScoringResult
+    ) -> Tuple[bool, str]:
+        return self._blacklist_function(
+            synapse, "scoring result", "Valid scoring result request from validator"
+        )
+
+    def _blacklist_function(
+        self, synapse, request_tag: str, valid_msg: str
+    ) -> Tuple[bool, str]:
+        """
+        Common blacklist logic for any forward function to validate an incoming synapse.
+
+        Parameters:
+            synapse: The incoming synapse object (Heartbeat, ScoringResult, etc.)
+            request_tag: A tag used for logging (e.g., "heartbeat", "scoring result").
+            valid_msg: The success message if the synapse is allowed.
+
+        Returns:
+            Tuple[bool, str]: (blacklisted: bool, message: str)
+        """
+        dendrite = synapse.dendrite
+        ip_addr = getattr(dendrite, "ip", "Unknown IP")
+        caller_hotkey = getattr(dendrite, "hotkey", None)
+
+        logger.info(
+            f"Incoming {request_tag} request from IP: {ip_addr} with hotkey: {caller_hotkey}"
+        )
+
+        if not caller_hotkey or caller_hotkey not in self.metagraph.hotkeys:
             logger.warning(f"Blacklisting unrecognized hotkey {caller_hotkey}")
             return True, "Unrecognized hotkey"
 
-        logger.debug(f"Got request from {caller_hotkey}")
+        logger.debug(f"Got {request_tag} request from {caller_hotkey}")
 
         caller_uid = self.metagraph.hotkeys.index(caller_hotkey)
         validator_neuron: bt.NeuronInfo = self.metagraph.neurons[caller_uid]
 
         if get_config().ignore_min_stake:
-            message = f"""Ignoring min stake stake required: {VALIDATOR_MIN_STAKE} \
-                for {caller_hotkey}, YOU SHOULD NOT SEE THIS when you are running a miner on mainnet"""
+            message = (
+                f"Ignoring min stake required: {VALIDATOR_MIN_STAKE} for {caller_hotkey}, "
+                "YOU SHOULD NOT SEE THIS when you are running a miner on mainnet"
+            )
             logger.warning(message)
             return (
                 False,
@@ -285,7 +283,7 @@ class Miner(BaseMinerNeuron):
             )
             return True, "Insufficient validator stake"
 
-        return False, "Valid TaskResultRequest"
+        return False, valid_msg
 
     async def priority_ranking(self, synapse: TaskSynapseObject) -> float:
         """
