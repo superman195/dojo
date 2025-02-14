@@ -43,7 +43,10 @@ class Miner(BaseMinerNeuron):
         )
 
         # Attach a handler for TaskResultRequest to return task results
-        self.axon.attach(forward_fn=self.forward_task_result_request)
+        self.axon.attach(
+            forward_fn=self.forward_task_result_request,
+            blacklist_fn=self.blacklist_task_result_request,
+        )
 
         # Instantiate runners
         self.should_exit: bool = False
@@ -198,13 +201,18 @@ class Miner(BaseMinerNeuron):
         self, synapse: TaskSynapseObject
     ) -> Tuple[bool, str]:
         logger.info("checking blacklist function")
+        # Log the IP address of the incoming request.
+        ip_addr = (
+            synapse.dendrite.ip
+            if synapse.dendrite and synapse.dendrite.ip
+            else "Unknown IP"
+        )
+        logger.info(f"Incoming validator request from IP: {ip_addr}")
 
         caller_hotkey = synapse.dendrite.hotkey
         if caller_hotkey is None or caller_hotkey not in self.metagraph.hotkeys:
             # Ignore requests from unrecognized entities.
-            logger.warning(
-                f"Blacklisting unrecognized hotkey {synapse.dendrite.hotkey}"
-            )
+            logger.warning(f"Blacklisting unrecognized hotkey {caller_hotkey}")
             return True, "Unrecognized hotkey"
 
         logger.debug(f"Got request from {caller_hotkey}")
@@ -231,6 +239,53 @@ class Miner(BaseMinerNeuron):
             return True, "Insufficient validator stake"
 
         return False, "Valid request received from validator"
+
+    async def blacklist_task_result_request(
+        self, synapse: TaskResultRequest
+    ) -> Tuple[bool, str]:
+        # Log the IP address of the incoming request.
+        ip_addr = (
+            synapse.dendrite.ip
+            if synapse.dendrite and synapse.dendrite.ip
+            else "Unknown IP"
+        )
+        logger.info(f"Incoming task result request from IP: {ip_addr}")
+
+        # Validate that the dojo_task_id exists.
+        if not synapse.dojo_task_id:
+            logger.error("TaskResultRequest missing dojo_task_id")
+            return True, "Missing dojo_task_id"
+
+        caller_hotkey = synapse.dendrite.hotkey
+        if caller_hotkey is None or caller_hotkey not in self.metagraph.hotkeys:
+            # Ignore requests from unrecognized entities.
+            logger.warning(f"Blacklisting unrecognized hotkey {caller_hotkey}")
+            return True, "Unrecognized hotkey"
+
+        logger.debug(f"Got request from {caller_hotkey}")
+
+        caller_uid = self.metagraph.hotkeys.index(caller_hotkey)
+        validator_neuron: bt.NeuronInfo = self.metagraph.neurons[caller_uid]
+
+        if get_config().ignore_min_stake:
+            message = f"""Ignoring min stake stake required: {VALIDATOR_MIN_STAKE} \
+                for {caller_hotkey}, YOU SHOULD NOT SEE THIS when you are running a miner on mainnet"""
+            logger.warning(message)
+            return (
+                False,
+                f"Ignored minimum validator stake requirement of {VALIDATOR_MIN_STAKE}",
+            )
+
+        if is_miner(self.metagraph, caller_uid):
+            return True, "Not a validator"
+
+        if validator_neuron.stake.tao < float(VALIDATOR_MIN_STAKE):
+            logger.warning(
+                f"Blacklisting hotkey: {caller_hotkey} with insufficient stake, minimum stake required: {VALIDATOR_MIN_STAKE}, current stake: {validator_neuron.stake.tao}"
+            )
+            return True, "Insufficient validator stake"
+
+        return False, "Valid TaskResultRequest"
 
     async def priority_ranking(self, synapse: TaskSynapseObject) -> float:
         """
