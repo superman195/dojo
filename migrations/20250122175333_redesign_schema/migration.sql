@@ -97,12 +97,9 @@ CREATE UNIQUE INDEX "miner_response_id_key" ON "miner_response"("id");
 CREATE INDEX "miner_response_dojo_task_id_idx" ON "miner_response"("dojo_task_id");
 
 -- CreateIndex
-<<<<<<<< HEAD:migrations/20250113031806_redesign_schema/migration.sql
-========
 CREATE UNIQUE INDEX "miner_response_validator_task_id_dojo_task_id_hotkey_key" ON "miner_response"("validator_task_id", "dojo_task_id", "hotkey");
 
 -- CreateIndex
->>>>>>>> dev:migrations/20250122175333_redesign_schema/migration.sql
 CREATE UNIQUE INDEX "miner_score_criterion_id_miner_response_id_key" ON "miner_score"("criterion_id", "miner_response_id");
 
 -- CreateIndex
