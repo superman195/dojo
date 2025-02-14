@@ -232,7 +232,7 @@ class Miner(BaseMinerNeuron):
         if is_miner(self.metagraph, caller_uid):
             return True, "Not a validator"
 
-        if validator_neuron.stake.tao < float(VALIDATOR_MIN_STAKE):
+        if validator_neuron.total_stake.tao < float(VALIDATOR_MIN_STAKE):
             logger.warning(
                 f"Blacklisting hotkey: {caller_hotkey} with insufficient stake, minimum stake required: {VALIDATOR_MIN_STAKE}, current stake: {validator_neuron.stake.tao}"
             )
@@ -279,7 +279,7 @@ class Miner(BaseMinerNeuron):
         if is_miner(self.metagraph, caller_uid):
             return True, "Not a validator"
 
-        if validator_neuron.stake.tao < float(VALIDATOR_MIN_STAKE):
+        if validator_neuron.total_stake.tao < float(VALIDATOR_MIN_STAKE):
             logger.warning(
                 f"Blacklisting hotkey: {caller_hotkey} with insufficient stake, minimum stake required: {VALIDATOR_MIN_STAKE}, current stake: {validator_neuron.stake.tao}"
             )
