@@ -194,7 +194,9 @@ async def run_analytics_upload(scores_alock: asyncio.Lock, expire_from, expire_t
         config = ObjectManager.get_config()
         wallet = bt.wallet(config=config)
         validator_hotkey = wallet.hotkey.ss58_address
-        metagraph = bt.subtensor(config=config).metagraph(netuid=52, lite=True)
+        metagraph = bt.subtensor(config=config).metagraph(
+            netuid=config.netuid, lite=True
+        )
         all_miners = await _get_all_miner_hotkeys(metagraph)
         anal_data = await _get_task_data(
             validator_hotkey, all_miners, expire_from, expire_to
