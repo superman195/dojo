@@ -1,5 +1,8 @@
 import asyncio
+import json
+import os
 import traceback
+from pathlib import Path
 from typing import List
 
 import aiohttp
@@ -10,85 +13,68 @@ from tenacity import RetryError
 import dojo
 from commons.dataset.synthetic import SyntheticAPI
 from commons.orm import ORM
-from commons.utils import get_epoch_time, get_new_uuid, set_expire_time, ttl_get_block
+from commons.utils import get_epoch_time, get_new_uuid, set_expire_time
 from dojo.protocol import (
     DendriteQueryResponse,
     FeedbackRequest,
     MultiScoreCriteria,
+    SyntheticQA,
     TaskType,
 )
+from dojo.utils.config import get_config
 from neurons.validator import Validator
 
 
 class ValidatorSim(Validator):
     def __init__(self):
-        self._last_block = None
-        self._block_check_attempts = 0
-        self.MAX_BLOCK_CHECK_ATTEMPTS = 3
-        self._connection_lock = asyncio.Lock()
+        if get_config().simulation_validator_synthetic_dataset:
+            self.synthetic_dataset_path = Path(
+                get_config().simulation_validator_synthetic_dataset
+            )
+            self.last_modified_time = os.path.getmtime(self.synthetic_dataset_path)
+            self.synthetic_data = self._load_synthetic_dataset()
+            self.current_synthetic_index = 0
+            logger.info("Validator is using synthetic dataset")
+
+        self.forward_ground_truth = (
+            get_config().simulation_validator_forward_ground_truth
+        )
 
         super().__init__()
         logger.info("Starting Validator Simulator")
 
-    async def _try_reconnect_subtensor(self):
-        self._block_check_attempts += 1
-        if self._block_check_attempts >= self.MAX_BLOCK_CHECK_ATTEMPTS:
+    def _load_synthetic_dataset(self):
+        try:
+            with open(self.synthetic_dataset_path) as f:
+                return json.load(f)
+        except Exception as e:
             logger.error(
-                f"Failed to reconnect after {self.MAX_BLOCK_CHECK_ATTEMPTS} attempts"
+                f"Failed to load synthetic dataset from {self.synthetic_dataset_path}: {e}"
             )
-            return False
+            return []
 
+    def _hot_reload(self):
         try:
-            logger.info(
-                f"Attempting to reconnect to subtensor (attempt {self._block_check_attempts}/{self.MAX_BLOCK_CHECK_ATTEMPTS})..."
-            )
-            if hasattr(self.subtensor.substrate, "websocket"):
-                self.subtensor.substrate.websocket.close()
-
-            self.subtensor = bt.subtensor(self.subtensor.config)
-            await asyncio.sleep(1)
-            return True
+            current_mtime = os.path.getmtime(self.synthetic_dataset_path)
+            if current_mtime > self.last_modified_time:
+                logger.info("Dataset file has been modified, reloading...")
+                self.synthetic_data = self._load_synthetic_dataset()
+                self.current_synthetic_index = 0
+                logger.success("Dataset reloaded successfully")
         except Exception as e:
-            logger.error(f"Failed to reconnect to subtensor: {e}")
-            return await self._try_reconnect_subtensor()
+            logger.error(f"Error checking/reloading dataset: {e}")
 
-    async def _ensure_subtensor_connection(self):
-        async with self._connection_lock:
-            try:
-                self.subtensor.get_current_block()
-                self._block_check_attempts = 0
-                return True
-            except (BrokenPipeError, ConnectionError):
-                logger.warning("Connection lost, attempting immediate reconnection")
-                return await self._try_reconnect_subtensor()
-            except Exception as e:
-                logger.error(f"Unexpected error checking connection: {e}")
-                return False
+    async def _get_next_synthetic_data(self) -> SyntheticQA:
+        self._hot_reload()
 
-    @property
-    def block(self):
-        try:
-            if not asyncio.get_event_loop().run_until_complete(
-                self._ensure_subtensor_connection()
-            ):
-                logger.warning(
-                    "Subtensor connection failed - returning last known block"
-                )
-                return self._last_block if self._last_block is not None else 0
+        if not self.synthetic_data:
+            raise ValueError("No synthetic data available")
 
-            self._last_block = ttl_get_block(self.subtensor)
-            self._block_check_attempts = 0
-            return self._last_block
-        except Exception as e:
-            logger.error(f"Error getting block number: {e}")
-            return self._last_block if self._last_block is not None else 0
-
-    async def sync(self):
-        has_connection = await self._ensure_subtensor_connection()
-        if not has_connection:
-            logger.warning("Subtensor connection failed - continuing with partial sync")
-
-        await super().sync()
+        synthetic_qa = self.synthetic_data[self.current_synthetic_index]
+        self.current_synthetic_index = (self.current_synthetic_index + 1) % len(
+            self.synthetic_data
+        )
+        return SyntheticQA.model_validate(synthetic_qa)
 
     async def send_request(
         self,
@@ -119,23 +105,28 @@ class ValidatorSim(Validator):
         obfuscated_model_to_model = {}
 
         if synapse is None:
-            try:
-                data = await SyntheticAPI.get_qa()
-            except RetryError as e:
-                logger.error(
-                    f"Exhausted all retry attempts for synthetic data generation: {e}"
-                )
-                return
-            except ValueError as e:
-                logger.error(f"Invalid response from synthetic data API: {e}")
-                return
-            except aiohttp.ClientError as e:
-                logger.error(f"Network error when calling synthetic data API: {e}")
-                return
-            except Exception as e:
-                logger.error(f"Unexpected error during synthetic data generation: {e}")
-                logger.debug(f"Traceback: {traceback.format_exc()}")
-                return
+            if self.synthetic_dataset_path:
+                data = await self._get_next_synthetic_data()
+            else:
+                try:
+                    data = await SyntheticAPI.get_qa()
+                except RetryError as e:
+                    logger.error(
+                        f"Exhausted all retry attempts for synthetic data generation: {e}"
+                    )
+                    return
+                except ValueError as e:
+                    logger.error(f"Invalid response from synthetic data API: {e}")
+                    return
+                except aiohttp.ClientError as e:
+                    logger.error(f"Network error when calling synthetic data API: {e}")
+                    return
+                except Exception as e:
+                    logger.error(
+                        f"Unexpected error during synthetic data generation: {e}"
+                    )
+                    logger.debug(f"Traceback: {traceback.format_exc()}")
+                    return
 
             if not data:
                 logger.error("No data returned from synthetic data API")
@@ -156,7 +147,9 @@ class ValidatorSim(Validator):
                 prompt=data.prompt,
                 completion_responses=data.responses,
                 expire_at=expire_at,
-                ground_truth=data.ground_truth,  # Added ground truth!!!!!
+                ground_truth=data.ground_truth
+                if self.forward_ground_truth
+                else {},  # Added ground truth!!!!!
             )
         elif external_user:
             obfuscated_model_to_model = self.obfuscate_model_names(

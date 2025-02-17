@@ -190,6 +190,20 @@ def add_args(parser):
         help="Set miner simluation to a bad one",
     )
 
+    parser.add_argument(
+        "--simulation_validator_synthetic_dataset",
+        type=str,
+        help="Path and filename to the synthetic dataset file to use.",
+        default=None,
+    )
+
+    parser.add_argument(
+        "--simulation_validator_forward_ground_truth",
+        action="store_true",
+        help="Enable / Disable ground truth forwarding to the miners",
+        default=False,
+    )
+
     epoch_length = 100
     known_args, _ = parser.parse_known_args()
     if known_args := vars(known_args):
