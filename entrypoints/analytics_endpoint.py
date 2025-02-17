@@ -7,45 +7,24 @@ analytics_endpoint.py
 
 @to-do:
     - add proper error and success responses
-    - add upload to s3.
 """
 
 import json
 import logging
-from re import I
-import traceback
 import os
+import traceback
 from datetime import datetime
-from typing import List
+
 import aioboto3
-from dojo.protocol import Scores
 import bittensor as bt
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 from substrateinterface import Keypair
+
 from commons.objects import ObjectManager
-
-from dojo.protocol import AnalyticsData, AnalyticsPayload
-
-# # """
-# # Task is a schema that defines the structure of the task data.
-# # The payload must match up with the schema in analytics_upload.py for successful uploads.
-# # """
-# class Task(BaseModel):
-#     validator_task_id: str
-#     validator_hotkey: str
-#     completions: List[dict]
-#     ground_truths: List[dict]
-#     miner_responses: List[dict]
-#     created_at: str
-#     metadata: dict | None
-
-
-# class AnalyticsPayload(BaseModel):
-#     tasks: List[Task]
+from dojo.protocol import AnalyticsPayload
 
 app = FastAPI()
 app.add_middleware(
@@ -61,8 +40,8 @@ subtensor = bt.subtensor(config=config)
 metagraph = subtensor.metagraph(netuid=config.netuid, lite=True)
 AWS_REGION = os.getenv("AWS_REGION")
 BUCKET_NAME = os.getenv("ANAL_BUCKET_NAME")
-AWS_ACCESS_KEY_ID=os.getenv("AWS_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS_KEY=os.getenv("AWS_SECRET_ACCESS_KEY")
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -81,7 +60,7 @@ def verify_signature(hotkey: str, signature: str, message: str) -> bool:
 
 
 def verify_hotkey_in_metagraph(hotkey: str) -> bool:
-    # logger.info(f"{metagraph.hotkeys=}")
+    # TODO: this will include miners in the metagraph when I think we only want validators.
     return hotkey in metagraph.hotkeys
 
 
@@ -89,7 +68,7 @@ def save_to_athena_format(data):
     try:
         pp = ""
         for item in data["tasks"]:
-        # Format each item with proper indentation and save to file
+            # Format each item with proper indentation and save to file
             formatted_data = json.dumps(item, indent=2)
             with open("athena_pp_output.json", "a") as f:
                 f.write(formatted_data + "\n")
@@ -113,8 +92,10 @@ async def upload_to_s3(data, hotkey):
         session = aioboto3.Session(region_name=AWS_REGION)
         print("access_key_id", AWS_ACCESS_KEY_ID)
         async with session.resource("s3") as s3:
-            bucket = await s3.Bucket(BUCKET_NAME)        
-            filename = f"{hotkey}_{datetime.now().strftime('%Y-%m-%d_%H-%M')}_analytics.txt"
+            bucket = await s3.Bucket(BUCKET_NAME)
+            filename = (
+                f"{hotkey}_{datetime.now().strftime('%Y-%m-%d_%H-%M')}_analytics.txt"
+            )
 
             await bucket.put_object(
                 Key=filename,
@@ -187,15 +168,16 @@ async def create_analytics_data(
 
 async def _test_s3_upload():
     # read JSON from sample_anal_payload.json
-    with open("sample_anal_payload.json", "r") as f:
+    with open("sample_anal_payload.json") as f:
         data_str = f.read()
     await upload_to_s3(data_str, "hotkey")
+
 
 if __name__ == "__main__":
     import asyncio
     import sys
-    
-    if "--test" in sys.argv:        
+
+    if "--test" in sys.argv:
         from dotenv import load_dotenv
 
         load_dotenv()

@@ -4,11 +4,12 @@ analytics_upload.py
 """
 
 import asyncio
-import datetime
+
+# import datetime
 import gc
 import json
-from datetime import datetime, timedelta, timezone
-from typing import List, TypedDict
+from datetime import datetime
+from typing import List
 
 import bittensor as bt
 import httpx
@@ -18,11 +19,9 @@ from commons.exceptions import NoProcessedTasksYet
 from commons.objects import ObjectManager
 from commons.orm import ORM
 from commons.utils import datetime_to_iso8601_str
-
 from database.client import connect_db
-from dojo import TASK_DEADLINE
 from dojo.protocol import AnalyticsData, AnalyticsPayload
-
+from dojo.utils.uids import is_miner
 
 # class AnalyticsData(TypedDict):
 #     """
@@ -39,7 +38,20 @@ from dojo.protocol import AnalyticsData, AnalyticsPayload
 #     metadata: dict | None
 
 
-async def _get_task_data(validator_hotkey: str, expire_from: datetime, expire_to: datetime) -> AnalyticsPayload | None:
+async def _get_all_miner_hotkeys(metagraph: bt.metagraph) -> List[str]:
+    return [
+        hotkey
+        for uid, hotkey in enumerate(metagraph.hotkeys)
+        if is_miner(metagraph, uid)
+    ]
+
+
+async def _get_task_data(
+    validator_hotkey: str,
+    all_miner_hotkeys: List[str],
+    expire_from: datetime,
+    expire_to: datetime,
+) -> AnalyticsPayload | None:
     """
     _get_task_data() is a helper function that:
     1. queries postgres for processed ValidatorTasks in a given time window.
@@ -60,10 +72,32 @@ async def _get_task_data(validator_hotkey: str, expire_from: datetime, expire_to
             if task_batch is None:
                 continue
             for task in task_batch:
-                # payload must be convertable to JSON. Hence, serialize any nested objects to JSON and convert datetime to string.
+                # Convert DB data to AnalyticsData
+                _miner_responses = (
+                    [
+                        miner_response.model_dump(mode="json")
+                        for miner_response in task.miner_responses
+                    ]
+                    if task.miner_responses
+                    else []
+                )
+
+                # Get list of miner hotkeys that submitted scores
+                scored_hotkeys = [
+                    miner_response["hotkey"]
+                    for miner_response in _miner_responses
+                    if miner_response["scores"] != []
+                ]
+
+                # Get list of miner hotkeys that did not submit scores.
+                # @dev: could be inaccurate if a miner deregisters after the task was sent out.
+                absent_hotkeys = list(set(all_miner_hotkeys) - set(scored_hotkeys))
+
+                # payload must be convertible to JSON. Hence, serialize any nested objects to JSON and convert datetime to string.
                 task_data = AnalyticsData(
                     validator_task_id=task.id,
                     validator_hotkey=validator_hotkey,
+                    prompt=task.prompt,
                     completions=[
                         completion.model_dump(mode="json")
                         for completion in task.completions
@@ -82,7 +116,10 @@ async def _get_task_data(validator_hotkey: str, expire_from: datetime, expire_to
                     ]
                     if task.miner_responses
                     else [],
+                    scored_hotkeys=scored_hotkeys,
+                    absent_hotkeys=absent_hotkeys,
                     created_at=datetime_to_iso8601_str(task.created_at),
+                    updated_at=datetime_to_iso8601_str(task.updated_at),
                     metadata=json.loads(task.metadata) if task.metadata else None,
                 )
                 processed_tasks.append(task_data)
@@ -157,8 +194,14 @@ async def run_analytics_upload(scores_alock: asyncio.Lock, expire_from, expire_t
         config = ObjectManager.get_config()
         wallet = bt.wallet(config=config)
         validator_hotkey = wallet.hotkey.ss58_address
-        anal_data = await _get_task_data(validator_hotkey, expire_from, expire_to)
-        message = f"Uploading analytics data for validator with hotkey: {validator_hotkey}"
+        metagraph = bt.subtensor(config=config).metagraph(netuid=52, lite=True)
+        all_miners = await _get_all_miner_hotkeys(metagraph)
+        anal_data = await _get_task_data(
+            validator_hotkey, all_miners, expire_from, expire_to
+        )
+        message = (
+            f"Uploading analytics data for validator with hotkey: {validator_hotkey}"
+        )
         signature = wallet.hotkey.sign(message).hex()
 
         if not signature.startswith("0x"):
@@ -176,21 +219,26 @@ async def run_analytics_upload(scores_alock: asyncio.Lock, expire_from, expire_t
             raise
 
 
-# Main function for testing. Remove / Comment in prod.
-if __name__ == "__main__":
-    import asyncio
+# # Main function for testing. Remove / Comment in prod.
+# if __name__ == "__main__":
+#     import asyncio
 
-    async def main():
-        # for testing
-        from commons.utils import datetime_as_utc
-        from_5_days = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(days=5)
-        from_24_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(hours=24)
-        from_1_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(hours=1)
-        from_3_mins = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
-            seconds=TASK_DEADLINE
-        )
-        to_now = datetime_as_utc(datetime.now(timezone.utc))
-        res = await run_analytics_upload(asyncio.Lock(), from_5_days, to_now)
-        print(f"Response: {res}")
+#     async def main():
+#         # for testing
+#         from datetime import datetime, timedelta, timezone
 
-    asyncio.run(main())
+#         from commons.utils import datetime_as_utc
+
+#         from_5_days = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(days=5)
+#         from_24_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
+#             hours=24
+#         )
+#         from_1_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(hours=1)
+#         from_3_mins = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
+#             seconds=TASK_DEADLINE
+#         )
+#         to_now = datetime_as_utc(datetime.now(timezone.utc))
+#         res = await run_analytics_upload(asyncio.Lock(), from_5_days, to_now)
+#         print(f"Response: {res}")
+
+#     asyncio.run(main())

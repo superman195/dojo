@@ -234,18 +234,24 @@ class TaskResultRequest(bt.Synapse):
         description="List of TaskResult objects", default=[]
     )
 
+
 class AnalyticsData(BaseModel):
     """
     AnalyticsData is a schema that defines the structure of the analytics data.
-    This schema must match up with the schema in analytics_endpoint.py for successful uploads.
     """
+
     validator_task_id: str
     validator_hotkey: str
+    prompt: str
     completions: List[dict]
     ground_truths: List[dict]
-    miner_responses: List[dict]  # contains responses from each miner
+    scored_hotkeys: List[str]
+    absent_hotkeys: List[str]
+    miner_responses: List[dict]  # contains responses from all miners.
     created_at: str
+    updated_at: str
     metadata: dict | None
-    
+
+
 class AnalyticsPayload(BaseModel):
     tasks: List[AnalyticsData]
