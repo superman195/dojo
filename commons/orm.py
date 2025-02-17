@@ -762,7 +762,7 @@ class ORM:
         # find all validator requests first
         include_query = ValidatorTaskInclude(
             {
-                "completions": {"include": {"Criterion": True}},
+                "completions": {"include": {"criterion": True}},
                 "miner_responses": {"include": {"scores": True}},
                 "ground_truth": True,
             }

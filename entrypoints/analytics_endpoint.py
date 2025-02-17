@@ -25,19 +25,14 @@ from substrateinterface import Keypair
 
 from commons.objects import ObjectManager
 from dojo.protocol import AnalyticsPayload
+from dojo.utils.config import source_dotenv
 
-app = FastAPI()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+source_dotenv()
 
 config = ObjectManager.get_config()
 subtensor = bt.subtensor(config=config)
-metagraph = subtensor.metagraph(netuid=config.netuid, lite=True)
+metagraph = subtensor.metagraph(netuid=1, lite=True)
+metagraph.sync(block=None, lite=True)
 AWS_REGION = os.getenv("AWS_REGION")
 BUCKET_NAME = os.getenv("ANAL_BUCKET_NAME")
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
@@ -48,6 +43,15 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("analytics_endpoint")
+
+app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def verify_signature(hotkey: str, signature: str, message: str) -> bool:
@@ -178,9 +182,8 @@ if __name__ == "__main__":
     import sys
 
     if "--test" in sys.argv:
-        from dotenv import load_dotenv
-
-        load_dotenv()
         asyncio.run(_test_s3_upload())
-    else:
-        uvicorn.run("analytics_endpoint:app", host="0.0.0.0", port=8000, reload=True)
+
+    print("hello")
+    logger.info("running uvicorn")
+    uvicorn.run("analytics_endpoint:app", host="0.0.0.0", port=8000, reload=True)

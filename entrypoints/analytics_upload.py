@@ -137,9 +137,9 @@ async def _get_task_data(
         logger.error(f"Error when _get_task_data(): {e}")
         raise
 
-    # save payload to file for testing, remove in prod
-    with open("payload.json", "w") as f:
-        json.dump(processed_tasks, f, indent=2)
+    # # save payload to file for testing, remove in prod
+    # with open("payload.json", "w") as f:
+    #     json.dump(processed_tasks, f, indent=2)
 
 
 async def _post_task_data(payload, hotkey, signature, message):
@@ -163,7 +163,7 @@ async def _post_task_data(payload, hotkey, signature, message):
     try:
         response = await _http_client.post(
             url=f"{ANALYTICS_URL}/api/v1/analytics/validators/{hotkey}/tasks",
-            json=payload,
+            json=payload.model_dump(mode="json"),
             headers={
                 "X-Hotkey": hotkey,
                 "X-Signature": signature,
@@ -234,9 +234,6 @@ async def run_analytics_upload(scores_alock: asyncio.Lock, expire_from, expire_t
 #             hours=24
 #         )
 #         from_1_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(hours=1)
-#         from_3_mins = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
-#             seconds=TASK_DEADLINE
-#         )
 #         to_now = datetime_as_utc(datetime.now(timezone.utc))
 #         res = await run_analytics_upload(asyncio.Lock(), from_5_days, to_now)
 #         print(f"Response: {res}")
