@@ -138,11 +138,11 @@ async def create_analytics_data(
             logger.error(f"Invalid signature for address={hotkey}")
             raise HTTPException(status_code=401, detail="Invalid signature")
 
-        # if not verify_hotkey_in_metagraph(hotkey):
-        #     logger.error(f"Hotkey {hotkey} not found in metagraph")
-        #     raise HTTPException(
-        #         status_code=401, detail="Hotkey not found in metagraph."
-        #     )
+        if not verify_hotkey_in_metagraph(hotkey):
+            logger.error(f"Hotkey {hotkey} not found in metagraph")
+            raise HTTPException(
+                status_code=401, detail="Hotkey not found in metagraph."
+            )
 
         # convert to athena format
         athena_anal_data = save_to_athena_format(data.model_dump())
