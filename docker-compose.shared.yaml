@@ -1,15 +1,84 @@
+x-logging: &default-logging
+  options:
+    max-size: "50m"
+
 networks:
   subtensor:
     name: subtensor
 
 services:
   btcli:
+    container_name: btcli
     image: ghcr.io/tensorplex-labs/dojo:main
     volumes:
-      - ./:/app
-      - $HOME/.bittensor:/root/.bittensor
+      - $BITTENSOR_DIR:/root/.bittensor
     networks:
       - subtensor
     command: ["btcli"]
     tty: true
     stdin_open: true
+
+  redis:
+    container_name: redis
+    image: redis/redis-stack-server:7.4.0-v0
+    env_file:
+      - .env
+    expose:
+      - 6379
+    command: >
+      sh -c '
+      if [ ! -z "$$REDIS_PASSWORD" ] && [ ! -z "$$REDIS_USERNAME" ]; then
+        redis-stack-server --requirepass $$REDIS_PASSWORD &
+        sleep 2
+        redis-cli -a $$REDIS_PASSWORD ACL SETUSER $$REDIS_USERNAME on \>$$REDIS_PASSWORD allcommands allkeys
+        wait
+      else
+        redis-stack-server;
+      fi'
+    healthcheck:
+      test: >
+        sh -c '
+        if [ ! -z "$$REDIS_PASSWORD" ]; then
+          redis-cli -a $$REDIS_PASSWORD ping;
+        else
+          redis-cli ping;
+        fi'
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+
+  postgres:
+    container_name: postgres
+    image: postgres:15.7
+    env_file:
+      - .env
+    command: >
+      bash -c "
+        export POSTGRES_USER=$${DB_USERNAME}
+        export POSTGRES_PASSWORD=$${DB_PASSWORD}
+        export POSTGRES_DB=$${DB_NAME}
+        docker-entrypoint.sh postgres
+      "
+    expose:
+      - 5432
+    healthcheck:
+      test:
+        # looks strange, but double $ (i.e. $$) for variable substitution
+        ["CMD-SHELL", "pg_isready -h postgres -U $${DB_USERNAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+
+  watchtower:
+    container_name: watchtower
+    image: containrrr/watchtower
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_DEBUG=true
+      - WATCHTOWER_POLL_INTERVAL=600
+      - WATCHTOWER_LABEL_ENABLE=true
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

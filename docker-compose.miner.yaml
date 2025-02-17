@@ -2,216 +2,49 @@ x-logging: &default-logging
   options:
     max-size: "50m"
 
-volumes:
-  postgres-miner-volume:
-  redis-miner-volume:
-
 networks:
   dojo-miner:
     driver: bridge
+  dojo-platform:
+    name: dojo-platform
   # Applicable only for sidecar and miner service
   subtensor:
     name: subtensor
 
 services:
-  # ============== COMMON SERVICES ============== #
-
-  redis-miner:
-    image: redis/redis-stack-server:7.4.0-v0
-    env_file:
-      - .env.miner
-    expose:
-      - 6379
-    volumes:
-      - redis-miner-volume:/data
-    networks:
-      - dojo-miner
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    logging: *default-logging
-
-  postgres-miner:
-    image: postgres:15.7
-    env_file:
-      - .env.miner
-    # looks strange, but double $ (i.e. $$) for variable substitution
-    command: >
-      bash -c "
-        export POSTGRES_USER=$${DB_USERNAME}
-        export POSTGRES_PASSWORD=$${DB_PASSWORD}
-        export POSTGRES_DB=$${DB_NAME}
-        docker-entrypoint.sh postgres
-      "
-    expose:
-      - 5432
-    volumes:
-      - postgres-miner-volume:/var/lib/postgresql/data
-    networks:
-      - dojo-miner
-    healthcheck:
-      test:
-        # looks strange, but double $ (i.e. $$) for variable substitution
-        ["CMD-SHELL", "pg_isready -h postgres-miner -U $${DB_USERNAME}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    logging: *default-logging
-
-  prisma-setup-miner:
-    platform: linux/amd64
-    env_file:
-      - .env.miner
-    build:
-      context: .
-      dockerfile: ./docker/Dockerfile.prisma
-    environment:
-      DB_USERNAME: ${DB_USERNAME}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DB_NAME: ${DB_NAME}
-      DB_HOST: ${DB_HOST}
-      DATABASE_URL: postgresql://${DB_USERNAME}:${DB_PASSWORD}@${DB_HOST}/${DB_NAME}
-    working_dir: /app
-    depends_on:
-      - postgres-miner
-    networks:
-      - dojo-miner
-    logging: *default-logging
-
-  sidecar:
-    image: docker.io/parity/substrate-api-sidecar:v19.0.2
-    env_file:
-      - .env.miner
-    read_only: true
-    environment:
-      SAS_SUBSTRATE_URL: ${SUBTENSOR_ENDPOINT:-wss://entrypoint-finney.opentensor.ai}
-      SAS_EXPRESS_PORT: 8081
-    expose:
-      - 8081
-    healthcheck:
-      # jank since no curl
-      test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "const http = require('http'); const options = { hostname: '127.0.0.1', port: 8081, path: '/blocks/head', method: 'GET' }; const req = http.request(options, (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }); req.on('error', (error) => { console.error(error); process.exit(1); }); req.end();",
-        ]
-      interval: 12s
-      timeout: 24s
-      retries: 10
-      start_period: 30s
-    networks:
-      - dojo-miner
-      - subtensor
-    logging: *default-logging
-
-  worker-api:
-    platform: linux/amd64
-    env_file:
-      - .env.miner
-    volumes:
-      - ./.env.miner:/dojo-api/.env
-    image: ghcr.io/tensorplex-labs/dojo-worker-api:main
-    environment:
-      RUNTIME_ENV: local
-      SERVER_PORT: 8080
-      SUBNET_UID: 98
-      CORS_ALLOWED_ORIGINS: http://localhost*,http://worker-ui*,http://dojo-cli*
-      SUBSTRATE_API_URL: sidecar:8081
-      # authentication
-      TOKEN_EXPIRY: 24
-      REDIS_HOST: redis-miner
-      REDIS_PORT: 6379
-      VALIDATOR_MIN_STAKE: 20000
-    ports:
-      - "8080:8080"
-    expose:
-      - 8080
-    depends_on:
-      redis-miner:
-        condition: service_healthy
-      postgres-miner:
-        condition: service_healthy
-      sidecar:
-        condition: service_healthy
-      prisma-setup-miner:
-        condition: service_completed_successfully
-    command: ["./service", "--debug"]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080"]
-      interval: 10s
-      timeout: 10s
-      retries: 5
-      start_period: 90s # seems too long but let's just give enough time so that healthcheck doesn't fail
-    networks:
-      - dojo-miner
-    logging: *default-logging
-
-  worker-ui:
-    image: ghcr.io/tensorplex-labs/dojo-ui:tensorplex-prod
-    ports:
-      - "3000:3000"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
-      interval: 10s
-      timeout: 10s
-      retries: 5
-    networks:
-      - dojo-miner
-    logging: *default-logging
+#  watchtower:
+#    extends:
+#      file: docker-compose.shared.yaml
+#      service: watchtower
 
   dojo-cli:
+    container_name: dojo-cli
     image: ghcr.io/tensorplex-labs/dojo:main
     volumes:
-      - ./:/app
-      - ./.env.miner:/app/.env
-      - $HOME/.bittensor:/root/.bittensor
+      - ./.env:/app/.env
+      - $BITTENSOR_DIR:/root/.bittensor
     command: ["dojo-cli"]
     tty: true
     stdin_open: true
     networks:
       - dojo-miner
+      - dojo-platform
 
-  # ============== MINER ============== #
-
-  miner-decentralised:
+  miner:
+    container_name: miner
     image: ghcr.io/tensorplex-labs/dojo:main
-    working_dir: /app
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
     env_file:
-      - .env.miner
+      - .env
     volumes:
-      - ./:/app
-      - ./.env.miner:/app/.env
-      - $HOME/.bittensor:/root/.bittensor
-    command: ["miner"]
-    depends_on:
-      worker-api:
-        condition: service_healthy
-      worker-ui:
-        condition: service_healthy
-    ports:
-      - ${AXON_PORT}:${AXON_PORT}
-    networks:
-      - dojo-miner
-      - subtensor
-    logging: *default-logging
-
-  miner-centralised:
-    image: ghcr.io/tensorplex-labs/dojo:main
-    working_dir: /app
-    env_file:
-      - .env.miner
-    volumes:
-      - ./:/app
-      - ./.env.miner:/app/.env
-      - $HOME/.bittensor:/root/.bittensor
+      - ./.env:/app/.env
+      - $BITTENSOR_DIR:/root/.bittensor
     command: ["miner"]
     ports:
       - ${AXON_PORT}:${AXON_PORT}
     networks:
       - dojo-miner
+      - dojo-platform
       - subtensor
     logging: *default-logging

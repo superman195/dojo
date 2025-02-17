@@ -197,19 +197,19 @@ For Docker installation, see https://docs.docker.com/engine/install/ for instruc
 For Docker Compose installation, see https://docs.docker.com/compose/install/linux for instructions
 
 ```bash
-# for linux, a convenience script is available
+# For linux, a convenience script is available
 ./dojo/scripts/setup/install_docker.sh
 
-# verify both docker and docker compose are installed
+# Verify both docker and docker compose are installed
 docker --version
 docker compose version
 
-# for validator please install docker loki plugin
+# Validators, install docker loki plugin
 docker plugin install grafana/loki-docker-driver:3.3.2-amd64 --alias loki --grant-all-permissions
 ```
 
 4. Start local subtensor node (**optional**)
-   > The included subtensor service only expose 30333 (p2p) to the public, 9933 and 9944 are only accesssible internally in the docker network, feel free to change the configuration if required.
+> The included subtensor service only expose 30333 (p2p) to the public, 9933 and 9944 are only accesssible internally in the docker network, feel free to change the configuration if required.
 
 ```bash
 # Mainnet
@@ -261,209 +261,8 @@ btcli s register --wallet.name coldkey --wallet.hotkey hotkey --netuid 52 --subt
 btcli s register --wallet.name coldkey --wallet.hotkey hotkey --netuid 98 --subtensor.network test
 ```
 
-## Mining
-
-> **Note:** To connect to testnet, uncomment the testnet related configuration, specifically `NETUID`, `SUBTENSOR_CHAIN_ENDPOINT` and `SUBTENSOR_NETWORK`
-
-### Option 1: Centralised Method
-
-1. Create .env file with the following values first.
-
-```bash
-# copy .env.miner.example
-cp .env.miner.example .env.miner
-
-# ENV's that needs to be filled for miners:
-# for mainnet
-DOJO_API_BASE_URL="https://dojo-api.tensorplex.ai"
-# for testnet
-DOJO_API_BASE_URL="https://dojo-api-testnet.tensorplex.ai"
-DOJO_API_KEY= # blank for now
-WALLET_COLDKEY=# the name of the coldkey
-WALLET_HOTKEY=# the name of the hotkey
-AXON_PORT=8888 # port to serve requests over the public network for validators to call
-VALIDATOR_MIN_STAKE=20000 # minimum stake required for validators default is 20000 TAO (use this to bypass the blacklist function in testnet)
-# Task related config
-TASK_MAX_RESULT=4 # this means that each miner can have up to 4 workers fill in responses
-```
-
-2. Run the CLI to retrieve API Key and Subscription Key, see [Dojo CLI](#dojo-cli) for usage.
-
-```bash
-make dojo-cli
-
-# remember to use tab completions to see list of commands
-# authenticate and generate keys
-authenticate
-api_key generate
-subscription_key generate
-
-# list all keys
-api_key list
-subscription_key list
-```
-
-3. Complete the .env file with the variables below:
-
-```bash
-DOJO_API_KEY=# api key from step 2.
-```
-
-4. Start the miner by running the following commands:
-
-```bash
-make miner-centralised
-```
-
-To start with autoupdate for miners (**strongly recommended**), see the [Auto-updater](#auto-updater) section.
-
-### Option 2: Decentralised Method
-
-1. Create .env file with the following values first.
-
-```bash
-# copy .env.miner.example
-cp .env.miner.example .env.miner
-
-# env vars that needs to be filled for miners:
-DOJO_API_BASE_URL="http://worker-api:8080" # use this value
-DOJO_API_KEY=# blank for now
-WALLET_COLDKEY=# the name of the coldkey
-WALLET_HOTKEY=# the name of the hotkey
-AXON_PORT=8888 # port to serve requests over the public network for validators to call
-# Task related config
-TASK_MAX_RESULT=4 # this means that each miner can have up to 4 workers fill in responses
-
-# for dojo-ui
-NEXT_PUBLIC_BACKEND_URL=http://localhost:3000
-
-# for dojo-worker-api
-REDIS_USERNAME=#set a non-default username
-REDIS_PASSWORD=#generate and set a secure password
-
-# postgres details
-DB_HOST=postgres-miner:5432 # use this value
-DB_NAME=db
-DB_USERNAME=#set a non-default username
-DB_PASSWORD=#generate and set a secure password
-DATABASE_URL=postgresql://${DB_USERNAME}:${DB_PASSWORD}@${DB_HOST}/${DB_NAME}
-
-# aws credentials for S3
-AWS_ACCESS_KEY_ID=#get from aws
-AWS_SECRET_ACCESS_KEY=#get from aws
-AWS_S3_BUCKET_NAME=#get from aws
-S3_PUBLIC_URL=#s3 bucket url that can be accessed publicly
-
-JWT_SECRET=# generate a random JWT key
-ETHEREUM_NODE=# get an ethereum endpoint URL from Infura, Alchemy or any other provider
-```
-
-2. Start the worker api which will be connected to the CLI later.
-
-```bash
-make miner-worker-api
-```
-
-3. Run the CLI to retrieve API Key and Subscription Key, see [Dojo CLI](#dojo-cli) for usage.
-
-```bash
-make dojo-cli
-```
-
-4. Grab the API key and add it to your .env file
-
-```bash
-DOJO_API_KEY=# api key from earlier
-```
-
-5. Now, run the full miner service.
-
-```bash
-make miner-decentralised
-```
-
-To start with autoupdate for miners (**strongly recommended**), see the [Auto-updater](#auto-updater) section.
-
-> [!IMPORTANT]
->
-> Don't be alarmed that the status of the `prisma-setup-miner` service shows exit code 0. This means it ran successfully.
->
-> Other services should also be healthy in order for the `miner-testnet-decentralised` service to run successfully.
-
-### Setup Subscription Key for Labellers on UI to connect to Dojo Subnet for scoring
-
-Note: URLs are different for testnet and mainnet. Please refer to [docs](https://docs.tensorplex.ai/tensorplex-docs/tensorplex-dojo-testnet/official-links).
-
-1. Head to https://dojo.tensorplex.ai or https://dojo-testnet.tensorplex.ai and login and sign with your Metamask wallet.
-
-- You'll see an empty homepage with no Tasks, and a "Connect" button on the top right ![image](./assets/ui/homepage.png)
-- Click on "Connect" and you'll see a popup with different wallets for you to connect to ![image](./assets/ui/wallet_popup.jpg)
-- Click "Next" and "Continue", then finally it will be requesting a signature from your wallet, please sign and it will be connected. ![image](./assets/ui/wallet_sign.jpg)
-- Once connected, the top navigation bar should display your wallet address. ![image](./assets/ui/wallet_connected.png)
-
-2. Once connected, please stay connected to your wallet and click on "Enter Subscription Key". ![image](./assets/subscription/enter_subscription.png)
-
-- Give your subscription a name, and enter your subscription key generated earlier before running the miner. _*Refer to step 4 of "Getting Started" if you need to retrieve your key*_ ![image](./assets/subscription/enter_details.png)
-- Click "Create" and your subscription will be saved. ![image](./assets/subscription/created_details.png)
-- Confirmed your subscription is created properly, and that you can view your tasks! ![image](./assets/subscription/tasks_shown.png)
-
-## Validating
-
-> **Note:** To connect to testnet, uncomment the testnet related configuration, specifically `NETUID`, `SUBTENSOR_CHAIN_ENDPOINT` and `SUBTENSOR_NETWORK`
-
-Copy the validator .env file and set up the .env file
-
-```bash
-# copy .env.validator.example
-cp .env.validator.example .env.validator
-
-# edit the .env file with vim, vi or nano
-
-WALLET_COLDKEY=# the name of the coldkey
-WALLET_HOTKEY=# the name of the hotkey
-VALIDATOR_API_BASE_URL=https://dojo-validator-api.tensorplex.ai
-
-
-# for dojo-synthetic-api
-OPENROUTER_API_KEY="sk-or-v1-<KEY>"
-
-# for langfuse, the free tier is more than enough
-LANGFUSE_SECRET_KEY=# head to langfuse.com
-LANGFUSE_PUBLIC_KEY=# head to langfuse.com
-LANGFUSE_HOST="https://us.cloud.langfuse.com" # 🇺🇸 US region
-
-
-# postgres details for validator
-DB_HOST=postgres-vali:5432
-DB_NAME=db
-DB_USERNAME=#set a non-default username
-DB_PASSWORD=#generate and set a secure password
-DATABASE_URL=postgresql://${DB_USERNAME}:${DB_PASSWORD}@${DB_HOST}/${DB_NAME}
-
-# dojo loki
-DOJO_LOKI_URL=# get from TPLX TEAM
-VALIDATOR_HOTKEY=# your running validator hotkey address
-```
-
-> **Note:** To ensure your validator runs smoothly, enable the auto top-up feature for Openrouter, this ensures that your validator will not fail to call synthetic API during task generation. The estimate cost of generating a task is approximately $0.20 USD.
-
-Start the validator
-
-```bash
-# To start the validator:
-make validator
-```
-
-To start with autoupdate for validators (**strongly recommended**), see the [Auto-updater](#auto-updater) section.
-
-## Data Collection
-
-To export all data that has been collected from the validator, ensure that you have the environment variables setup properly as in [validator-setup](#validating), then run the following:
-
-```bash
-make validator-pull
-make extract-dataset
-```
+## [For Miners](README-miner.md)
+## [For Validators](README-validator.md)
 
 # Auto-updater
 
@@ -479,62 +278,11 @@ Please ensure that you run the command in the python environment, if you haven't
 conda activate dojo_py311
 
 # validator
-pm2 start auto_update.py --name auto-update-validator --interpreter $(which python3) -- --env_file .env.validator --service validator
+pm2 start auto_update.py --name auto-update-validator --interpreter $(which python3) -- ---service validator
 
-# miner-centralised
-pm2 start auto_update.py --name auto-update-miner-centralised --interpreter $(which python3) -- --env_file .env.miner --service miner-centralised
+# miner
+pm2 start auto_update.py --name auto-update-miner-centralised --interpreter $(which python3) -- --service miner
 
-# miner-decentralised
-pm2 start auto_update.py --name auto-update-miner-decentralised --interpreter $(which python3) -- --env_file .env.miner --service miner-decentralised
-```
-
-# Dojo CLI
-
-We provide a CLI that allows miners to manage their API and subscription keys either when connecting to our hosted Tensorplex API services or their own self-hosted miner backend.
-
-Features:
-
-- Tab completion
-- Prefix matching wallets
-
-You may use the dockerized version of the CLI using
-
-```bash
-make dojo-cli
-```
-
-Alternatively you can simply run the CLI inside of a virtual environment
-
-```bash
-# Start the dojo cli tool
-# Upon starting the CLI it will ask if you wanna use the default path for bittensor wallets, which is `~/.bittensor/wallets/`.
-# If you want to use a different path, please enter 'n' and then specify the path when prompted.
-dojo
-
-# TIP: During the whole process, you could actually use tab-completion to display the options, so you don't have to remember them all. Please TAB your way guys! 🙇‍♂️
-# It should be prompting you to enter you coldkey and hotkey
-# After entering the coldkey and hotkey, you should be in the command line interface for dojo, please authenticate by running the following command.
-# You should see a message saying "✅ Wallet coldkey name and hotkey name set successfully."
-authenticate
-
-# Afterwards, please generate an API Key with the following command.
-# You should see a message saying:  "✅ All API keys: ['sk-<KEY>]". Displaying a list of your API Keys.
-api_key generate
-
-# Lastly, please generate a Subscription Key with the following command.
-# You should see a message saying:  "✅ All Subscription keys: ['sk-<KEY>]". Displaying a list of your Subscription Keys.
-subscription_key generate
-
-# :rocket: You should now have all the required keys, and be able to start mining.
-
-# Other commands available to the CLI:
-# You can always run the following command to get your current keys.
-api_key list
-subscription_key list
-
-# You can also delete your keys with the following commands.
-api_key delete
-subscription_key delete
 ```
 
 # For Dojo developers
