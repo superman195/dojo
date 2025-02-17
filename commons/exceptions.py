@@ -76,3 +76,11 @@ class SetWeightsFailed(Exception):
     def __init__(self, message):
         self.message = message
         super().__init__(self.message)
+
+
+class SyntheticAPIUnavailable(Exception):
+    """Exception raised when the synthetic API is not accessible."""
+
+    def __init__(self, message):
+        self.message = message
+        super().__init__(self.message)

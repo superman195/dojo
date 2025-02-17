@@ -27,6 +27,7 @@ from commons.exceptions import (
     InvalidMinerResponse,
     NoNewExpiredTasksYet,
     SetWeightsFailed,
+    SyntheticAPIUnavailable,
 )
 from commons.obfuscation.obfuscation_utils import obfuscate_html_and_js
 from commons.objects import ObjectManager
@@ -683,7 +684,7 @@ class Validator:
                 await self.sync()
                 await asyncio.sleep(dojo.VALIDATOR_RUN)
 
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, SyntheticAPIUnavailable):
                 # Handle shutdown gracefully
                 await self._cleanup()
                 return
@@ -840,6 +841,11 @@ class Validator:
         """
         task_id = get_new_uuid()
         try:
+            if not await SyntheticAPI.get_health_status():
+                raise SyntheticAPIUnavailable(
+                    "synthetic-API unavailable. shutting down validator"
+                )
+
             data: SyntheticQA | None = await SyntheticAPI.get_qa()
             if not data or not data.responses:
                 logger.error("Invalid or empty data returned from synthetic data API")
