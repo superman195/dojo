@@ -28,6 +28,8 @@ subtensor = bt.subtensor(config=config)
 metagraph = subtensor.metagraph(netuid=52, lite=True)
 AWS_REGION = os.getenv("AWS_REGION")
 BUCKET_NAME = os.getenv("ANALYTICS_BUCKET_NAME")
+BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
+MAX_CHUNK_SIZE_MB = int(os.getenv("MAX_CHUNK_SIZE_MB", 50))
 
 
 def verify_hotkey_in_metagraph(hotkey: str) -> bool:
