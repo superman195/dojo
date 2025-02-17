@@ -170,20 +170,15 @@ async def create_analytics_data(
         return JSONResponse(content=response, status_code=400)
 
 
-async def _test_s3_upload():
-    # read JSON from sample_anal_payload.json
-    with open("sample_anal_payload.json") as f:
-        data_str = f.read()
-    await upload_to_s3(data_str, "hotkey")
+# For testing: remove in prod.
+# async def _test_s3_upload():
+#     # read JSON from sample_anal_payload.json
+#     with open("sample_anal_payload.json") as f:
+#         data_str = f.read()
+#     await upload_to_s3(data_str, "hotkey")
 
 
 if __name__ == "__main__":
-    import asyncio
-    import sys
-
-    if "--test" in sys.argv:
-        asyncio.run(_test_s3_upload())
-
-    print("hello")
-    logger.info("running uvicorn")
+    # if "--test" in sys.argv:
+    #     asyncio.run(_test_s3_upload())
     uvicorn.run("analytics_endpoint:app", host="0.0.0.0", port=8000, reload=True)

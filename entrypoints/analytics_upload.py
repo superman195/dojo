@@ -1,11 +1,9 @@
 """
 analytics_upload.py
-    this file is periodically called by the validator to query and upload analytics data to analytics_endpoint.py
+    contains code to query and upload analytics data to analytics_endpoint.py
 """
 
 import asyncio
-
-# import datetime
 import gc
 import json
 from datetime import datetime
@@ -23,22 +21,11 @@ from database.client import connect_db
 from dojo.protocol import AnalyticsData, AnalyticsPayload
 from dojo.utils.uids import is_miner
 
-# class AnalyticsData(TypedDict):
-#     """
-#     AnalyticsData is a schema that defines the structure of the analytics data.
-#     This schema must match up with the schema in analytics_endpoint.py for successful uploads.
-#     """
-
-#     validator_task_id: str
-#     validator_hotkey: str
-#     completions: List[dict]
-#     ground_truths: List[dict]
-#     miner_responses: List[dict]  # contains responses from each miner
-#     created_at: str
-#     metadata: dict | None
-
 
 async def _get_all_miner_hotkeys(metagraph: bt.metagraph) -> List[str]:
+    """
+    returns a list of all miner hotkeys registered to the input metagraph at time of execution.
+    """
     return [
         hotkey
         for uid, hotkey in enumerate(metagraph.hotkeys)
@@ -55,12 +42,15 @@ async def _get_task_data(
     """
     _get_task_data() is a helper function that:
     1. queries postgres for processed ValidatorTasks in a given time window.
-    2. converts query results into AnalyticsData schema
-    3. returns singleton dictionary with key "tasks" and value as List[AnalyticsData].
+    2. calculates the list of scored hotkeys and absent hotkeys for each task.
+    3. converts query results into AnalyticsData schema
+    4. returns AnalyticsPayload which contains many AnalyticsData.
 
     @param validator_hotkey: the hotkey of the validator
-    @return: a singleton dictionary with key "tasks" and value as list of AnalyticsData, where individual AnalyticsData is 1 task.
-    @to-do: confirm what time window we want to use in production. 6 hours? create a dedicated config var for this.
+    @param all_miner_hotkeys: the hotkeys of all miners registered to metagraph at the time of execution.
+    @param expire_from: the start time of the time window to query for processed tasks.
+    @param expire_to: the end time of the time window to query for processed tasks.
+    @return: a AnalyticsPayload object which contains many AnalyticsData.
     """
     processed_tasks = []
     await connect_db()
@@ -90,6 +80,7 @@ async def _get_task_data(
                 ]
 
                 # Get list of miner hotkeys that did not submit scores.
+                # This is checked against all_miner_hotkeys which is a snapshot of metagraph miners at time of execution.
                 # @dev: could be inaccurate if a miner deregisters after the task was sent out.
                 absent_hotkeys = list(set(all_miner_hotkeys) - set(scored_hotkeys))
 
@@ -137,10 +128,6 @@ async def _get_task_data(
         logger.error(f"Error when _get_task_data(): {e}")
         raise
 
-    # # save payload to file for testing, remove in prod
-    # with open("payload.json", "w") as f:
-    #     json.dump(processed_tasks, f, indent=2)
-
 
 async def _post_task_data(payload, hotkey, signature, message):
     """
@@ -152,7 +139,6 @@ async def _post_task_data(payload, hotkey, signature, message):
     @param hotkey: the hotkey of the validator
     @param message: a message that is signed by the validator
     @param signature: the signature generated from signing the message with the validator's hotkey.
-    @return: the response from the analytics API?
 
     @to-do: confirm analytics url and add to config
     """
@@ -185,10 +171,9 @@ async def _post_task_data(payload, hotkey, signature, message):
 
 async def run_analytics_upload(scores_alock: asyncio.Lock, expire_from, expire_to):
     """
-    run_analytics_upload() is a public function that:
-    1. is called by validator.py every X hours
-    2. to trigger the querying and uploading of analytics data to analytics API.
-    @to-do: this flow should await scoring async lock to finish before uploading.
+    run_analytics_upload()
+    triggers the collection and uploading of analytics data to analytics API.
+    Is called by the validator after the completion of the scoring process.
     """
     async with scores_alock:
         config = ObjectManager.get_config()
@@ -201,9 +186,7 @@ async def run_analytics_upload(scores_alock: asyncio.Lock, expire_from, expire_t
         anal_data = await _get_task_data(
             validator_hotkey, all_miners, expire_from, expire_to
         )
-        message = (
-            f"Uploading analytics data for validator with hotkey: {validator_hotkey}"
-        )
+        message = f"Uploading analytics data for validator hotkey: {validator_hotkey}"
         signature = wallet.hotkey.sign(message).hex()
 
         if not signature.startswith("0x"):
