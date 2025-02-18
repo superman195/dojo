@@ -1076,6 +1076,7 @@ class Validator:
             batch_size=batch_size,
             expire_from=expire_from,
             expire_to=expire_to,
+            is_processed=False,
         ):
             # Yield task batch first before break if no more batches
             yield task_batch
