@@ -55,7 +55,7 @@ async def monitor_subscription(
                 f"Subscription watchdog timeout - no blocks for {time_since_last:.1f} seconds"
             )
         else:
-            logger.debug(
+            logger.trace(
                 f"Subscription is healthy - last block {time_since_last:.1f} seconds ago"
             )
 
