@@ -205,17 +205,14 @@ class Miner(BaseMinerNeuron):
         self, synapse: TaskSynapseObject
     ) -> Tuple[bool, str]:
         return self._blacklist_function(
-            synapse, "validator", "Valid task request received from validator"
+            synapse,
+            "validator task",
+            "Valid task request received from validator",
         )
 
     async def blacklist_task_result_request(
         self, synapse: TaskResultRequest
     ) -> Tuple[bool, str]:
-        # Log the IP address of the incoming request.
-        if not synapse.dojo_task_id:
-            logger.error("TaskResultRequest missing dojo_task_id")
-            return True, "Missing dojo_task_id"
-
         return self._blacklist_function(
             synapse, "task result", "Valid task result request from validator"
         )
@@ -250,6 +247,7 @@ class Miner(BaseMinerNeuron):
         ip_addr = getattr(dendrite, "ip", "Unknown IP")
         caller_hotkey = getattr(dendrite, "hotkey", None)
 
+        # Log the IP address of the incoming request and the hotkey
         logger.info(
             f"Incoming {request_tag} request from IP: {ip_addr} with hotkey: {caller_hotkey}"
         )
