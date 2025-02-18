@@ -19,7 +19,7 @@ from commons.orm import ORM
 from commons.utils import datetime_to_iso8601_str
 from database.client import connect_db
 from dojo.protocol import AnalyticsData, AnalyticsPayload
-from dojo.utils.uids import is_miner
+from dojo.utils.uids import check_root_stake
 
 
 async def _get_all_miner_hotkeys(metagraph: bt.metagraph) -> List[str]:
@@ -29,7 +29,7 @@ async def _get_all_miner_hotkeys(metagraph: bt.metagraph) -> List[str]:
     return [
         hotkey
         for uid, hotkey in enumerate(metagraph.hotkeys)
-        if is_miner(metagraph, uid)
+        if check_root_stake(metagraph, uid)
     ]
 
 

@@ -24,6 +24,17 @@ def is_miner(metagraph: bt.metagraph, uid: int) -> bool:
     return stakes[uid] < VALIDATOR_MIN_STAKE
 
 
+def check_root_stake(metagraph: bt.metagraph, uid: int) -> bool:
+    """
+    checks the total root stake of a neuron and returns true if it is less than the validator min stake.
+    if true, the neuron is a miner. False, it is a validator.
+    """
+    from dojo import VALIDATOR_MIN_STAKE
+
+    neuron = metagraph.neurons[uid]
+    return neuron.total_stake.tao < float(VALIDATOR_MIN_STAKE)
+
+
 def extract_miner_uids(metagraph: bt.metagraph):
     """Extracts active miner uids from the metagraph."""
     stakes = metagraph.S.tolist()
