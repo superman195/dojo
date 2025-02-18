@@ -10,12 +10,11 @@ import uvicorn
 from bittensor.utils.btlogging import logging as logger
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from substrateinterface import Keypair
 
 from commons.objects import ObjectManager
 from dojo import VALIDATOR_MIN_STAKE
 
-app = FastAPI(title="Dataset Upload Service")
+app = FastAPI(title="Validator API Service")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -37,7 +36,7 @@ def verify_hotkey_in_metagraph(hotkey: str) -> bool:
 
 
 def verify_signature(hotkey: str, signature: str, message: str) -> bool:
-    keypair = Keypair(ss58_address=hotkey, ss58_format=42)
+    keypair = bt.Keypair(ss58_address=hotkey, ss58_format=42)
     if not keypair.verify(data=message, signature=signature):
         logger.error(f"Invalid signature for address={hotkey}")
         return False

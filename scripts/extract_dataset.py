@@ -24,11 +24,11 @@ from dojo.utils.config import source_dotenv
 
 source_dotenv()
 
-DATASET_SERVICE_BASE_URL = os.getenv("DATASET_SERVICE_BASE_URL")
+VALIDATOR_API_BASE_URL = os.getenv("VALIDATOR_API_BASE_URL")
 MAX_CHUNK_SIZE_MB = int(os.getenv("MAX_CHUNK_SIZE_MB", 50))
 
-if DATASET_SERVICE_BASE_URL is None:
-    raise ValueError("DATASET_SERVICE_BASE_URL must be set")
+if VALIDATOR_API_BASE_URL is None:
+    raise ValueError("VALIDATOR_API_BASE_URL must be set")
 if MAX_CHUNK_SIZE_MB is None:
     raise ValueError("MAX_CHUNK_SIZE_MB must be set")
 
@@ -308,7 +308,7 @@ async def upload(hotkey: str, signature: str, message: str, filename: str):
                 # Append to files list with correct format
                 files = [("files", (chunk_filename, chunk_content, "application/json"))]
                 response = await client.post(
-                    f"{DATASET_SERVICE_BASE_URL}/upload_dataset",
+                    f"{VALIDATOR_API_BASE_URL}/upload_dataset",
                     data=form_body,
                     files=files,
                     timeout=60.0,

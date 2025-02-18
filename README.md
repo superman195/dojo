@@ -421,7 +421,7 @@ cp .env.validator.example .env.validator
 
 WALLET_COLDKEY=# the name of the coldkey
 WALLET_HOTKEY=# the name of the hotkey
-DATASET_SERVICE_BASE_URL=https://dojo-validator-api.tensorplex.ai
+VALIDATOR_API_BASE_URL=https://dojo-validator-api.tensorplex.ai
 
 
 # for dojo-synthetic-api

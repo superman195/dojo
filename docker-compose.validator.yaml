@@ -142,19 +142,19 @@ services:
         loki-url: "https://${DOJO_LOKI_URL}"
         loki-external-labels: "validator=${VALIDATOR_HOTKEY}"
 
-  dataset-service:
-    container_name: dataset-service
-    image: ghcr.io/tensorplex-labs/dojo:dataset
+  validator-api-service:
+    container_name: validator-api-service
+    image: ghcr.io/tensorplex-labs/dojo:main
     env_file:
       - .env.validator
     ports:
       - "127.0.0.1:9999:9999"
-    command: ["dataset-service"]
+    command: ["validator-api-service"]
     logging: *default-logging
 
   extract-dataset:
     container_name: extract-dataset
-    image: ghcr.io/tensorplex-labs/dojo:dataset
+    image: ghcr.io/tensorplex-labs/dojo:main
     env_file:
       - .env.validator
     command: ["extract-dataset"]

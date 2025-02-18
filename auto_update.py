@@ -7,7 +7,7 @@ from datetime import datetime
 from bittensor.utils.btlogging import logging as logger
 
 from commons.utils import datetime_to_iso8601_str
-from dojo import __version__
+from dojo import get_latest_git_tag
 from dojo.utils.config import source_dotenv
 
 source_dotenv()
@@ -214,7 +214,7 @@ def restart_docker(service_name):
 
 
 def get_current_version():
-    version = __version__
+    version = get_latest_git_tag()
     logger.debug(f"Current version: {version}")
     return version
 

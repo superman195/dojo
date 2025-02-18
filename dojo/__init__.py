@@ -1,23 +1,27 @@
 import os
 import subprocess
 
+from git import Repo
+
 from dojo.utils.config import get_config, source_dotenv
 
 source_dotenv()
 
 
-def get_latest_git_tag():
-    try:
-        # Get the latest git tag
-        latest_tag = (
-            subprocess.check_output(["git", "describe", "--tags", "--abbrev=0"])
-            .strip()
-            .decode("utf-8")
-        )
-        return latest_tag.lstrip("v")
-    except subprocess.CalledProcessError as e:
-        print(f"Error getting the latest Git tag: {e}")
-        raise RuntimeError("Failed to get latest Git tag")
+def get_latest_git_tag(repo_path="."):
+    repo = Repo(repo_path)
+    tags = sorted(repo.tags, key=lambda t: t.commit.committed_date)
+    return str(tags[-1]).lstrip("v") if tags else None
+
+
+def get_latest_remote_tag(repo_path="."):
+    repo = Repo(repo_path)
+    remote_tags = repo.git.ls_remote("--tags", "--sort=-v:refname", "origin").split(
+        "\n"
+    )
+    if remote_tags and remote_tags[0]:
+        return remote_tags[0].split("refs/tags/")[-1]
+    return None
 
 
 def get_commit_hash():
@@ -34,14 +38,16 @@ def get_commit_hash():
         raise RuntimeError("Failed to get latest Git commit hash")
 
 
-# Define the version of the template module.
-__version__ = get_latest_git_tag()
-version_split = __version__.split(".")
-__spec_version__ = (
-    (1000 * int(version_split[0]))
-    + (10 * int(version_split[1]))
-    + (1 * int(version_split[2]))
-)
+def get_spec_version():
+    latest_tag = get_latest_git_tag()
+    if latest_tag is None:
+        raise ValueError("No Git tag found")
+    version_split = latest_tag.split(".")
+    return (
+        (1000 * int(version_split[0]))
+        + (10 * int(version_split[1]))
+        + (1 * int(version_split[2]))
+    )
 
 
 VALIDATOR_MIN_STAKE = int(os.getenv("VALIDATOR_MIN_STAKE", "20000"))

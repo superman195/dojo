@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from commons.api.middleware import LimitContentLengthMiddleware
+from commons.block_subscriber import start_block_subscriber
 from commons.dataset.synthetic import SyntheticAPI
 from commons.objects import ObjectManager
 from database.client import connect_db, disconnect_db
@@ -53,6 +54,9 @@ async def main():
         asyncio.create_task(validator.run()),
         asyncio.create_task(validator.update_score_and_send_feedback()),
         asyncio.create_task(validator.send_heartbeats()),
+        asyncio.create_task(
+            start_block_subscriber(callbacks=[validator.block_headers_callback])
+        ),
     ]
 
     await server.serve()

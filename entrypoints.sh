@@ -2,6 +2,8 @@
 
 set -e
 
+git fetch --tags
+
 # run bash
 if [ "$1" = 'btcli' ]; then
     exec /bin/bash -c "btcli --help && exec /bin/bash"
@@ -77,7 +79,7 @@ if [ "$1" = 'extract-dataset' ]; then
     echo "Environment variables:"
     echo "WALLET_HOTKEY: ${WALLET_HOTKEY}"
     echo "DATABASE_URL: ${DATABASE_URL}"
-    echo "DATASET_SERVICE_BASE_URL: ${DATASET_SERVICE_BASE_URL}"
+    echo "VALIDATOR_API_BASE_URL: ${VALIDATOR_API_BASE_URL}"
     echo "WALLET_COLDKEY: ${WALLET_COLDKEY}"
     echo "WALLET_HOTKEY: ${WALLET_HOTKEY}"
     python scripts/extract_dataset.py \
@@ -85,13 +87,13 @@ if [ "$1" = 'extract-dataset' ]; then
     --wallet.hotkey ${WALLET_HOTKEY}
 fi
 
-if [ "$1" = 'dataset-service' ]; then
+if [ "$1" = 'validator-api-service' ]; then
     echo "Environment variables:"
     echo "PORT: ${PORT}"
     echo "S3_BUCKET_NAME: ${S3_BUCKET_NAME}"
     echo "AWS_REGION: ${AWS_REGION}"
     echo "MAX_CHUNK_SIZE_MB: ${MAX_CHUNK_SIZE_MB}"
-    python entrypoints/dataset_service.py \
+    python entrypoints/validator_api_service.py \
     --netuid 52 \
     --subtensor.network finney
 fi

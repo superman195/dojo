@@ -40,9 +40,8 @@ from commons.utils import (
     get_new_uuid,
     initialise,
     set_expire_time,
-    ttl_get_block,
 )
-from dojo import __spec_version__
+from dojo import get_latest_git_tag, get_latest_remote_tag, get_spec_version
 from dojo.protocol import (
     CompletionResponse,
     CriteriaType,
@@ -64,6 +63,15 @@ from entrypoints.analytics_upload import run_analytics_upload
 ObfuscatedModelMap: TypeAlias = Dict[str, str]
 
 
+latest_local = get_latest_git_tag()
+latest_remote = get_latest_remote_tag()
+if latest_local != latest_remote:
+    logger.warn("Your repository is not up to date, and may fail to set weights.")
+    logger.warn(
+        f"latest local version: {latest_local}\nlatest remote version: {latest_remote}"
+    )
+
+
 class Validator:
     _should_exit: bool = False
     _scores_alock = asyncio.Lock()
@@ -75,7 +83,7 @@ class Validator:
     subtensor: bt.subtensor
     wallet: bt.wallet  # type: ignore
     metagraph: bt.metagraph
-    spec_version: int = __spec_version__
+    spec_version: int = get_spec_version()
 
     def __init__(self):
         self.MAX_BLOCK_CHECK_ATTEMPTS = 3
@@ -507,19 +515,7 @@ class Validator:
 
     @property
     def block(self):
-        try:
-            if not self.loop.run_until_complete(self._ensure_subtensor_connection()):
-                logger.warning(
-                    "Subtensor connection failed - returning last known block"
-                )
-                return self._last_block if self._last_block is not None else 0
-
-            self._last_block = ttl_get_block(self.subtensor)
-            self._block_check_attempts = 0
-            return self._last_block
-        except Exception as e:
-            logger.error(f"Error getting block number: {e}")
-            return self._last_block if self._last_block is not None else 0
+        return self._last_block
 
     async def _try_reconnect_subtensor(self):
         self._block_check_attempts += 1
@@ -1423,3 +1419,8 @@ class Validator:
                     }
                 )
         return hotkey_to_dojo_task_scores_and_gt
+
+    async def block_headers_callback(self, block: dict):
+        logger.debug(f"Received block headers{block}")
+        block_number = int(block.get("header", {}).get("number"))
+        self._last_block = block_number
