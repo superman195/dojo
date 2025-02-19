@@ -179,13 +179,13 @@ services:
     container_name: fill-score-column
     image: ghcr.io/tensorplex-labs/dojo:main
     env_file:
-      - .env.validator
+      - .env
     command: ["fill-score-column"]
     networks:
       - dojo-validator
     volumes:
       - ./:/app
-      - ./.env.validator:/app/.env
+      - ./.env:/app/.env
       - prisma-binary:/root/prisma-python
       - $HOME/.bittensor:/root/.bittensor
     logging: *default-logging
