@@ -253,7 +253,6 @@ class FeedbackLoop:
                     selected_completion
                 ],  # Only include the selected completion
             )
-            logger.info(f"new task: {new_tf_task}")
 
             logger.info(
                 f"Generated text criteria task with ID: {new_tf_task.task_id} "
