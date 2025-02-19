@@ -1,11 +1,15 @@
 from typing import Dict, List
 
 import numpy as np
+import pandas as pd
+import pingouin as pg
 import torch
 from bittensor.utils.btlogging import logging as logger
 from torch.nn import functional as F
 
 from commons.utils import _terminal_plot
+from database.client import prisma
+from database.prisma.models import ValidatorTask
 from dojo.protocol import (
     CompletionResponse,
     CriteriaType,
@@ -386,3 +390,91 @@ class Scoring:
                         criteria.scores = scores
 
         return valid_responses
+
+
+# NOTE: bruh this doesn't need to be async...
+async def score_hfl_task():
+    """Score human feedback learning task by aggregating miner scores.
+
+    Steps:
+    1. Retrieve the SF (Scoring Function) task from the database
+    2. Get all miner responses for the SF task
+    3. Get all miner scores associated with those responses
+    4. Order criteria based on completion IDs from SF task
+    5. Create mapping of criterion IDs to indices and completion IDs
+    6. Sort miner scores based on criteria ordering
+    7. Parse scores into numpy array
+    8. Build mapping of hotkeys to indices
+    9. Create data list with target, rater and score information to calculate
+    IRR metric, in this case ICC(2,1) - Intraclass Correlation Coefficient
+
+    Returns:
+        List[TaskSynapseObject]: List of task synapse objects with updated scores
+    """
+    # 1. get SF task
+    sf_task: ValidatorTask = None  # type: ignore
+
+    # 2. get all miner responses for the sf task
+    # TODO: shift over to ORM.py
+    miner_responses = await prisma.minerresponse.find_many(
+        where={"validator_task_id": sf_task.id},
+        include={"scores": True},
+    )
+
+    miner_scores = await prisma.minerscore.find_many(
+        where={"miner_response_id": {"in": [m.id for m in miner_responses]}},
+        include={"miner_response_relation": True},
+    )
+
+    # order based on completions in sf_task
+    completion_ids = (
+        [c.id for c in sf_task.completions] if sf_task and sf_task.completions else []
+    )
+    criteria = await prisma.criterion.find_many(
+        where={"completion_id": {"in": completion_ids}},
+    )
+    # Create a mapping of criterion id to its index in the criteria list
+    criteria_order = {criterion.id: idx for idx, criterion in enumerate(criteria)}
+    criteria_completion_map = {
+        criterion.id: criterion.completion_id for criterion in criteria
+    }
+    # Sort miner_scores based on the criteria ordering
+    miner_scores.sort(key=lambda x: criteria_order[x.criterion_id])
+
+    # 3. create numpy array of miner scores
+    parsed_scores = []
+
+    # maintain a mapping of hotkey to index
+    hotkey_to_index = {}
+    # Build a list of dictionaries for each rating.
+    # Here, we assume that:
+    # - Each rating has a 'criterion_id' that acts as the target.
+    # - Each miner is identified by their hotkey.
+    # - The score is parsed as before.
+    data_list = []
+    target_key = "target"
+    rater_key = "rater"
+    score_key = "score"
+    for idx, miner_score in enumerate(miner_scores):
+        hotkey_to_index[miner_score.miner_response_relation.hotkey] = idx  # type: ignore
+        parsed_scores.append(Scores.model_validate(miner_score.scores).raw_score)
+        data_list.append(
+            {
+                target_key: criteria_completion_map[miner_score.criterion_id],
+                rater_key: miner_score.miner_response_relation.hotkey,  # type:ignore
+                score_key: Scores.model_validate(miner_score.scores).raw_score,
+            }
+        )
+
+    # Create the DataFrame
+    df = pd.DataFrame(data_list)
+
+    # Calculate ICC. The 'ratings' parameter tells Pingouin which column holds the scores.
+    icc_results = pg.intraclass_corr(
+        data=df, targets=target_key, raters=rater_key, ratings=score_key
+    )
+
+    # If you want only ICC(2,1), filter by its type:
+    icc_2_1 = icc_results[icc_results["Type"] == "ICC2"]
+
+    return icc_2_1
