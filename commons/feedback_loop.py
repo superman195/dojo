@@ -2,16 +2,22 @@ import asyncio
 import json
 import random
 from datetime import datetime, timedelta, timezone
-from typing import Tuple
+from typing import List, Tuple
 
 from bittensor.utils.btlogging import logging as logger
 
 import dojo
 from commons.orm import ORM
-from commons.utils import datetime_as_utc
+from commons.utils import datetime_as_utc, get_new_uuid, set_expire_time
 from database.prisma.models import MinerScore
 from database.prisma.types import MinerScoreWhereInput
-from dojo.protocol import DendriteQueryResponse, TaskSynapseObject
+from dojo.protocol import (
+    CriteriaType,
+    DendriteQueryResponse,
+    TaskSynapseObject,
+    TaskTypeEnum,
+    TextCriteria,
+)
 
 
 class FeedbackLoop:
@@ -21,11 +27,21 @@ class FeedbackLoop:
             # Wait for the validator update score interval
             await asyncio.sleep(dojo.VALIDATOR_UPDATE_SCORE)
             try:
-                result = await self.select_validator_task()
-                if result:
-                    task, completion = result
+                await self.start_feedback_loop()
             except Exception as e:
                 logger.error(f"Error in feedback loop: {e}")
+
+    async def start_feedback_loop(self):
+        """Starts the feedback loop."""
+        result = await self.select_validator_task()
+        if result:
+            selected_task, selected_completion = result
+            text_criteria_task = await self.generate_text_criteria_task(
+                selected_task, selected_completion
+            )
+            if text_criteria_task:
+                pass
+            #     await self.send_request(text_criteria_task)
 
     async def select_validator_task(self) -> Tuple[TaskSynapseObject, str] | None:
         """
@@ -180,4 +196,71 @@ class FeedbackLoop:
 
         except Exception as e:
             logger.error(f"Error evaluating task {validator_task.task_id}: {e}")
+            return None
+
+    async def generate_text_criteria_task(
+        self, validator_task: TaskSynapseObject, completion_id: str
+    ) -> TaskSynapseObject | None:
+        """
+        Generates a text criteria task based on a selected validator task and completion.
+        This task will be used to evaluate the quality of miners' scoring.
+
+        Args:
+            validator_task (TaskSynapseObject): The original validator task
+            completion_id (str): ID of the selected completion to be evaluated
+
+        Returns:
+            TaskSynapseObject | None: A new task for text-based evaluation, or None if generation fails
+        """
+        try:
+            # Find the selected completion from the original task
+            selected_completion = next(
+                (
+                    c
+                    for c in (validator_task.completion_responses or [])
+                    if c.completion_id == completion_id
+                ),
+                None,
+            )
+            if not selected_completion:
+                logger.error(
+                    f"Completion {completion_id} not found in task {validator_task.task_id}"
+                )
+                return None
+
+            # Set text criteria for completion
+            text_criteria: List[CriteriaType] = [
+                TextCriteria(
+                    query="What specific improvements could make this output more accurate, complete, or relevant to the prompt?",
+                    text_feedback="",
+                ),
+            ]
+            selected_completion.criteria_types = text_criteria
+
+            prompt = f"""Please analyze this output and suggest specific improvements:
+            Prompt: {validator_task.prompt}
+            """
+            # Create a new task with the same prompt but different criteria type
+            new_tf_task = TaskSynapseObject(
+                task_id=get_new_uuid(),
+                previous_task_id=validator_task.task_id,
+                prompt=prompt,
+                task_type=TaskTypeEnum.TEXT_TO_COMPLETION,
+                expire_at=set_expire_time(
+                    int(dojo.TASK_DEADLINE / 2)
+                ),  # Half the deadline for TF
+                completion_responses=[
+                    selected_completion
+                ],  # Only include the selected completion
+            )
+            logger.info(f"new task: {new_tf_task}")
+
+            logger.info(
+                f"Generated text criteria task with ID: {new_tf_task.task_id} "
+                f"based on task: {validator_task.task_id}"
+            )
+            return new_tf_task
+
+        except Exception as e:
+            logger.error(f"Error generating text criteria task: {e}")
             return None
