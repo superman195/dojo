@@ -18,20 +18,21 @@ from dojo.protocol import (
     TaskTypeEnum,
     TextCriteria,
 )
+from neurons.validator import Validator
 
 
 class FeedbackLoop:
-    async def run(self):
+    async def run(self, validator: Validator):
         """Runs the feedback loop periodically."""
         while True:
             # Wait for the validator update score interval
             await asyncio.sleep(dojo.VALIDATOR_UPDATE_SCORE)
             try:
-                await self.start_feedback_loop()
+                await self.start_feedback_loop(validator)
             except Exception as e:
                 logger.error(f"Error in feedback loop: {e}")
 
-    async def start_feedback_loop(self):
+    async def start_feedback_loop(self, validator: Validator):
         """Starts the feedback loop."""
         result = await self.select_validator_task()
         if result:
@@ -40,8 +41,14 @@ class FeedbackLoop:
                 selected_task, selected_completion
             )
             if text_criteria_task:
-                pass
-            #     await self.send_request(text_criteria_task)
+                # Call send_request with the text criteria task
+                await validator.send_request(
+                    synapse=text_criteria_task,
+                    ground_truth=None,
+                    obfuscated_model_to_model=None,
+                    synthetic_task=False,
+                    subset_size=7,
+                )
 
     async def select_validator_task(self) -> Tuple[TaskSynapseObject, str] | None:
         """
@@ -56,7 +63,7 @@ class FeedbackLoop:
         Returns:
             Tuple[TaskSynapseObject, str] | None: A tuple of (validator task, completion_id) if criteria are met;
         """
-        expire_from = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(hours=4)
+        expire_from = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(hours=48)
         # TODO: Change back to 1 hour
         expire_to = datetime_as_utc(datetime.now(timezone.utc))
 
