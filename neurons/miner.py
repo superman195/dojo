@@ -9,8 +9,8 @@ from typing import Dict, Tuple
 import bittensor as bt
 from bittensor.utils.btlogging import logging as logger
 
-from commons.human_feedback.dojo import DojoAPI
 from commons.utils import get_epoch_time
+from commons.worker_api.dojo import DojoAPI
 from dojo import MINER_STATUS, VALIDATOR_MIN_STAKE
 from dojo.base.miner import BaseMinerNeuron
 from dojo.protocol import (
