@@ -882,8 +882,19 @@ class Validator:
         self,
         synapse: TaskSynapseObject | None = None,
         ground_truth: dict[str, int] | None = None,
-        obfuscated_model_to_model: ObfuscatedModelMap = {},
+        obfuscated_model_to_model: ObfuscatedModelMap | None = None,
+        synthetic_task: bool = True,
+        subset_size: int | None = None,
     ):
+        """Send task requests to miners and process their responses.
+
+        Args:
+            synapse: Task synapse object containing the request details
+            ground_truth: Ground truth data for scoring
+            obfuscated_model_to_model: Mapping of obfuscated to real model names
+            synthetic_task: Whether this is a synthetic task
+            subset_size: Optional size to limit number of miners queried
+        """
         if not synapse:
             logger.warning("No synapse provided... skipping")
             return
@@ -898,6 +909,14 @@ class Validator:
 
         start = get_epoch_time()
         sel_miner_uids = await self.get_miner_uids()
+
+        # If subset_size specified, randomly select that many miners
+        if subset_size is not None:
+            subset_size = min(subset_size, len(sel_miner_uids))
+            sel_miner_uids = random.sample(sel_miner_uids, subset_size)
+            logger.info(
+                f"Selected {subset_size} random miners from {len(self._active_miner_uids)} active miners"
+            )
 
         axons = [
             axon
@@ -914,8 +933,8 @@ class Validator:
             f"⬆️ Sending task request for task id: {synapse.task_id}, miners uids:{sel_miner_uids} with expire_at: {synapse.expire_at}"
         )
 
-        miner_responses: List[TaskSynapseObject] = await self._send_shuffled_requests(
-            self.dendrite, axons, synapse
+        miner_responses: List[TaskSynapseObject] = await self._send_requests_to_miners(
+            self.dendrite, axons, synapse, synthetic_task
         )
 
         valid_miner_responses: List[TaskSynapseObject] = []
@@ -925,8 +944,8 @@ class Validator:
                     continue
 
                 # map obfuscated model names back to the original model names
-                real_model_ids = []
-                if response.completion_responses:
+                if obfuscated_model_to_model and response.completion_responses:
+                    real_model_ids = []
                     for i, completion in enumerate(response.completion_responses):
                         found_model_id = obfuscated_model_to_model.get(
                             completion.model, None
@@ -936,9 +955,11 @@ class Validator:
                             response.completion_responses[i].model = found_model_id
                             synapse.completion_responses[i].model = found_model_id
 
-                if any(c is None for c in real_model_ids):
-                    logger.warning("Failed to map obfuscated model to original model")
-                    continue
+                    if any(c is None for c in real_model_ids):
+                        logger.warning(
+                            "Failed to map obfuscated model to original model"
+                        )
+                        continue
 
                 response.miner_hotkey = response.axon.hotkey if response.axon else None
                 # Get coldkey from metagraph using hotkey index
@@ -983,17 +1004,20 @@ class Validator:
         return
 
     @staticmethod
-    async def _send_shuffled_requests(
-        dendrite: bt.dendrite, axons: List[bt.AxonInfo], synapse: TaskSynapseObject
+    async def _send_requests_to_miners(
+        dendrite: bt.dendrite,
+        axons: List[bt.AxonInfo],
+        synapse: TaskSynapseObject,
+        shuffled: bool = True,
     ) -> list[TaskSynapseObject]:
         """
-        Send shuffled requests to miners in batches for parallel processing.
+        Send requests to miners in batches for parallel processing.
 
         Args:
             dendrite: Dendrite instance for network communication
             axons: List of miner axons to send requests to
             synapse: Original task synapse object
-
+            shuffled: Whether to shuffle the synapse completions
         Returns:
             list[TaskSynapseObject]: Flattened list of all miner responses
         """
@@ -1009,29 +1033,33 @@ class Validator:
             tasks = []
 
             for axon in batch_axons:
-                # shuffle synapse Responses
-                shuffled_completions = random.sample(
-                    synapse.completion_responses,
-                    k=len(synapse.completion_responses),
+                # Only shuffle if shuffled flag is True, otherwise use original order
+                completions = (
+                    random.sample(
+                        synapse.completion_responses,
+                        k=len(synapse.completion_responses),
+                    )
+                    if shuffled
+                    else synapse.completion_responses.copy()
                 )
 
                 # Apply obfuscation to each completion's files
                 # TODO re-nable obfuscation
                 # await Validator._obfuscate_completion_files(shuffled_completions)
 
-                shuffled_synapse = TaskSynapseObject(
+                task_synapse = TaskSynapseObject(
                     epoch_timestamp=synapse.epoch_timestamp,
                     task_id=synapse.task_id,
                     prompt=synapse.prompt,
                     task_type=synapse.task_type,
                     expire_at=synapse.expire_at,
-                    completion_responses=shuffled_completions,
+                    completion_responses=completions,
                 )
 
                 tasks.append(
                     dendrite.forward(
                         axons=[axon],
-                        synapse=shuffled_synapse,
+                        synapse=task_synapse,
                         deserialize=False,
                         timeout=12,
                     )
@@ -1076,6 +1104,7 @@ class Validator:
             batch_size=batch_size,
             expire_from=expire_from,
             expire_to=expire_to,
+            is_processed=False,
         ):
             # Yield task batch first before break if no more batches
             yield task_batch

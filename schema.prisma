@@ -13,6 +13,7 @@ enum TaskTypeEnum {
     CODE_GENERATION
     TEXT_TO_IMAGE
     TEXT_TO_THREE_D
+    TEXT_TO_COMPLETION
 }
 
 enum CriteriaTypeEnum {
@@ -20,6 +21,7 @@ enum CriteriaTypeEnum {
     MULTI_SCORE
     SCORE
     MULTI_SELECT
+    TEXT
 }
 
 model ValidatorTask {

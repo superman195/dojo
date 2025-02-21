@@ -12,10 +12,12 @@ class TaskTypeEnum(StrEnum):
     TEXT_TO_THREE_D = "TEXT_TO_THREE_D"
     TEXT_TO_IMAGE = "TEXT_TO_IMAGE"
     CODE_GENERATION = "CODE_GENERATION"
+    TEXT_TO_COMPLETION = "TEXT_TO_COMPLETION"
 
 
 class CriteriaTypeEnum(StrEnum):
     SCORE = "score"
+    TEXT = "text"
 
 
 class Scores(BaseModel):
@@ -47,7 +49,13 @@ class ScoreCriteria(BaseModel):
     scores: Scores | None = Field(description="Scores of the completion", default=None)
 
 
-CriteriaType = ScoreCriteria
+class TextCriteria(BaseModel):
+    type: str = Field(default=CriteriaTypeEnum.TEXT.value, frozen=True)
+    query: str = Field(description="Query for the task", frozen=True)
+    text_feedback: str = Field(description="Text feedback for the task", frozen=True)
+
+
+CriteriaType = ScoreCriteria | TextCriteria
 
 
 class CodeFileObject(BaseModel):
