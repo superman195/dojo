@@ -29,6 +29,7 @@ class FeedbackLoop:
             await asyncio.sleep(dojo.VALIDATOR_UPDATE_SCORE)
             try:
                 await self.start_feedback_loop(validator)
+                await self.update_text_feedback_results(validator)
             except Exception as e:
                 logger.error(f"Error in feedback loop: {e}")
 
@@ -74,6 +75,8 @@ class FeedbackLoop:
                 expire_from=expire_from,
                 expire_to=expire_to,
                 is_processed=True,
+                has_previous_task=False,
+                task_type=TaskTypeEnum.CODE_GENERATION,
             ):
                 for dendrite_response in tasks_batch:
                     eligible_task = await self._evaluate_task(dendrite_response)
@@ -270,3 +273,44 @@ class FeedbackLoop:
         except Exception as e:
             logger.error(f"Error generating text criteria task: {e}")
             return None
+
+    async def update_text_feedback_results(self, validator: Validator) -> None:
+        """
+        Updates task results for TEXT_TO_COMPLETION tasks that haven't been processed yet.
+        Similar to validator.update_task_results but specifically for text feedback tasks.
+        """
+        try:
+            logger.info("Updating text feedback task results...")
+            batch_size: int = 10
+
+            expire_from = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
+                hours=2
+            )
+            expire_to = datetime_as_utc(datetime.now(timezone.utc))
+
+            async for task_batch, has_more in ORM.get_expired_tasks(
+                batch_size=batch_size,
+                expire_from=expire_from,
+                expire_to=expire_to,
+                is_processed=False,
+                has_previous_task=True,
+                task_type=TaskTypeEnum.TEXT_TO_COMPLETION,
+            ):
+                if not task_batch:
+                    continue
+
+                # Process multiple tasks concurrently
+                tasks = [validator._update_task_results(task) for task in task_batch]
+                miner_responses_lists = await asyncio.gather(*tasks)
+
+                all_miner_responses = []
+                for responses in miner_responses_lists:
+                    if responses:
+                        all_miner_responses.extend(responses)
+
+                # Mark tasks as processed after updating results
+                task_ids = [task.validator_task.task_id for task in task_batch]
+                await ORM.mark_validator_task_as_processed(task_ids)
+
+        except Exception as e:
+            logger.error(f"Error during text feedback task monitoring: {str(e)}")

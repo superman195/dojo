@@ -33,7 +33,13 @@ from database.prisma.types import (
     ValidatorTaskWhereInput,
 )
 from dojo import TASK_DEADLINE
-from dojo.protocol import DendriteQueryResponse, Scores, TaskResult, TaskSynapseObject
+from dojo.protocol import (
+    DendriteQueryResponse,
+    Scores,
+    TaskResult,
+    TaskSynapseObject,
+    TaskTypeEnum,
+)
 
 
 class ORM:
@@ -43,6 +49,8 @@ class ORM:
         expire_from: datetime | None = None,
         expire_to: datetime | None = None,
         is_processed: bool = False,
+        has_previous_task: bool = False,
+        task_type: TaskTypeEnum | None = None,
     ) -> AsyncGenerator[tuple[List[DendriteQueryResponse], bool], None]:
         """Returns batches of expired ValidatorTask records and a boolean indicating if there are more batches.
 
@@ -52,6 +60,7 @@ class ORM:
             expire_to: (datetime | None) If provided, only tasks with expire_at before expire_to will be returned.
             You must determine the `expire_at` cutoff yourself, otherwise it defaults to current time UTC.
             is_processed: (bool, optional): If True, only processed tasks will be returned. Defaults to False.
+            has_previous_task: (bool, optional): Checks if task has a previous task. Defaults to False.
 
         Raises:
             ExpiredFromMoreThanExpireTo: If expire_from is greater than expire_to
@@ -92,16 +101,21 @@ class ORM:
                 "expire_from should be less than expire_to."
             )
 
-        vali_where_query = ValidatorTaskWhereInput(
-            {
-                # only check for expire at since miner may lie
-                "expire_at": {
-                    "gt": expire_from,
-                    "lt": expire_to,
-                },
-                "is_processed": is_processed,
-            }
-        )
+        vali_where_query_dict = {
+            "expire_at": {
+                "gt": expire_from,
+                "lt": expire_to,
+            },
+            "is_processed": is_processed,
+        }
+
+        if has_previous_task:
+            vali_where_query_dict["previous_task_id"] = {"not": None}
+
+        if task_type:
+            vali_where_query_dict["task_type"] = task_type
+
+        vali_where_query = ValidatorTaskWhereInput(**vali_where_query_dict)
 
         # Get total count and first batch of validator tasks in parallel
         task_count, first_batch = await asyncio.gather(
