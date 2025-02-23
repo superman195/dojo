@@ -25,6 +25,14 @@ enum CriteriaTypeEnum {
     TEXT
 }
 
+enum HFLStatusEnum {
+    TF_PENDING // TF created, waiting for feedback, no TASK_RESULT yet
+    TF_COMPLETED // TF task completed, and TASK_RESULT are updated, waiting for synthetic request
+    SF_PENDING // SF created, waiting for scores from miners
+    SF_COMPLETED // SF task results received from miners
+    HFL_COMPLETED // HFL loop finished
+}
+
 model ValidatorTask {
     id               String       @id @unique @default(uuid())
     previous_task_id String?
@@ -211,7 +219,7 @@ model HFLState {
     current_task_id          String // current task in the process
     current_iteration        Int             @default(1)
     current_synthetic_req_id String? // Null when not in synthetic phase
-    status                   String // Current state of the HFL process (e.g., TF_PENDING, TF_COMPLETE, SF_PENDING)
+    status                   HFLStatusEnum // Current state of the HFL process (e.g., TF_PENDING, TF_COMPLETE, SF_PENDING)
     events                   Json[]          @db.JsonB // Array of state transition events with metadata
     created_at               DateTime        @default(now())
     updated_at               DateTime        @updatedAt

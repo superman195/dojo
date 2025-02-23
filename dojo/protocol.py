@@ -13,6 +13,7 @@ class TaskTypeEnum(StrEnum):
     TEXT_TO_IMAGE = "TEXT_TO_IMAGE"
     CODE_GENERATION = "CODE_GENERATION"
     TEXT_TO_COMPLETION = "TEXT_TO_COMPLETION"
+    SCORE_FEEDBACK = "SCORE_FEEDBACK"
 
 
 class CriteriaTypeEnum(StrEnum):
