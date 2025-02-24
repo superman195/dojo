@@ -800,16 +800,20 @@ class ORM:
         status: HFLStatusEnum,
         expire_from: datetime | None = None,
         expire_to: datetime | None = None,
-    ) -> list[ValidatorTask]:
-        """Get Score-Feedback tasks by HFL status and expiry window.
+        batch_size: int = 10,
+    ) -> AsyncGenerator[tuple[list[ValidatorTask], bool], None]:
+        """Get Score-Feedback tasks by HFL status and expiry window in batches.
 
         Args:
             status: HFL status to filter by
             expire_from: Optional datetime to filter tasks that expired after this time
             expire_to: Optional datetime to filter tasks that expired before this time
+            batch_size: Number of tasks to return in each batch
 
-        Returns:
-            List of validator tasks matching the criteria
+        Yields:
+            tuple[list[ValidatorTask], bool]: Each yield returns:
+            - List of validator tasks with the specified HFL status
+            - Boolean indicating if there are more batches to process
         """
         try:
             where_query = ValidatorTaskWhereInput(
@@ -824,17 +828,32 @@ class ORM:
                     "lt": expire_to,
                 }
 
-            tasks = await ValidatorTask.prisma().find_many(
-                where=where_query,
-                include={
-                    "HFLState": True,
-                },
-                order={"created_at": "desc"},
-            )
-            return tasks
+            # Get total count of matching tasks
+            total_tasks = await ValidatorTask.prisma().count(where=where_query)
+
+            if total_tasks == 0:
+                yield [], False
+                return
+
+            # Process in batches
+            for skip in range(0, total_tasks, batch_size):
+                tasks = await ValidatorTask.prisma().find_many(
+                    where=where_query,
+                    include={
+                        "HFLState": True,
+                        "miner_responses": True,
+                    },
+                    order={"created_at": "desc"},
+                    take=batch_size,
+                    skip=skip,
+                )
+
+                has_more = skip + batch_size < total_tasks
+                yield tasks, has_more
+
         except Exception as e:
             logger.error(f"Error getting SF tasks by status {status}: {e}")
-            return []
+            yield [], False
 
 
 # ---------------------------------------------------------------------------- #

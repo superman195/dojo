@@ -280,7 +280,7 @@ class FeedbackLoop:
             logger.error(f"Error generating text criteria task: {e}")
             return None
 
-    async def poll_synthetic_improvements(self, validator: Validator):
+    async def create_sf_tasks(self, validator: Validator):
         """
         Poll for completed text feedback tasks and process synthetic improvements.
         Runs continuously with SF_TASK_CREATION_INTERVAL delay between iterations.
@@ -300,7 +300,7 @@ class FeedbackLoop:
                     batch_size=10,
                 ):
                     if not tf_tasks_batch:
-                        await asyncio.sleep(dojo.SYNTHETIC_POLL_INTERVAL)
+                        await asyncio.sleep(dojo.SF_TASK_CREATION_INTERVAL)
                         continue
 
                     for tf_task in tf_tasks_batch:
@@ -428,7 +428,113 @@ class FeedbackLoop:
         1. Query SF_PENDING tasks that have expired within a time window
         2. For each task:
             - Get all miner responses
+            - Query each miner for task results using their dojo_task_id
             - Update task results in database
             - Update HFL state to SF_COMPLETED
         """
-        pass
+        while True:
+            try:
+                # Get tasks that expired in the last 2 hours
+                expire_from = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
+                    hours=2
+                )
+                expire_to = datetime_as_utc(datetime.now(timezone.utc))
+
+                logger.debug(
+                    f"Processing SF tasks with expire_from: {expire_from} and expire_to: {expire_to}"
+                )
+
+                # Get SF_PENDING tasks in batches
+                async for sf_tasks_batch, _ in ORM.get_SF_tasks_by_hfl_status(
+                    status=HFLStatusEnum.SF_PENDING,
+                    expire_from=expire_from,
+                    expire_to=expire_to,
+                    batch_size=10,
+                ):
+                    if not sf_tasks_batch:
+                        await asyncio.sleep(dojo.SF_TASK_CREATION_INTERVAL)
+                        continue
+
+                    for sf_task in sf_tasks_batch:
+                        try:
+                            if not sf_task.miner_responses:
+                                logger.debug(
+                                    f"No miner responses for task {sf_task.id}"
+                                )
+                                continue
+
+                            if not sf_task.HFLState or not sf_task.HFLState.id:
+                                logger.debug(
+                                    f"No HFLState or HFLState.id for task {sf_task.id}"
+                                )
+                                continue
+
+                            # Update task results for each miner response
+                            for miner_response in sf_task.miner_responses:
+                                if (
+                                    not miner_response.hotkey
+                                    or not miner_response.dojo_task_id
+                                ):
+                                    logger.debug(
+                                        "Missing hotkey or dojo_task_id for miner response"
+                                    )
+                                    continue
+
+                                # Get task results from miner
+                                task_results = (
+                                    await validator._get_task_results_from_miner(
+                                        miner_hotkey=miner_response.hotkey,
+                                        dojo_task_id=miner_response.dojo_task_id,
+                                    )
+                                )
+
+                                if not task_results:
+                                    logger.debug(
+                                        f"No task results from miner {miner_response.hotkey}"
+                                    )
+                                    continue
+
+                                # Update task results in database
+                                success = await ORM.update_miner_task_results(
+                                    miner_hotkey=miner_response.hotkey,
+                                    dojo_task_id=miner_response.dojo_task_id,
+                                    task_results=task_results,
+                                )
+
+                                if not success:
+                                    logger.warning(
+                                        f"Failed to update task_result for miner {miner_response.hotkey}"
+                                    )
+
+                            # Update HFL state to SF_COMPLETED
+                            event = ScoreFeedbackEvent(
+                                type=HFLStatusEnum.SF_COMPLETED,
+                                task_id=sf_task.id,
+                                iteration=sf_task.HFLState.current_iteration,
+                                timestamp=datetime_as_utc(datetime.now(timezone.utc)),
+                            )
+
+                            await HFLManager.update_state(
+                                sf_task.HFLState.id,
+                                {
+                                    "status": HFLStatusEnum.SF_COMPLETED,
+                                },
+                                event,
+                            )
+
+                            logger.success(
+                                f"Successfully processed SF task {sf_task.id}"
+                            )
+
+                        except Exception as e:
+                            logger.error(
+                                f"Error processing SF task {sf_task.id}: {str(e)}"
+                            )
+                            continue
+
+                # Add delay between batches
+                await asyncio.sleep(dojo.SF_TASK_CREATION_INTERVAL)
+
+            except Exception as e:
+                logger.error(f"Error in SF task processing loop: {str(e)}")
+                await asyncio.sleep(dojo.SF_TASK_CREATION_INTERVAL)

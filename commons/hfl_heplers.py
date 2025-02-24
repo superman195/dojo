@@ -5,7 +5,7 @@ from database.prisma import Json
 from database.prisma.enums import HFLStatusEnum
 from database.prisma.models import HFLState
 from database.prisma.types import HFLStateUpdateInput
-from dojo.protocol import HFLEvent, TextFeedbackEvent
+from dojo.protocol import HFLEvent, ScoreFeedbackEvent, TextFeedbackEvent
 
 
 class HFLManager:
@@ -121,11 +121,8 @@ class HFLManager:
         state: HFLState, updates: HFLStateUpdateInput, event_data: HFLEvent
     ) -> HFLState:
         """Core update logic used by all handlers."""
-        events = state.events or []
         if event_data:
-            new_event = event_data.model_dump()
-            events.append(Json(new_event))
-            updates["events"] = [Json(e) for e in events]
+            updates["events"] = {"push": [Json(event_data.model_dump())]}
 
         update_state = await HFLState.prisma().update(
             where={"id": state.id}, data=updates
@@ -143,3 +140,16 @@ class HFLManager:
         if not state:
             raise ValueError(f"No HFL state found with ID {hfl_state_id}")
         return state
+
+    @staticmethod
+    async def get_update_state_operation(
+        state_id: str, status_updates: HFLStateUpdateInput, event: ScoreFeedbackEvent
+    ):
+        return {
+            "where": {"id": state_id},
+            "data": HFLStateUpdateInput(
+                status_updates,
+                events={"push": [Json(event.model_dump())]},
+                updated_at=datetime_as_utc(datetime.now(timezone.utc)),
+            ),
+        }
