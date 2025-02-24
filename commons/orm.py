@@ -464,6 +464,9 @@ class ORM:
                     logger.error("Failed to map validator task")
                     return None
 
+                if prev_task_id:
+                    validator_task_data["previous_task_id"] = prev_task_id
+
                 created_task = await tx.validatortask.create(data=validator_task_data)
 
                 # Create completions separately, ValidatorTaskCreateInput does not support CompletionCreateInput
@@ -743,49 +746,86 @@ class ORM:
     @staticmethod
     async def get_TF_tasks_by_hfl_status(
         status: HFLStatusEnum,
-    ) -> list[ValidatorTask]:
-        """Get validator tasks by HFL status.
+        batch_size: int = 10,
+    ) -> AsyncGenerator[tuple[list[ValidatorTask], bool], None]:
+        """Get validator tasks by HFL status in batches.
 
         Args:
             status: HFL status to filter by
+            batch_size: Number of tasks to return in each batch
 
-        Returns:
-            List of validator tasks with the specified HFL status
+        Yields:
+            tuple[list[ValidatorTask], bool]: Each yield returns:
+            - List of validator tasks with the specified HFL status
+            - Boolean indicating if there are more batches to process
         """
         try:
-            tasks = await ValidatorTask.prisma().find_many(
-                where=ValidatorTaskWhereInput(
-                    task_type=TaskTypeEnum.TEXT_TO_COMPLETION,
-                    HFLState={
-                        "is": {
-                            "status": status,
-                        }
-                    },
-                ),
-                include={
-                    "HFLState": True,
+            where_query = ValidatorTaskWhereInput(
+                task_type=TaskTypeEnum.TEXT_TO_COMPLETION,
+                HFLState={
+                    "is": {
+                        "status": status,
+                    }
                 },
-                order={"created_at": "desc"},
             )
-            return tasks
+
+            # Get total count of matching tasks
+            total_tasks = await ValidatorTask.prisma().count(where=where_query)
+
+            if total_tasks == 0:
+                yield [], False
+                return
+
+            # Process in batches
+            for skip in range(0, total_tasks, batch_size):
+                tasks = await ValidatorTask.prisma().find_many(
+                    where=where_query,
+                    include={
+                        "HFLState": True,
+                    },
+                    order={"created_at": "desc"},
+                    take=batch_size,
+                    skip=skip,
+                )
+
+                has_more = skip + batch_size < total_tasks
+                yield tasks, has_more
+
         except Exception as e:
             logger.error(f"Error getting tasks by HFL status {status}: {e}")
-            return []
+            yield [], False
 
     @staticmethod
-    # TODO include table name in the query as needed
-    async def get_sf_tasks_by_status(
+    async def get_SF_tasks_by_hfl_status(
         status: HFLStatusEnum,
+        expire_from: datetime | None = None,
+        expire_to: datetime | None = None,
     ) -> list[ValidatorTask]:
-        """Get Score-Feedback tasks by HFL status."""
+        """Get Score-Feedback tasks by HFL status and expiry window.
+
+        Args:
+            status: HFL status to filter by
+            expire_from: Optional datetime to filter tasks that expired after this time
+            expire_to: Optional datetime to filter tasks that expired before this time
+
+        Returns:
+            List of validator tasks matching the criteria
+        """
         try:
+            where_query = ValidatorTaskWhereInput(
+                task_type=TaskTypeEnum.SCORE_FEEDBACK,
+                HFLState={"is": {"status": status}},
+            )
+
+            # Add expire time filters if provided
+            if expire_from and expire_to:
+                where_query["expire_at"] = {
+                    "gt": expire_from,
+                    "lt": expire_to,
+                }
+
             tasks = await ValidatorTask.prisma().find_many(
-                where=ValidatorTaskWhereInput(
-                    {
-                        "task_type": TaskTypeEnum.SCORE_FEEDBACK,
-                        "HFLState": {"is": {"status": status}},
-                    }
-                ),
+                where=where_query,
                 include={
                     "HFLState": True,
                 },

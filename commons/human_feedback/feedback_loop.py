@@ -1,19 +1,28 @@
 import asyncio
 import json
 import random
+import traceback
 from datetime import datetime, timedelta, timezone
 from typing import List, Tuple
 
+import aiohttp
 from bittensor.utils.btlogging import logging as logger
+from tenacity import RetryError
 
 import dojo
+from commons.dataset.synthetic import SyntheticAPI
+from commons.hfl_heplers import HFLManager
 from commons.orm import ORM
 from commons.utils import datetime_as_utc, get_new_uuid, set_expire_time
+from database.prisma.enums import HFLStatusEnum
 from database.prisma.models import MinerScore
 from database.prisma.types import MinerScoreWhereInput
 from dojo.protocol import (
     CriteriaType,
     DendriteQueryResponse,
+    ScoreCriteria,
+    ScoreFeedbackEvent,
+    SyntheticQA,
     TaskSynapseObject,
     TaskTypeEnum,
     TextCriteria,
@@ -270,3 +279,156 @@ class FeedbackLoop:
         except Exception as e:
             logger.error(f"Error generating text criteria task: {e}")
             return None
+
+    async def poll_synthetic_improvements(self, validator: Validator):
+        """
+        Poll for completed text feedback tasks and process synthetic improvements.
+        Runs continuously with SF_TASK_CREATION_INTERVAL delay between iterations.
+
+        Flow:
+        1. Query TF_COMPLETED states in batches
+        2. For each batch:
+            - Check synthetic task status
+            - If ready, create improved task and send to miners
+            - Update state to SF_PENDING
+        """
+        while True:
+            try:
+                # Get tasks with TF_COMPLETED status in batches
+                async for tf_tasks_batch, _ in ORM.get_TF_tasks_by_hfl_status(
+                    status=HFLStatusEnum.TF_COMPLETED,
+                    batch_size=10,
+                ):
+                    if not tf_tasks_batch:
+                        await asyncio.sleep(dojo.SYNTHETIC_POLL_INTERVAL)
+                        continue
+
+                    for tf_task in tf_tasks_batch:
+                        try:
+                            if (
+                                not tf_task.HFLState
+                                or not tf_task.HFLState.current_synthetic_req_id
+                            ):
+                                logger.debug(
+                                    f"No HFLState or current_synthetic_req_id for task-id: {tf_task.id}"
+                                )
+                                continue
+
+                            # Check if synthetic task is ready
+                            improved_task = (
+                                await self._generate_improved_synthetic_request(
+                                    tf_task.HFLState.current_synthetic_req_id
+                                )
+                            )
+                            if not improved_task:
+                                logger.debug(
+                                    f"No improved task found for {tf_task.HFLState.current_synthetic_req_id} yet"
+                                )
+                                continue
+
+                            # Create new task for miners
+                            new_task = TaskSynapseObject(
+                                task_id=get_new_uuid(),
+                                prompt=improved_task.prompt,
+                                task_type=TaskTypeEnum.SCORE_FEEDBACK,
+                                expire_at=set_expire_time(dojo.TASK_DEADLINE),
+                                completion_responses=improved_task.completion_responses,
+                            )
+
+                            # Send to miners and get responses
+                            sf_task = await validator.send_request(
+                                synapse=new_task,
+                                synthetic_task=True,
+                                prev_task_id=tf_task.id,
+                            )
+
+                            if not sf_task:
+                                logger.error(
+                                    f"Failed to send improved task to miners for {tf_task.id}"
+                                )
+                                continue
+
+                            # Update HFL state
+                            event = ScoreFeedbackEvent(
+                                type=HFLStatusEnum.SF_PENDING,
+                                task_id=tf_task.id,
+                                syn_req_id=tf_task.HFLState.current_synthetic_req_id,
+                                iteration=tf_task.HFLState.current_iteration,
+                                timestamp=datetime_as_utc(datetime.now(timezone.utc)),
+                            )
+
+                            await HFLManager.update_state(
+                                tf_task.HFLState.id,
+                                {
+                                    "status": HFLStatusEnum.SF_PENDING,
+                                    "current_task_id": sf_task.id,
+                                    "current_synthetic_req_id": None,  # Clear synthetic req ID
+                                },
+                                event,
+                            )
+
+                        except Exception as e:
+                            # Log error but continue processing other tasks
+                            logger.error(
+                                f"Error processing task {tf_task.id}: {str(e)}"
+                            )
+                            continue
+
+                    await asyncio.sleep(dojo.SF_TASK_CREATION_INTERVAL)
+
+            except Exception as e:
+                logger.error(f"Error in synthetic polling loop: {str(e)}")
+                await asyncio.sleep(dojo.SF_TASK_CREATION_INTERVAL)
+
+    async def _generate_improved_synthetic_request(
+        self, syn_req_id: str
+    ) -> TaskSynapseObject | None:
+        """Generate an improved synthetic request"""
+        try:
+            SF_task: SyntheticQA | None = await SyntheticAPI.get_improved_SF(syn_req_id)
+
+            if not SF_task:
+                logger.error(f"No improved task found for {syn_req_id}")
+                return None
+
+            # Create criteria for each completion response
+            criteria: List[CriteriaType] = [
+                ScoreCriteria(
+                    min=1.0,
+                    max=100.0,
+                )
+            ]
+
+            # Set criteria for each completion response
+            for response in SF_task.responses:
+                response.criteria_types = criteria
+
+            synapse = TaskSynapseObject(
+                task_id=get_new_uuid(),
+                prompt=SF_task.prompt,
+                task_type=TaskTypeEnum.CODE_GENERATION,
+                expire_at=set_expire_time(dojo.TASK_DEADLINE),
+                completion_responses=SF_task.responses,
+            )
+
+        except (RetryError, ValueError, aiohttp.ClientError) as e:
+            logger.error(f"Error getting improved task for {syn_req_id}: {e}")
+
+        except Exception as e:
+            logger.error(f"Unexpected error during synthetic data generation: {e}")
+            logger.debug(f"Traceback: {traceback.format_exc()}")
+
+        return synapse
+
+    async def update_sf_task_results(self, validator: Validator):
+        """
+        Update the results of Score Feedback (SF) tasks.
+
+        Flow:
+        1. Query SF_PENDING tasks that have expired within a time window
+        2. For each task:
+            - Get all miner responses
+            - Update task results in database
+            - Update HFL state to SF_COMPLETED
+        """
+        pass

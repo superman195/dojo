@@ -41,6 +41,7 @@ from commons.utils import (
     initialise,
     set_expire_time,
 )
+from database.prisma.models import ValidatorTask
 from dojo import get_latest_git_tag, get_latest_remote_tag, get_spec_version
 from dojo.protocol import (
     CompletionResponse,
@@ -885,7 +886,8 @@ class Validator:
         obfuscated_model_to_model: ObfuscatedModelMap | None = None,
         synthetic_task: bool = True,
         subset_size: int | None = None,
-    ):
+        prev_task_id: str | None = None,
+    ) -> ValidatorTask | None:
         """Send task requests to miners and process their responses.
 
         Args:
@@ -989,11 +991,13 @@ class Validator:
         synapse.dendrite.hotkey = self.vali_hotkey
 
         logger.debug("Attempting to saving dendrite response")
-        if not await ORM.save_task(
+        validator_task = await ORM.save_task(
             validator_task=synapse,
             miner_responses=valid_miner_responses,
             ground_truth=ground_truth or {},
-        ):
+            prev_task_id=prev_task_id,
+        )
+        if not validator_task:
             logger.error("Failed to save dendrite response")
             return
 

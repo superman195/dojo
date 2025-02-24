@@ -90,3 +90,8 @@ class SyntheticAPI:
             raise
         except Exception:
             raise
+
+    # TODO replace with a function that generates a synthetic request with improvements
+    @classmethod
+    async def get_improved_SF(cls, req_id: str) -> SyntheticQA | None:
+        pass
