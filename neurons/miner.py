@@ -21,7 +21,6 @@ from dojo.protocol import (
     TaskSynapseObject,
 )
 from dojo.utils.config import get_config
-from dojo.utils.uids import is_miner
 
 
 class Miner(BaseMinerNeuron):
@@ -29,6 +28,8 @@ class Miner(BaseMinerNeuron):
 
     def __init__(self):
         super().__init__()
+        self.whitelisted_validators = set()
+        self.update_validator_whitelist()
         # Dendrite lets us send messages to other nodes (axons) in the network.
         self.dendrite = bt.dendrite(wallet=self.wallet)
 
@@ -38,18 +39,22 @@ class Miner(BaseMinerNeuron):
             forward_fn=self.forward_task_request,
             blacklist_fn=self.blacklist_task_request,
             priority_fn=self.priority_ranking,
+            verify_fn=self.verify_validator_request,
         ).attach(
             forward_fn=self.forward_score_result,
             blacklist_fn=self.blacklist_score_result_request,
+            verify_fn=self.verify_validator_request,
         ).attach(
             forward_fn=self.ack_heartbeat,
             blacklist_fn=self.blacklist_heartbeat_request,
+            verify_fn=self.verify_validator_request,
         )
 
         # Attach a handler for TaskResultRequest to return task results
         self.axon.attach(
             forward_fn=self.forward_task_result_request,
             blacklist_fn=self.blacklist_task_result_request,
+            verify_fn=self.verify_validator_request,
         )
 
         # Instantiate runners
@@ -260,8 +265,8 @@ class Miner(BaseMinerNeuron):
 
         logger.debug(f"Got {request_tag} request from {caller_hotkey}")
 
-        caller_uid = self.metagraph.hotkeys.index(caller_hotkey)
-        validator_neuron: bt.NeuronInfo = self.metagraph.neurons[caller_uid]
+        # caller_uid = self.metagraph.hotkeys.index(caller_hotkey)
+        # validator_neuron: bt.NeuronInfo = self.metagraph.neurons[caller_uid]
 
         if get_config().ignore_min_stake:
             message = (
@@ -274,14 +279,18 @@ class Miner(BaseMinerNeuron):
                 f"Ignored minimum validator stake requirement of {VALIDATOR_MIN_STAKE}",
             )
 
-        if is_miner(self.metagraph, caller_uid):
-            return True, "Not a validator"
+        # if is_miner(self.metagraph, caller_uid):
+        #     return True, "Not a validator"
 
-        if validator_neuron.total_stake.tao < float(VALIDATOR_MIN_STAKE):
-            logger.warning(
-                f"Blacklisting hotkey: {caller_hotkey} with insufficient stake, minimum stake required: {VALIDATOR_MIN_STAKE}, current stake: {validator_neuron.stake.tao}"
-            )
-            return True, "Insufficient validator stake"
+        # if validator_neuron.total_stake.tao < float(VALIDATOR_MIN_STAKE):
+        #     logger.warning(
+        #         f"Blacklisting hotkey: {caller_hotkey} with insufficient stake, minimum stake required: {VALIDATOR_MIN_STAKE}, current stake: {validator_neuron.stake.tao}"
+        #     )
+        #     return True, "Insufficient validator stake"
+        # 1. Check if it's a real validator first
+        validator_hotkey = synapse.dendrite.hotkey
+        if validator_hotkey not in self.whitelisted_validators:
+            return True, "Not a whitelisted validator"
 
         return False, valid_msg
 
@@ -312,7 +321,38 @@ class Miner(BaseMinerNeuron):
 
         logger.info("Metagraph updated")
 
+        # Update the validator whitelist
+        self.update_validator_whitelist()
+
     async def log_miner_status(self):
         while not self._should_exit:
             logger.info(f"Miner running... block:{str(self.block)} time: {time.time()}")
             await asyncio.sleep(MINER_STATUS)
+
+    def update_validator_whitelist(self):
+        """Update whitelist with validator hotkeys based on vtrust"""
+        try:
+            # Clear existing whitelist
+            self.whitelisted_validators.clear()
+
+            # Iterate through all neurons and filter validators (vtrust > 0)
+            for i in range(len(self.metagraph.hotkeys)):
+                if self.metagraph.validator_trust[i] > 0:  # This identifies validators
+                    validator_hotkey = self.metagraph.hotkeys[i]
+                    self.whitelisted_validators.add(validator_hotkey)
+
+            logger.info(f"Updated validator whitelist: {self.whitelisted_validators}")
+
+        except Exception as e:
+            logger.error(f"Error updating validator whitelist: {e}")
+            logger.debug(f"Traceback: {traceback.format_exc()}")
+
+    async def verify_validator_request(self, synapse: TaskSynapseObject):
+        logger.info(f"Verifying validator request from {synapse.dendrite.hotkey}")
+
+        try:
+            await self.axon.default_verify(synapse)
+        except Exception as e:
+            logger.error(f"Error verifying validator request: {e}")
+            logger.debug(f"Traceback: {traceback.format_exc()}")
+            raise e
