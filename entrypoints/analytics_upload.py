@@ -214,13 +214,13 @@ async def run_analytics_upload(scores_alock: asyncio.Lock, expire_from, expire_t
 
 #         from commons.utils import datetime_as_utc
 
-#         from_5_days = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(days=5)
+#         from_14_days = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(days=14)
 #         from_24_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
 #             hours=24
 #         )
 #         from_1_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(hours=1)
 #         to_now = datetime_as_utc(datetime.now(timezone.utc))
-#         res = await run_analytics_upload(asyncio.Lock(), from_5_days, to_now)
+#         res = await run_analytics_upload(asyncio.Lock(), from_14_days, to_now)
 #         print(f"Response: {res}")
 
 #     asyncio.run(main())

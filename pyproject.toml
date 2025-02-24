@@ -41,6 +41,7 @@ dependencies = [
   "pingouin==0.5.4",
   "prompt_toolkit==3.0.47",
   "pydantic==2.8.2",
+  "pydantic-settings==2.2.1",
   "python-dotenv==1.0.1",
   "scikit-learn==1.5.1",
   "scipy==1.14.0",

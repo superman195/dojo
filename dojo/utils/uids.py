@@ -17,7 +17,11 @@ def is_uid_available(metagraph: bt.metagraph, uid: int) -> bool:
 
 
 def is_miner(metagraph: bt.metagraph, uid: int) -> bool:
-    """Check if uid is a validator."""
+    """
+    Check if uid is a validator.
+    since dTao launch, this function now checks for alpha_tao.
+    To check root Tao stake use check_root_stake() instead
+    """
     stakes = metagraph.S.tolist()
     from dojo import VALIDATOR_MIN_STAKE
 
@@ -31,7 +35,7 @@ def check_root_stake(metagraph: bt.metagraph, uid: int) -> bool:
     """
     from dojo import VALIDATOR_MIN_STAKE
 
-    neuron = metagraph.neurons[uid]
+    neuron: bt.NeuronInfo | bt.NeuronInfoLite = metagraph.neurons[uid]
     return neuron.total_stake.tao < float(VALIDATOR_MIN_STAKE)
 
 

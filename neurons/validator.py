@@ -756,7 +756,10 @@ class Validator:
                 await self.update_scores(hotkey_to_scores=final_hotkey_to_score)
 
                 # upload scores to analytics API after updating.
-                await run_analytics_upload(self._scores_alock, expire_from, expire_to)
+                expire_from_analytics = expire_to - timedelta(minutes=65)
+                await run_analytics_upload(
+                    self._scores_alock, expire_from_analytics, expire_to
+                )
             except Exception:
                 traceback.print_exc()
                 pass

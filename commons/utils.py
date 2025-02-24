@@ -363,3 +363,54 @@ def is_valid_expiry(expire_at: str) -> bool:
     else:
         logger.warning(f"Expiry time {expire_at} is out of the reasonable range.")
         return False
+
+
+def verify_hotkey_in_metagraph(metagraph: bt.metagraph, hotkey: str) -> bool:
+    return hotkey in metagraph.hotkeys
+
+
+def verify_signature(hotkey: str, signature: str, message: str) -> bool:
+    keypair = bt.Keypair(ss58_address=hotkey, ss58_format=42)
+    if not keypair.verify(data=message, signature=signature):
+        logger.error(f"Invalid signature for address={hotkey}")
+        return False
+
+    logger.success(f"Signature verified, signed by {hotkey}")
+    return True
+
+
+def check_stake(metagraph: bt.metagraph, hotkey: str) -> bool:
+    """
+    checks the root tao for a hotkey.
+    Returns true if hotkey has enough stake to be a validator and false otherwise.
+    """
+    from dojo import VALIDATOR_MIN_STAKE
+
+    uid = -1
+    try:
+        uid = metagraph.hotkeys.index(hotkey)
+    except ValueError:
+        logger.error(f"Hotkey {hotkey} not found in metagraph")
+        return False
+
+    # Check if stake meets minimum threshold
+    neuron: bt.NeuronInfo | bt.NeuronInfoLite = metagraph.neurons[uid]
+    stake = neuron.stake.tao
+
+    if stake < VALIDATOR_MIN_STAKE:
+        logger.error(
+            f"Insufficient stake for hotkey {hotkey}: {stake} < {VALIDATOR_MIN_STAKE}"
+        )
+        return False
+
+    logger.info(f"Stake check passed for {hotkey} with stake {stake}")
+    return True
+
+
+def get_metagraph(subtensor: bt.subtensor) -> bt.metagraph:
+    """
+    Gets and syncs a metagraph from an input subtensor
+    """
+    metagraph = subtensor.metagraph(netuid=subtensor.config.netuid, lite=True)
+    metagraph.sync(block=None, lite=True)
+    return metagraph

@@ -1,5 +1,6 @@
 import asyncio
 import os
+from contextlib import asynccontextmanager
 from typing import List
 
 import aioboto3
@@ -8,13 +9,40 @@ import bittensor as bt
 import httpx
 import uvicorn
 from bittensor.utils.btlogging import logging as logger
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
+from commons.api_settings import ValidatorAPISettings, get_settings
+from commons.cache import RedisCache
 from commons.objects import ObjectManager
-from dojo import VALIDATOR_MIN_STAKE
+from commons.utils import (
+    check_stake,
+    get_metagraph,
+    verify_hotkey_in_metagraph,
+    verify_signature,
+)
+from entrypoints.analytics_endpoint import analytics_router
 
-app = FastAPI(title="Validator API Service")
+load_dotenv()
+settings: ValidatorAPISettings = get_settings()
+cfg: bt.config = ObjectManager.get_config()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.bt_cfg = cfg
+    app.state.api_config = settings.aws
+    app.state.redis = RedisCache(settings.redis)
+    await app.state.redis.put("test", "yay")
+    print(await app.state.redis.get("test"))
+    app.state.subtensor = bt.subtensor(config=app.state.bt_cfg)
+    yield
+    await app.state.redis.close()
+    app.state.subtensor.close()
+
+
+app = FastAPI(title="Validator API Service", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -22,48 +50,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-config = ObjectManager.get_config()
-subtensor = bt.subtensor(config=config)
-metagraph = subtensor.metagraph(netuid=52, lite=True)
-AWS_REGION = os.getenv("AWS_REGION")
-BUCKET_NAME = os.getenv("ANALYTICS_BUCKET_NAME")
-BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
-MAX_CHUNK_SIZE_MB = int(os.getenv("MAX_CHUNK_SIZE_MB", 50))
 
 
-def verify_hotkey_in_metagraph(hotkey: str) -> bool:
-    return hotkey in metagraph.hotkeys
-
-
-def verify_signature(hotkey: str, signature: str, message: str) -> bool:
-    keypair = bt.Keypair(ss58_address=hotkey, ss58_format=42)
-    if not keypair.verify(data=message, signature=signature):
-        logger.error(f"Invalid signature for address={hotkey}")
-        return False
-
-    logger.success(f"Signature verified, signed by {hotkey}")
-    return True
-
-
-def check_stake(hotkey: str) -> bool:
-    uid = -1
-    try:
-        uid = metagraph.hotkeys.index(hotkey)
-    except ValueError:
-        logger.error(f"Hotkey {hotkey} not found in metagraph")
-        return False
-
-    # Check if stake meets minimum threshold
-    stake = metagraph.S[uid].item()
-
-    if stake < VALIDATOR_MIN_STAKE:
-        logger.error(
-            f"Insufficient stake for hotkey {hotkey}: {stake} < {VALIDATOR_MIN_STAKE}"
-        )
-        return False
-
-    logger.info(f"Stake check passed for {hotkey} with stake {stake}")
-    return True
+app.include_router(analytics_router)
 
 
 @app.post("/upload_dataset")
@@ -73,6 +62,8 @@ async def upload_dataset(
     message: str = Form(...),
     files: List[UploadFile] = File(...),
 ):
+    api_config = app.state.api_config
+    metagraph = get_metagraph(app.state.subtensor)
     try:
         if not signature.startswith("0x"):
             raise HTTPException(
@@ -83,28 +74,30 @@ async def upload_dataset(
             logger.error(f"Invalid signature for address={hotkey}")
             raise HTTPException(status_code=401, detail="Invalid signature.")
 
-        if not verify_hotkey_in_metagraph(hotkey):
+        if not verify_hotkey_in_metagraph(metagraph, hotkey):
             logger.error(f"Hotkey {hotkey} not found in metagraph")
             raise HTTPException(
                 status_code=401, detail="Hotkey not found in metagraph."
             )
 
-        if not check_stake(hotkey):
+        if not check_stake(metagraph, hotkey):
             logger.error(f"Insufficient stake for hotkey {hotkey}")
             raise HTTPException(
                 status_code=401, detail="Insufficient stake for hotkey."
             )
 
-        session = aioboto3.Session(region_name=AWS_REGION)
+        session = aioboto3.Session(region_name=api_config.AWS_REGION)
         async with session.resource("s3") as s3:
-            bucket = await s3.Bucket(BUCKET_NAME)
+            bucket = await s3.Bucket(api_config.BUCKET_NAME)
             for file in files:
                 content = await file.read()
                 file_size = len(content)
-                if file_size > MAX_CHUNK_SIZE_MB * 1024 * 1024:  # 50MB in bytes
+                if (
+                    file_size > api_config.MAX_CHUNK_SIZE_MB * 1024 * 1024
+                ):  # 50MB in bytes
                     raise HTTPException(
                         status_code=413,
-                        detail=f"File too large. Maximum size is {MAX_CHUNK_SIZE_MB}MB",
+                        detail=f"File too large. Maximum size is {api_config.MAX_CHUNK_SIZE_MB}MB",
                     )
 
                 filename = f"hotkey_{hotkey}_{file.filename}"
