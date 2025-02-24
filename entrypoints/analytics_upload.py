@@ -142,7 +142,7 @@ async def _post_task_data(payload, hotkey, signature, message):
 
     @to-do: confirm analytics url and add to config
     """
-    TIMEOUT = 15.0
+    # TIMEOUT = 15.0
     _http_client = httpx.AsyncClient()
     ANALYTICS_URL = "http://127.0.0.1:8000"
 
@@ -156,7 +156,8 @@ async def _post_task_data(payload, hotkey, signature, message):
                 "X-Message": message,
                 "Content-Type": "application/json",
             },
-            timeout=TIMEOUT,
+            # timeout=TIMEOUT,
+            timeout=None,
         )
         if response.status_code == 200:
             logger.info(f"Successfully uploaded analytics data for hotkey: {hotkey}")

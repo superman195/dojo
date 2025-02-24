@@ -62,7 +62,6 @@ async def upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
                 # upload task to cache
                 ONE_DAY_SECONDS = 60 * 60 * 24  # 1 day
                 await redis.put(key, val_task_id, ONE_DAY_SECONDS)
-
                 new_tasks.append(task)
 
         # convert to athena format
