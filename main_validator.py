@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from commons.api.middleware import LimitContentLengthMiddleware
 from commons.block_subscriber import start_block_subscriber
 from commons.dataset.synthetic import SyntheticAPI
-from commons.feedback_loop import FeedbackLoop
+from commons.human_feedback.feedback_loop import FeedbackLoop
 from commons.objects import ObjectManager
 from database.client import connect_db, disconnect_db
 from dojo.utils.config import source_dotenv
@@ -59,7 +59,7 @@ async def main():
         asyncio.create_task(
             start_block_subscriber(callbacks=[validator.block_headers_callback])
         ),
-        asyncio.create_task(feedback_loop.run()),
+        asyncio.create_task(feedback_loop.run(validator)),
     ]
 
     await server.serve()
