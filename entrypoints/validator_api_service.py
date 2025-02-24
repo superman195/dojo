@@ -34,8 +34,6 @@ async def lifespan(app: FastAPI):
     app.state.bt_cfg = cfg
     app.state.api_config = settings.aws
     app.state.redis = RedisCache(settings.redis)
-    await app.state.redis.put("test", "yay")
-    print(await app.state.redis.get("test"))
     app.state.subtensor = bt.subtensor(config=app.state.bt_cfg)
     yield
     await app.state.redis.close()
