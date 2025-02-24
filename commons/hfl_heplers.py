@@ -5,6 +5,7 @@ from database.prisma import Json
 from database.prisma.enums import HFLStatusEnum
 from database.prisma.models import HFLState
 from database.prisma.types import HFLStateUpdateInput
+from dojo.protocol import HFLEvent, TextFeedbackEvent
 
 
 class HFLManager:
@@ -16,14 +17,11 @@ class HFLManager:
     ) -> HFLState:
         """Create initial HFL state."""
         # TODO: add data as needed
-        initial_event = {
-            "type": "HFL_STARTED",
-            "timestamp": datetime_as_utc(datetime.now(timezone.utc)),
-            "metadata": {
-                "original_task_id": original_task_id,
-                "current_task_id": current_task_id,
-            },
-        }
+        initial_event = TextFeedbackEvent(
+            task_id=current_task_id,
+            iteration=1,
+            timestamp=datetime_as_utc(datetime.now(timezone.utc)),
+        )
 
         return await HFLState.prisma().create(
             data={
@@ -31,7 +29,7 @@ class HFLManager:
                 "current_task_id": current_task_id,
                 "current_iteration": 1,
                 "status": status,
-                "events": [Json(initial_event)],
+                "events": [Json(initial_event.model_dump())],
             }
         )
 
@@ -39,7 +37,7 @@ class HFLManager:
     async def update_state(
         hfl_state_id: str,
         updates: HFLStateUpdateInput,
-        event_metadata: dict | None = None,
+        event_data: HFLEvent,
     ) -> HFLState:
         """Update HFL state and handle status transitions."""
         current_state = await HFLState.prisma().find_unique(where={"id": hfl_state_id})
@@ -51,79 +49,81 @@ class HFLManager:
             match new_status:
                 case HFLStatusEnum.TF_COMPLETED:
                     return await HFLManager._handle_tf_completed(
-                        current_state, updates, event_metadata
+                        current_state, updates, event_data
                     )
                 case HFLStatusEnum.TF_PENDING:
                     return await HFLManager._handle_tf_pending(
-                        current_state, updates, event_metadata
+                        current_state, updates, event_data
                     )
                 case HFLStatusEnum.SF_PENDING:
                     return await HFLManager._handle_sf_pending(
-                        current_state, updates, event_metadata
+                        current_state, updates, event_data
                     )
                 case HFLStatusEnum.SF_COMPLETED:
                     return await HFLManager._handle_sf_completed(
-                        current_state, updates, event_metadata
+                        current_state, updates, event_data
                     )
                 case HFLStatusEnum.HFL_COMPLETED:
                     return await HFLManager._handle_hfl_completed(
-                        current_state, updates, event_metadata
+                        current_state, updates, event_data
                     )
 
-        return await HFLManager._update_state(current_state, updates, event_metadata)
+        return await HFLManager._update_state(current_state, updates, event_data)
 
     @staticmethod
     async def _handle_tf_pending(
-        state: HFLState, updates: HFLStateUpdateInput, metadata: dict | None
+        state: HFLState, updates: HFLStateUpdateInput, event_data: HFLEvent
     ) -> HFLState:
         """Handle transition to TF_PENDING."""
-        # TODO Add TF pending specific logic
-        return await HFLManager._update_state(state, updates, metadata)
+        # TODO Add TF pending specific logic as needed
+        return await HFLManager._update_state(state, updates, event_data)
 
     @staticmethod
     async def _handle_tf_completed(
-        state: HFLState, updates: HFLStateUpdateInput, metadata: dict | None
+        state: HFLState, updates: HFLStateUpdateInput, event_data: HFLEvent
     ) -> HFLState:
         """Handle transition to TF_COMPLETED."""
-        # TODO Add TF completion specific logic
-        return await HFLManager._update_state(state, updates, metadata)
+        # TODO Add TF completion specific logic as needed
+        if not state.current_synthetic_req_id:
+            raise ValueError("Current synthetic request ID is not set")
+        return await HFLManager._update_state(state, updates, event_data)
 
     @staticmethod
     async def _handle_sf_pending(
-        state: HFLState, updates: HFLStateUpdateInput, metadata: dict | None
+        state: HFLState, updates: HFLStateUpdateInput, event_data: HFLEvent
     ) -> HFLState:
         """Handle transition to SF_PENDING."""
-        # TODO Add SF pending specific logic
-        return await HFLManager._update_state(state, updates, metadata)
+        # TODO Add SF pending specific logic as needed
+
+        updates["current_synthetic_req_id"] = (
+            event_data.syn_req_id
+        )  # Clear the current synthetic request ID
+        return await HFLManager._update_state(state, updates, event_data)
 
     @staticmethod
     async def _handle_sf_completed(
-        state: HFLState, updates: HFLStateUpdateInput, metadata: dict | None
+        state: HFLState, updates: HFLStateUpdateInput, event_data: HFLEvent
     ) -> HFLState:
         """Handle transition to SF_COMPLETED."""
-        # TODO Add SF completion specific logic
-        return await HFLManager._update_state(state, updates, metadata)
+        # TODO Add SF completion specific logic as needed
+        return await HFLManager._update_state(state, updates, event_data)
 
     @staticmethod
     async def _handle_hfl_completed(
-        state: HFLState, updates: HFLStateUpdateInput, metadata: dict | None
+        state: HFLState, updates: HFLStateUpdateInput, event_data: HFLEvent
     ) -> HFLState:
         """Handle transition to HFL_COMPLETED."""
-        # TODO Add HFL completion specific logic
-        return await HFLManager._update_state(state, updates, metadata)
+        # TODO Add HFL completion specific logic as needed
+        return await HFLManager._update_state(state, updates, event_data)
 
     @staticmethod
     async def _update_state(
-        state: HFLState, updates: HFLStateUpdateInput, event_metadata: dict | None
+        state: HFLState, updates: HFLStateUpdateInput, event_data: HFLEvent
     ) -> HFLState:
         """Core update logic used by all handlers."""
         events = state.events or []
-        if event_metadata:
-            new_event = {
-                "type": updates.get("status", state.status),
-                "timestamp": datetime_as_utc(datetime.now(timezone.utc)),
-                "metadata": event_metadata,
-            }
+        if event_data:
+            new_event = event_data.model_dump()
             events.append(Json(new_event))
             updates["events"] = [Json(e) for e in events]
 
