@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List
 
 import bittensor as bt
@@ -12,10 +12,21 @@ class TaskTypeEnum(StrEnum):
     TEXT_TO_THREE_D = "TEXT_TO_THREE_D"
     TEXT_TO_IMAGE = "TEXT_TO_IMAGE"
     CODE_GENERATION = "CODE_GENERATION"
+    TEXT_TO_COMPLETION = "TEXT_TO_COMPLETION"
+    SCORE_FEEDBACK = "SCORE_FEEDBACK"
 
 
 class CriteriaTypeEnum(StrEnum):
     SCORE = "score"
+    TEXT = "text"
+
+
+class HFLEventTypeEnum(StrEnum):
+    TF_PENDING = "TF_PENDING"
+    TF_COMPLETED = "TF_COMPLETED"
+    SF_PENDING = "SF_PENDING"
+    SF_COMPLETED = "SF_COMPLETED"
+    HFL_COMPLETED = "HFL_COMPLETED"
 
 
 class Scores(BaseModel):
@@ -47,7 +58,13 @@ class ScoreCriteria(BaseModel):
     scores: Scores | None = Field(description="Scores of the completion", default=None)
 
 
-CriteriaType = ScoreCriteria
+class TextCriteria(BaseModel):
+    type: str = Field(default=CriteriaTypeEnum.TEXT.value, frozen=True)
+    query: str = Field(description="Query for the task", frozen=True)
+    text_feedback: str = Field(description="Text feedback for the task", frozen=True)
+
+
+CriteriaType = ScoreCriteria | TextCriteria
 
 
 class CodeFileObject(BaseModel):
@@ -232,4 +249,29 @@ class TaskResultRequest(bt.Synapse):
     dojo_task_id: str = Field(description="The ID of the task to retrieve results for")
     task_results: list[TaskResult] = Field(
         description="List of TaskResult objects", default=[]
+    )
+
+
+class HFLEvent(BaseModel):
+    type: str = Field(description="Type of the event")
+    task_id: str = Field(description="ID of the task")
+    syn_req_id: str = Field(description="ID of the synthetic request", default="")
+    iteration: int = Field(description="Iteration of the event", default=0)
+    timestamp: datetime = Field(
+        description="Timestamp of the event",
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+
+
+# TODO: Add more data as needed
+class TextFeedbackEvent(HFLEvent):
+    type: str = Field(
+        description="Type of the event", default=HFLEventTypeEnum.TF_PENDING
+    )
+
+
+# TODO: Add more data as needed
+class ScoreFeedbackEvent(HFLEvent):
+    type: str = Field(
+        description="Type of the event", default=HFLEventTypeEnum.SF_PENDING
     )

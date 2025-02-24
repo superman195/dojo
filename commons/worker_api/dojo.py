@@ -14,6 +14,7 @@ from dojo.protocol import (
     CodeAnswer,
     MultimediaAnswer,
     TaskSynapseObject,
+    TaskTypeEnum,
 )
 
 DOJO_API_BASE_URL = get_dojo_api_base_url()
@@ -113,14 +114,17 @@ class DojoAPI:
         task_request: TaskSynapseObject,
     ) -> List[str]:
         response_data = {"text": "", "json": {}}
+        if task_request.task_type == TaskTypeEnum.TEXT_TO_COMPLETION:
+            title = "Text Feedback Task"
+        else:
+            title = cls.CODE_GEN_TASK_TITLE
 
         for attempt in range(cls.MAX_RETRIES):
             try:
                 # Prepare request data
                 task_data = cls.serialize_task_request(task_request)
-                # TODO: make task title dynamic
                 form_body = {
-                    "title": ("", cls.CODE_GEN_TASK_TITLE),
+                    "title": ("", title),
                     "body": ("", task_request.prompt),
                     "expireAt": ("", task_request.expire_at),
                     "taskData": ("", json.dumps([task_data])),

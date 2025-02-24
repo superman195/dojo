@@ -20,6 +20,7 @@ from dojo.protocol import (
     CriteriaType,
     ScoreCriteria,
     TaskSynapseObject,
+    TextCriteria,
 )
 
 
@@ -109,6 +110,8 @@ def _map_criteria_type_to_enum(criteria: CriteriaType) -> CriteriaTypeEnum:
     """Helper function to map CriteriaType to CriteriaTypeEnum."""
     if isinstance(criteria, ScoreCriteria):
         return CriteriaTypeEnum.SCORE
+    elif isinstance(criteria, TextCriteria):
+        return CriteriaTypeEnum.TEXT
 
 
 def _get_criteria_config(criteria: CriteriaType) -> dict:
@@ -118,6 +121,8 @@ def _get_criteria_config(criteria: CriteriaType) -> dict:
     if isinstance(criteria, ScoreCriteria):
         config["min"] = criteria.min
         config["max"] = criteria.max
+    elif isinstance(criteria, TextCriteria):
+        config["query"] = criteria.query
 
     return config
 
