@@ -56,10 +56,13 @@ class RedisCache:
             redis_url = build_redis_url()
             self.redis = await aioredis.from_url(redis_url)
 
-    async def put(self, key: str, value):
+    async def put(self, key: str, value, expire_time: int = 60 * 60 * 24):
+        """
+        by default will set an expiry time of 1 day
+        """
         if self.redis is None:
             await self.connect()
-        await self.redis.set(key, value)
+        await self.redis.set(key, value, ex=expire_time)
 
     async def get(self, key: str):
         if self.redis is None:
