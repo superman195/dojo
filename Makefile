@@ -63,7 +63,7 @@ validator:
 	docker compose -f docker-compose.validator.yaml up -d validator
 
 validator-up-deps:
-	docker compose -f docker-compose.validator.yaml up -d --build synthetic-api postgres-vali prisma-setup-vali
+	docker compose -f docker-compose.validator.yaml up -d --build synthetic-api postgres prisma-setup-vali
 
 dojo-platform:
 	docker compose -f docker-compose.platform.yaml up -d
