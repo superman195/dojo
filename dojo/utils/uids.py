@@ -1,3 +1,4 @@
+import asyncio
 import bisect
 import uuid
 from collections import defaultdict
@@ -5,7 +6,8 @@ from typing import List
 
 import bittensor as bt
 
-from commons.utils import keccak256_hash
+from commons.objects import ObjectManager
+from commons.utils import aget_effective_stake, get_effective_stake, keccak256_hash
 
 
 def is_uid_available(metagraph: bt.metagraph, uid: int) -> bool:
@@ -17,37 +19,45 @@ def is_uid_available(metagraph: bt.metagraph, uid: int) -> bool:
 
 
 def is_miner(metagraph: bt.metagraph, uid: int) -> bool:
-    """
-    Check if uid is a validator.
-    since dTao launch, this function now checks for alpha_tao.
-    To check root Tao stake use check_root_stake() instead
-    """
-    stakes = metagraph.S.tolist()
+    """Check if uid is a validator."""
     from dojo import VALIDATOR_MIN_STAKE
 
-    return stakes[uid] < VALIDATOR_MIN_STAKE
+    hotkey = metagraph.hotkeys[uid]
+    effective_stake = get_effective_stake(hotkey, metagraph.subtensor)
+    return effective_stake < VALIDATOR_MIN_STAKE
 
 
-def check_root_stake(metagraph: bt.metagraph, uid: int) -> bool:
-    """
-    checks the total root stake of a neuron and returns true if it is less than the validator min stake.
-    if true, the neuron is a miner. False, it is a validator.
-    """
+async def extract_miner_uids() -> List[int]:
+    config = ObjectManager.get_config()
+    async with bt.AsyncSubtensor(config=config) as subtensor:
+        block = await subtensor.get_current_block()
+        subnet_metagraph = await subtensor.metagraph(config.netuid, block=block)
+        root_metagraph = await subtensor.metagraph(0, block=block)
+
     from dojo import VALIDATOR_MIN_STAKE
 
-    neuron: bt.NeuronInfo | bt.NeuronInfoLite = metagraph.neurons[uid]
-    return neuron.total_stake.tao < float(VALIDATOR_MIN_STAKE)
+    semaphore = asyncio.Semaphore(20)  # Allow 20 concurrent calls
 
+    async def _semaphore_get_stake(hotkey):
+        async with semaphore:
+            return await aget_effective_stake(hotkey, root_metagraph, subnet_metagraph)
 
-def extract_miner_uids(metagraph: bt.metagraph):
-    """Extracts active miner uids from the metagraph."""
-    stakes = metagraph.S.tolist()
-    from dojo import VALIDATOR_MIN_STAKE
+    # Create tasks for all hotkeys
+    num_neurons = int(subnet_metagraph.n.item())
+    tasks = [
+        asyncio.create_task(_semaphore_get_stake(subnet_metagraph.hotkeys[i]))
+        for i in range(num_neurons)
+    ]
 
+    # Process all tasks and collect results in order
+    eff_stakes = await asyncio.gather(*tasks)
+
+    # Return miner UIDs based on stakes
     return [
         uid
-        for uid in range(int(metagraph.n.item()))
-        if metagraph.axons[uid].is_serving and stakes[uid] < VALIDATOR_MIN_STAKE
+        for uid in range(num_neurons)
+        if subnet_metagraph.axons[uid].is_serving
+        and eff_stakes[uid] < VALIDATOR_MIN_STAKE
     ]
 
 
@@ -113,6 +123,17 @@ class MinerUidSelector:
             if node not in nodes:
                 nodes.append(node)
         return nodes
+
+
+def check_root_stake(metagraph: bt.metagraph, uid: int) -> bool:
+    """
+    checks the total root stake of a neuron and returns true if it is less than the validator min stake.
+    if true, the neuron is a miner. False, it is a validator.
+    """
+    from dojo import VALIDATOR_MIN_STAKE
+
+    neuron: bt.NeuronInfo | bt.NeuronInfoLite = metagraph.neurons[uid]
+    return neuron.total_stake.tao < float(VALIDATOR_MIN_STAKE)
 
 
 if __name__ == "__main__":

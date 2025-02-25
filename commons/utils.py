@@ -14,9 +14,70 @@ import numpy as np
 import plotext
 import requests
 import torch
+from bittensor.core.metagraph import AsyncMetagraph
 from bittensor.utils.btlogging import logging as logger
 from Crypto.Hash import keccak
 from tenacity import RetryError, Retrying, stop_after_attempt, wait_exponential_jitter
+
+from commons.objects import ObjectManager
+
+ROOT_WEIGHT = 0.18
+ROOT_NETUID = 0
+
+
+def get_effective_stake(hotkey: str, subtensor: bt.subtensor) -> float:
+    if isinstance(subtensor, bt.AsyncSubtensor):
+        raise NotImplementedError("Async subtensor not supported")
+
+    root_stake = 0
+    try:
+        root_metagraph = subtensor.metagraph(ROOT_NETUID)
+        root_stake = root_metagraph.S[root_metagraph.hotkeys.index(hotkey)].item()
+    except (ValueError, IndexError):
+        logger.trace(
+            f"Hotkey {hotkey} not found in root metagraph, defaulting to 0 root_stake"
+        )
+
+    alpha_stake = 0
+    try:
+        config = ObjectManager.get_config()
+        subnet_metagraph = subtensor.metagraph(netuid=config.netuid)  # type:ignore
+        alpha_stake = subnet_metagraph.alpha_stake[
+            subnet_metagraph.hotkeys.index(hotkey)
+        ]
+    except (ValueError, IndexError):
+        logger.trace(
+            f"Hotkey {hotkey} not found in subnet metagraph for netuid: {subnet_metagraph.netuid}, defaulting to 0 alpha_stake"
+        )
+
+    effective_stake = (root_stake * ROOT_WEIGHT) + alpha_stake
+
+    return effective_stake
+
+
+async def aget_effective_stake(
+    hotkey: str, root_metagraph: AsyncMetagraph, subnet_metagraph: AsyncMetagraph
+) -> float:
+    root_stake = 0
+    try:
+        root_stake = root_metagraph.S[root_metagraph.hotkeys.index(hotkey)].item()
+    except (ValueError, IndexError):
+        logger.trace(
+            f"Hotkey {hotkey} not found in root metagraph, defaulting to 0 root_stake"
+        )
+
+    alpha_stake = 0
+    try:
+        idx = subnet_metagraph.hotkeys.index(hotkey)
+        alpha_stake = subnet_metagraph.alpha_stake[idx]
+    except (ValueError, IndexError):
+        logger.trace(
+            f"Hotkey {hotkey} not found in subnet metagraph for netuid: {subnet_metagraph.netuid}, defaulting to 0 alpha_stake"
+        )
+
+    effective_stake = (root_stake * ROOT_WEIGHT) + alpha_stake
+
+    return effective_stake
 
 
 def _terminal_plot(

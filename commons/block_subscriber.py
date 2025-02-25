@@ -43,7 +43,7 @@ async def monitor_subscription(
                        indicating the subscription has likely failed.
     """
     while True:
-        await asyncio.sleep(BLOCK_TIME)
+        await asyncio.sleep(5 * BLOCK_TIME)
         time_since_last = (datetime.now() - watchdog.last_block_time).total_seconds()
 
         if not watchdog.check_health():

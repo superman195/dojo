@@ -50,7 +50,7 @@ def get_spec_version():
     )
 
 
-VALIDATOR_MIN_STAKE = int(os.getenv("VALIDATOR_MIN_STAKE", "20000"))
+VALIDATOR_MIN_STAKE = int(os.getenv("VALIDATOR_MIN_STAKE", "5000"))
 TASK_DEADLINE = 6 * 60 * 60
 
 # Define the time intervals for various tasks.
@@ -64,7 +64,7 @@ assert VALIDATOR_UPDATE_SCORE < TASK_DEADLINE
 
 if get_config().fast_mode:
     print("Running in fast mode for testing purposes...")
-    VALIDATOR_MIN_STAKE = int(os.getenv("VALIDATOR_MIN_STAKE", "20000"))
+    VALIDATOR_MIN_STAKE = int(os.getenv("VALIDATOR_MIN_STAKE", "5000"))
     TASK_DEADLINE = 180
     VALIDATOR_RUN = 60
     VALIDATOR_HEARTBEAT = 15

@@ -1,4 +1,5 @@
 # Mining
+
 There are two options in setting up a miner for Dojo (centralised method and decentralised method)
 
 Before starting, create a .env file by making a copy of .env.example
@@ -8,10 +9,11 @@ cp .env.example .env
 ```
 
 ### Option 1: Centralised Method
+
 Complete the .env file by changing / uncommenting the required variables
 
 | Variable            | Description                                                       | Default Value                               | Remarks                                                                                                                                                     |
-|---------------------|-------------------------------------------------------------------|---------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| ------------------- | ----------------------------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | BITTENSOR_DIR       | Bittensor directory                                               | $HOME/.bittensor                            |                                                                                                                                                             |
 | WALLET_COLDKEY      | Bittensor coldkey name                                            | -                                           |                                                                                                                                                             |
 | WALLET_HOTKEY       | Bittensor hotkey name                                             | -                                           |                                                                                                                                                             |
@@ -21,7 +23,7 @@ Complete the .env file by changing / uncommenting the required variables
 | DOJO_API_BASE_URL   | Base URL for Dojo API                                             | <https://dojo-api.tensorplex.ai>            | Dojo Worker API URL                                                                                                                                         |
 | DOJO_API_KEY        | Authentication key for Dojo API                                   | -                                           | Dojo API key (Generate it in the next step)                                                                                                                 |
 | AXON_PORT           | Port for Axon server                                              | 8091                                        |                                                                                                                                                             |
-| VALIDATOR_MIN_STAKE | Optional minimum stake requirement                                | 20000                                       | It is recommended to set value to 0 for testnet                                                                                                             |
+| VALIDATOR_MIN_STAKE | Validator Minimum Stake                                           | 5000                                        | Minimum stake required from validators. It is recommended to set value to 0 for testnet                                                                     |
 | TASK_MAX_RESULTS    | The number of workers that may submit responses for a single task | 4                                           |                                                                                                                                                             |
 
 Run Dojo CLI to retrieve API Key and Subscription Key. See [Dojo CLI](#dojo-cli) for usage. Note down the API key, subscription key and append the API key to your .env file.
@@ -51,31 +53,32 @@ make miner
 
 Complete the .env file by changing / uncommenting the required variables
 
-| Variable                | Description                   | Default Value                                          | Remarks                                 |
-|-------------------------|-------------------------------|--------------------------------------------------------|-----------------------------------------|
-| SAS_SUBSTRATE_URL       | Substrate URL                 | Same as SUBTENSOR_ENDPOINT                             | Must match network configuration        |
-| SAS_EXPRESS_PORT        | Sidecar Express server port   | 8081                                                   | Internal service port                   |
-| SUBSTRATE_API_URL       | Substrate API URL             | sidecar:8081                                           | Internal service endpoint               |
-| NEXT_PUBLIC_BACKEND_URL | Backend URL for Dojo UI       | <http://localhost:3000>                                | Must be accessible from UI              |
-| SERVER_PORT             | Worker API server port        | 8080                                                   | Must not conflict with other services   |
-| RUNTIME_ENV             | Runtime environment           | aws                                                    | Options: local, development, production |
-| CORS_ALLOWED_ORIGINS    | Allowed CORS origins          | <http://localhost*,http://worker-ui*,http://dojo-cli>* | Comma-separated list                    |
-| TOKEN_EXPIRY            | JWT token expiration in hours | 24                                                     | Adjust if needed                        |
-| JWT_SECRET              | Secret key for JWT tokens     | -                                                      | Use a strong random string              |
-| AWS_ACCESS_KEY_ID       | AWS access key ID             | -                                                      | Optional                                |
-| AWS_SECRET_ACCESS_KEY   | AWS secret access key         | -                                                      | Optional                                |
-| AWS_S3_BUCKET_NAME      | S3 bucket name                | -                                                      | Optional                                |
-| S3_PUBLIC_URL           | Public URL for S3 bucket      | -                                                      | Optional                                |
-| REDIS_HOST              | Redis host                    | redis                                                  | Container name or IP                    |
-| REDIS_PORT              | Redis port                    | 6379                                                   | Default Redis port                      |
-| REDIS_USERNAME          | Redis username                | -                                                      | (Optional) For Redis ACL                |
-| REDIS_PASSWORD          | Redis password                | -                                                      | (Optional) For Redis authentication     |
-| DB_HOST                 | Database host address         | postgres:5432                                          | Format: hostname:port                   |
-| DB_NAME                 | Database name                 | db                                                     | Database Name                           |
-| DB_USERNAME             | Database username             | -                                                      | Database Username                       |
-| DB_PASSWORD             | Database password             | -                                                      | Database Password                       |
-| VALIDATOR_MIN_STAKE     | Validator Minimum Stake       | 20000                                                  | Minimum stake required from validators  |
-| ETHEREUM_NODE           | Ethereum Node endpoint        | <https://ethereum.publicnode.com>                      | Ethereum endpoint                       |
+| Variable                | Description                   | Default Value                                           | Remarks                                                                                 |
+| ----------------------- | ----------------------------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| SAS_SUBSTRATE_URL       | Substrate URL                 | Same as SUBTENSOR_ENDPOINT                              | Must match network configuration                                                        |
+| SAS_EXPRESS_PORT        | Sidecar Express server port   | 8081                                                    | Internal service port                                                                   |
+| SUBSTRATE_API_URL       | Substrate API URL             | sidecar:8081                                            | Internal service endpoint                                                               |
+| NEXT_PUBLIC_BACKEND_URL | Backend URL for Dojo UI       | <http://localhost:3000>                                 | Must be accessible from UI                                                              |
+| SERVER_PORT             | Worker API server port        | 8080                                                    | Must not conflict with other services                                                   |
+| RUNTIME_ENV             | Runtime environment           | aws                                                     | Options: local, development, production                                                 |
+| CORS_ALLOWED_ORIGINS    | Allowed CORS origins          | <http://localhost*,http://worker-ui*,http://dojo-cli>\* | Comma-separated list                                                                    |
+| TOKEN_EXPIRY            | JWT token expiration in hours | 24                                                      | Adjust if needed                                                                        |
+| JWT_SECRET              | Secret key for JWT tokens     | -                                                       | Use a strong random string                                                              |
+| AWS_ACCESS_KEY_ID       | AWS access key ID             | -                                                       | Optional                                                                                |
+| AWS_SECRET_ACCESS_KEY   | AWS secret access key         | -                                                       | Optional                                                                                |
+| AWS_S3_BUCKET_NAME      | S3 bucket name                | -                                                       | Optional                                                                                |
+| S3_PUBLIC_URL           | Public URL for S3 bucket      | -                                                       | Optional                                                                                |
+| REDIS_HOST              | Redis host                    | redis                                                   | Container name or IP                                                                    |
+| REDIS_PORT              | Redis port                    | 6379                                                    | Default Redis port                                                                      |
+| REDIS_USERNAME          | Redis username                | -                                                       | (Optional) For Redis ACL                                                                |
+| REDIS_PASSWORD          | Redis password                | -                                                       | (Optional) For Redis authentication                                                     |
+| DB_HOST                 | Database host address         | postgres:5432                                           | Format: hostname:port                                                                   |
+| DB_NAME                 | Database name                 | db                                                      | Database Name                                                                           |
+| DB_USERNAME             | Database username             | -                                                       | Database Username                                                                       |
+| DB_PASSWORD             | Database password             | -                                                       | Database Password                                                                       |
+| VALIDATOR_MIN_STAKE     | Validator Minimum Stake       | 5000                                                    | Minimum stake required from validators. It is recommended to set value to 0 for testnet |
+| ETHEREUM_NODE           | Ethereum Node endpoint        | <https://ethereum.publicnode.com>                       | Ethereum endpoint                                                                       |
+
 Start the dojo platform which Dojo CLI will interact with later.
 
 ```bash
