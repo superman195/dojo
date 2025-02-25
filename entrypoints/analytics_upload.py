@@ -6,6 +6,7 @@ analytics_upload.py
 import asyncio
 import gc
 import json
+import os
 from datetime import datetime
 from typing import List
 
@@ -144,11 +145,11 @@ async def _post_task_data(payload, hotkey, signature, message):
     """
     # TIMEOUT = 15.0
     _http_client = httpx.AsyncClient()
-    ANALYTICS_URL = "http://127.0.0.1:8000"
+    VALIDATOR_API_URL = os.getenv("VALIDATOR_API_URL", "http://127.0.0.1:8000")
 
     try:
         response = await _http_client.post(
-            url=f"{ANALYTICS_URL}/api/v1/analytics/validators/{hotkey}/tasks",
+            url=f"{VALIDATOR_API_URL}/api/v1/analytics/validators/{hotkey}/tasks",
             json=payload.model_dump(mode="json"),
             headers={
                 "X-Hotkey": hotkey,
@@ -206,22 +207,22 @@ async def run_analytics_upload(scores_alock: asyncio.Lock, expire_from, expire_t
 
 
 # # Main function for testing. Remove / Comment in prod.
-# if __name__ == "__main__":
-#     import asyncio
+if __name__ == "__main__":
+    import asyncio
 
-#     async def main():
-#         # for testing
-#         from datetime import datetime, timedelta, timezone
+    async def main():
+        # for testing
+        from datetime import datetime, timedelta, timezone
 
-#         from commons.utils import datetime_as_utc
+        from commons.utils import datetime_as_utc
 
-#         from_14_days = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(days=14)
-#         from_24_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
-#             hours=24
-#         )
-#         from_1_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(hours=1)
-#         to_now = datetime_as_utc(datetime.now(timezone.utc))
-#         res = await run_analytics_upload(asyncio.Lock(), from_14_days, to_now)
-#         print(f"Response: {res}")
+        from_14_days = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(days=14)
+        # from_24_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
+        #     hours=24
+        # )
+        # from_1_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(hours=1)
+        to_now = datetime_as_utc(datetime.now(timezone.utc))
+        res = await run_analytics_upload(asyncio.Lock(), from_14_days, to_now)
+        print(f"Response: {res}")
 
-#     asyncio.run(main())
+    asyncio.run(main())

@@ -2,6 +2,7 @@ import asyncio
 import os
 from contextlib import asynccontextmanager
 from typing import List
+from urllib.parse import urlparse
 
 import aioboto3
 import aiofiles
@@ -116,7 +117,15 @@ async def upload_dataset(
 
 
 async def server():
-    config = uvicorn.Config(app, host="0.0.0.0", port=9999)
+    # host endpoint with .env VALIDATOR_API_URL var; default to localhost:9999
+    api_url = os.getenv("VALIDATOR_API_URL", "http://0.0.0.0:9999")
+    parsed_url = urlparse(api_url)
+    # Extract host and port
+    host = parsed_url.hostname or "0.0.0.0"
+    port = parsed_url.port or 9999
+
+    # Configure server
+    config = uvicorn.Config(app, host=host, port=port)
     server = uvicorn.Server(config)
     await server.serve()
 
