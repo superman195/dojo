@@ -93,9 +93,6 @@ async def _process_miner_response(miner_response: MinerResponse, task: Validator
 
             # the basics, just create raw scores
             if completion.score is None:
-                logger.warning(
-                    f"Score is None for completion {completion.completion_id}"
-                )
                 continue
 
             # TODO: figure out why the completion.score is None
@@ -118,10 +115,6 @@ async def _process_miner_response(miner_response: MinerResponse, task: Validator
                 )
                 continue
 
-            logger.debug(
-                f"Attempting to update with initial scores data: {scores.model_dump()}"
-            )
-
             await tx.minerscore.update(
                 where={
                     "criterion_id_miner_response_id": {
@@ -142,13 +135,37 @@ async def _process_task(task: ValidatorTask):
         return
 
     # Create semaphore to limit concurrent DB operations
-
     async def _process_with_semaphore(miner_response):
         async with sem:
             return await _process_miner_response(miner_response, task)
 
+    tasks = []
     for miner_response in task.miner_responses:
-        asyncio.create_task(_process_with_semaphore(miner_response))
+        tasks.append(_process_with_semaphore(miner_response))
+
+    # Wait for all tasks to complete
+    if tasks:
+        await asyncio.gather(*tasks)
+
+    # Reload miner responses with updated scores
+    updated_task = await prisma.validatortask.find_unique(
+        where={"id": task.id},
+        include={
+            "completions": {"include": {"criterion": {"include": {"scores": True}}}},
+            "ground_truth": True,
+            "miner_responses": {
+                "include": {
+                    "scores": True,
+                }
+            },
+        },
+    )
+
+    if not updated_task:
+        logger.error(f"Failed to reload task {task.id} with updated scores")
+        return
+
+    task = updated_task
 
     # ensure completions are all json strings
     assert task.completions is not None, "Completions should not be None"
@@ -164,17 +181,18 @@ async def _process_task(task: ValidatorTask):
         else:
             logger.warning(f"Unexpected completion type: {type(completion.completion)}")
 
+    mapped_miner_responses = [
+        map_miner_response_to_task_synapse_object(
+            miner_response,
+            validator_task=task,
+        )
+        for miner_response in (task.miner_responses or [])
+    ]
+
     updated_miner_responses = Scoring.calculate_score(
         validator_task=map_validator_task_to_task_synapse_object(task),
-        miner_responses=[
-            map_miner_response_to_task_synapse_object(
-                miner_response,
-                validator_task=task,
-            )
-            for miner_response in task.miner_responses
-        ],
+        miner_responses=mapped_miner_responses,
     )
-    logger.info(f"Updated miner responses for task {task.id}")
 
     max_retries = 3
     retry_delay = 0.5  # seconds
@@ -205,16 +223,25 @@ async def _process_task(task: ValidatorTask):
 
 async def main():
     await connect_db()
+    all_bg_tasks = []
 
     async for validator_tasks, has_more_batches in get_processed_tasks(batch_size=20):
         bg_tasks = []
         for task in validator_tasks:
             bg_task = asyncio.create_task(_process_task(task))
             bg_tasks.append(bg_task)
+            all_bg_tasks.append(bg_task)
+
+        if bg_tasks:
+            await asyncio.gather(*bg_tasks)
 
         if not has_more_batches:
             logger.info("No more task batches to process")
             break
+
+    if all_bg_tasks:
+        await asyncio.gather(*all_bg_tasks)
+
     await disconnect_db()
 
 
