@@ -8,7 +8,13 @@ import redis
 from bittensor.utils.btlogging import logging as logger
 
 from commons.utils import get_new_uuid
-from dojo.protocol import FeedbackRequest, Result, TaskResult, TaskResultRequest
+from dojo.protocol import (
+    FeedbackRequest,
+    Result,
+    TaskResult,
+    TaskResultRequest,
+    TaskSynapseObject,
+)
 from dojo.utils.config import get_config
 from neurons.miner import Miner
 
@@ -43,9 +49,9 @@ class MinerSim(Miner):
             "timeout": float(os.getenv("SIM_TIMEOUT_PROB", 0.1)),
         }
 
-    async def forward_feedback_request(
-        self, synapse: FeedbackRequest
-    ) -> FeedbackRequest:
+    async def forward_task_request(
+        self, synapse: TaskSynapseObject
+    ) -> TaskSynapseObject:
         try:
             # Validate that synapse, dendrite, dendrite.hotkey, and response are not None
             if not synapse or not synapse.dendrite or not synapse.dendrite.hotkey:
@@ -79,12 +85,19 @@ class MinerSim(Miner):
             traceback.print_exc()
             return synapse
 
+    # TODO: Update this function
     async def forward_task_result_request(
         self, synapse: TaskResultRequest
     ) -> TaskResultRequest | None:
+        if not synapse or not synapse.dojo_task_id:
+            logger.error("Invalid TaskResultRequest: missing dojo_task_id")
+            return synapse
+
         try:
-            logger.info(f"Received TaskResultRequest for task id: {synapse.task_id}")
-            if not synapse or not synapse.task_id:
+            logger.info(
+                f"Received TaskResultRequest for task id: {synapse.dojo_task_id}"
+            )
+            if not synapse or not synapse.dojo_task_id:
                 logger.error("Invalid TaskResultRequest: missing task_id")
                 return None
 
@@ -92,19 +105,21 @@ class MinerSim(Miner):
             # behavior = self._get_response_behavior()
 
             # if behavior in ['no_response', 'timeout']:
-            #     logger.debug(f"Simulating {behavior} for task {synapse.task_id}")
+            #     logger.debug(f"Simulating {behavior} for task {synapse.dojo_task_id}")
             #     if behavior == 'timeout':
             #         await asyncio.sleep(30)
             #     return None
 
-            redis_key = f"feedback:{synapse.task_id}"
+            redis_key = f"feedback:{synapse.dojo_task_id}"
             request_data = self.redis_client.get(redis_key)
 
             request_dict = json.loads(request_data) if request_data else None
             feedback_request = FeedbackRequest(**request_dict) if request_dict else None
 
             if not feedback_request:
-                logger.debug(f"No task result found for task id: {synapse.task_id}")
+                logger.debug(
+                    f"No task result found for task id: {synapse.dojo_task_id}"
+                )
                 return None
 
             current_time = datetime.now(timezone.utc).isoformat()
@@ -123,7 +138,7 @@ class MinerSim(Miner):
                     updated_at=current_time,
                     result_data=[result],
                     worker_id=get_new_uuid(),
-                    task_id=synapse.task_id,
+                    dojo_task_id=synapse.dojo_task_id,
                 )
                 task_results.append(task_result)
 
@@ -131,7 +146,7 @@ class MinerSim(Miner):
             logger.info(f"TaskResultRequest: {synapse}")
 
             self.redis_client.delete(redis_key)
-            logger.debug(f"Processed task result for task {synapse.task_id}")
+            logger.debug(f"Processed task result for task {synapse.dojo_task_id}")
 
             return synapse
 
@@ -152,11 +167,11 @@ class MinerSim(Miner):
         max_rank = max(ground_truth.values())
 
         for k, v in ground_truth.items():
-            base_weight = int(8 - (v * (7 / max_rank)))
+            base_weight = int(10 - (v * (10 / max_rank)))
             if self.is_bad_miner:
                 deviation = random.randint(-5, 5)
             else:
-                deviation = random.randint(-1, 1)
+                deviation = random.randint(-2, 2)
             random_score = max(0, min(9, base_weight + deviation))
             score = int((random_score / (10 - 1)) * (100 - 1) + 1)
             scores[k] = score

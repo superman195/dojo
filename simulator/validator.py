@@ -1,238 +1,246 @@
 import asyncio
-import json
-import os
-import traceback
-from pathlib import Path
-from typing import List
+from typing import Dict, List, TypeAlias
 
-import aiohttp
+# import aiohttp
 import bittensor as bt
 from bittensor.utils.btlogging import logging as logger
-from tenacity import RetryError
 
-import dojo
-from commons.dataset.synthetic import SyntheticAPI
-from commons.orm import ORM
-from commons.utils import get_epoch_time, get_new_uuid, set_expire_time
-from dojo.protocol import (
-    DendriteQueryResponse,
-    FeedbackRequest,
-    MultiScoreCriteria,
-    SyntheticQA,
-    TaskType,
-)
-from dojo.utils.config import get_config
+# from commons.orm import ORM
+from commons.utils import ttl_get_block
+from dojo.protocol import TaskSynapseObject
 from neurons.validator import Validator
+
+ObfuscatedModelMap: TypeAlias = Dict[str, str]
 
 
 class ValidatorSim(Validator):
     def __init__(self):
-        if get_config().simulation_validator_synthetic_dataset:
-            self.synthetic_dataset_path = Path(
-                get_config().simulation_validator_synthetic_dataset
-            )
-            self.last_modified_time = os.path.getmtime(self.synthetic_dataset_path)
-            self.synthetic_data = self._load_synthetic_dataset()
-            self.current_synthetic_index = 0
-            logger.info("Validator is using synthetic dataset")
-
-        self.forward_ground_truth = (
-            get_config().simulation_validator_forward_ground_truth
-        )
+        # self._last_block = None
+        # self._block_check_attempts = 0
+        # self.MAX_BLOCK_CHECK_ATTEMPTS = 3
+        self._connection_lock = asyncio.Lock()
 
         super().__init__()
         logger.info("Starting Validator Simulator")
 
-    def _load_synthetic_dataset(self):
-        try:
-            with open(self.synthetic_dataset_path) as f:
-                return json.load(f)
-        except Exception as e:
+    async def _try_reconnect_subtensor(self):
+        self._block_check_attempts += 1
+        if self._block_check_attempts >= self.MAX_BLOCK_CHECK_ATTEMPTS:
             logger.error(
-                f"Failed to load synthetic dataset from {self.synthetic_dataset_path}: {e}"
+                f"Failed to reconnect after {self.MAX_BLOCK_CHECK_ATTEMPTS} attempts"
             )
-            return []
+            return False
 
-    def _hot_reload(self):
         try:
-            current_mtime = os.path.getmtime(self.synthetic_dataset_path)
-            if current_mtime > self.last_modified_time:
-                logger.info("Dataset file has been modified, reloading...")
-                self.synthetic_data = self._load_synthetic_dataset()
-                self.current_synthetic_index = 0
-                logger.success("Dataset reloaded successfully")
+            logger.info(
+                f"Attempting to reconnect to subtensor (attempt {self._block_check_attempts}/{self.MAX_BLOCK_CHECK_ATTEMPTS})..."
+            )
+            if hasattr(self.subtensor.substrate, "websocket"):
+                self.subtensor.substrate.websocket.close()
+
+            self.subtensor = bt.subtensor(self.subtensor.config)
+            await asyncio.sleep(1)
+            return True
         except Exception as e:
-            logger.error(f"Error checking/reloading dataset: {e}")
+            logger.error(f"Failed to reconnect to subtensor: {e}")
+            return await self._try_reconnect_subtensor()
 
-    async def _get_next_synthetic_data(self) -> SyntheticQA:
-        self._hot_reload()
+    async def _ensure_subtensor_connection(self):
+        async with self._connection_lock:
+            try:
+                self.subtensor.get_current_block()
+                self._block_check_attempts = 0
+                return True
+            except (BrokenPipeError, ConnectionError):
+                logger.warning("Connection lost, attempting immediate reconnection")
+                return await self._try_reconnect_subtensor()
+            except Exception as e:
+                logger.error(f"Unexpected error checking connection: {e}")
+                return False
 
-        if not self.synthetic_data:
-            raise ValueError("No synthetic data available")
-
-        synthetic_qa = self.synthetic_data[self.current_synthetic_index]
-        self.current_synthetic_index = (self.current_synthetic_index + 1) % len(
-            self.synthetic_data
-        )
-        return SyntheticQA.model_validate(synthetic_qa)
-
-    async def send_request(
-        self,
-        synapse: FeedbackRequest | None = None,
-        external_user: bool = False,
-    ):
-        start = get_epoch_time()
-        # typically the request may come from an external source however,
-        # initially will seed it with some data for miners to get started
-        if len(self._active_miner_uids) == 0:
-            logger.info("No active miners to send request to... skipping")
-            return
-
-        request_id = get_new_uuid()
-        # sel_miner_uids = await self.get_miner_uids(external_user, request_id)
-        sel_miner_uids = sorted(list(self._active_miner_uids))
-
-        axons = [
-            self.metagraph.axons[uid]
-            for uid in sel_miner_uids
-            if self.metagraph.axons[uid].hotkey.casefold()
-            != self.wallet.hotkey.ss58_address.casefold()
-        ]
-        if not len(axons):
-            logger.warning("🤷 No axons to query ... skipping")
-            return
-
-        obfuscated_model_to_model = {}
-
-        if synapse is None:
-            if self.synthetic_dataset_path:
-                data = await self._get_next_synthetic_data()
-            else:
-                try:
-                    data = await SyntheticAPI.get_qa()
-                except RetryError as e:
-                    logger.error(
-                        f"Exhausted all retry attempts for synthetic data generation: {e}"
-                    )
-                    return
-                except ValueError as e:
-                    logger.error(f"Invalid response from synthetic data API: {e}")
-                    return
-                except aiohttp.ClientError as e:
-                    logger.error(f"Network error when calling synthetic data API: {e}")
-                    return
-                except Exception as e:
-                    logger.error(
-                        f"Unexpected error during synthetic data generation: {e}"
-                    )
-                    logger.debug(f"Traceback: {traceback.format_exc()}")
-                    return
-
-            if not data:
-                logger.error("No data returned from synthetic data API")
-                return
-
-            obfuscated_model_to_model = self.obfuscate_model_names(data.responses)
-            expire_at = set_expire_time(dojo.TASK_DEADLINE)
-            synapse = FeedbackRequest(
-                request_id=request_id,
-                task_type=str(TaskType.CODE_GENERATION),
-                criteria_types=[
-                    MultiScoreCriteria(
-                        options=list(obfuscated_model_to_model.keys()),
-                        min=1.0,
-                        max=100.0,
-                    ),
-                ],
-                prompt=data.prompt,
-                completion_responses=data.responses,
-                expire_at=expire_at,
-                ground_truth=data.ground_truth
-                if self.forward_ground_truth
-                else {},  # Added ground truth!!!!!
-            )
-        elif external_user:
-            obfuscated_model_to_model = self.obfuscate_model_names(
-                synapse.completion_responses
-            )
-
-        logger.info(
-            f"⬆️ Sending feedback request for request id: {synapse.request_id}, miners uids:{sel_miner_uids} with expire_at: {synapse.expire_at}"
-        )
-
-        miner_responses: List[FeedbackRequest] = await self._send_shuffled_requests(
-            self.dendrite, axons, synapse
-        )
-
-        valid_miner_responses: List[FeedbackRequest] = []
+    @property
+    def block(self):
         try:
-            for miner_response in miner_responses:
-                miner_hotkey = (
-                    miner_response.axon.hotkey if miner_response.axon else "??"
+            if not asyncio.get_event_loop().run_until_complete(
+                self._ensure_subtensor_connection()
+            ):
+                logger.warning(
+                    "Subtensor connection failed - returning last known block"
                 )
-                # map obfuscated model names back to the original model names
-                real_model_ids = []
+                return self._last_block if self._last_block is not None else 0
 
-                for i, completion in enumerate(miner_response.completion_responses):
-                    found_model_id = obfuscated_model_to_model.get(
-                        completion.model, None
-                    )
-                    real_model_ids.append(found_model_id)
-                    if found_model_id:
-                        miner_response.completion_responses[i].model = found_model_id
-                        synapse.completion_responses[i].model = found_model_id
-
-                if any(c is None for c in real_model_ids):
-                    logger.warning("Failed to map obfuscated model to original model")
-                    continue
-
-                if miner_response.dojo_task_id is None:
-                    logger.debug(f"Miner {miner_hotkey} must provide the dojo task id")
-                    continue
-
-                # update the miner response with the real model ids
-                valid_miner_responses.append(miner_response)
+            self._last_block = ttl_get_block(self.subtensor)
+            self._block_check_attempts = 0
+            return self._last_block
         except Exception as e:
-            logger.error(f"Failed to map obfuscated model to original model: {e}")
-            pass
+            logger.error(f"Error getting block number: {e}")
+            return self._last_block if self._last_block is not None else 0
 
-        logger.info(f"⬇️ Received {len(valid_miner_responses)} valid responses")
-        if valid_miner_responses is None or len(valid_miner_responses) == 0:
-            logger.info("No valid miner responses to process... skipping")
-            return
+    async def sync(self):
+        has_connection = await self._ensure_subtensor_connection()
+        if not has_connection:
+            logger.warning("Subtensor connection failed - continuing with partial sync")
 
-        # include the ground_truth to keep in data manager
-        synapse.ground_truth = data.ground_truth
-        synapse.dendrite.hotkey = self.wallet.hotkey.ss58_address
-        response_data = DendriteQueryResponse(
-            request=synapse,
-            miner_responses=valid_miner_responses,
-        )
+        await super().sync()
 
-        logger.debug("Attempting to saving dendrite response")
-        vali_request_model = await ORM.save_task(
-            validator_request=synapse,
-            miner_responses=valid_miner_responses,
-            ground_truth=data.ground_truth,
-        )
+    # async def _generate_synthetic_request(
+    #     self,
+    # ) -> tuple[TaskSynapseObject | None, dict[str, int] | None, ObfuscatedModelMap]:
+    #     """
+    #     Generate a synthetic request for code generation tasks.
 
-        if vali_request_model is None:
-            logger.error("Failed to save dendrite response")
-            return
+    #     Returns:
+    #         tuple[TaskSynapseObject | None, dict[str, int] | ObfuscatedModelMap]: Tuple containing the generated task synapse object
+    #         and ground truth, or None if generation fails
+    #     """
+    #     task_id = get_new_uuid()
+    #     try:
+    #         data: SyntheticQA | None = await SyntheticAPI.get_qa()
+    #         if not data or not data.responses:
+    #             logger.error("Invalid or empty data returned from synthetic data API")
+    #             return None, None, {}
 
-        # saving response
-        logger.success(
-            f"Saved dendrite response for request id: {response_data.request.request_id}"
-        )
-        logger.info(
-            f"Sending request to miners & processing took {get_epoch_time() - start}"
-        )
-        return
+    #         # Create criteria for each completion response
+    #         criteria: List[CriteriaType] = [
+    #             ScoreCriteria(
+    #                 min=1.0,
+    #                 max=100.0,
+    #             )
+    #         ]
+
+    #         # Set criteria_types for each completion response
+    #         for response in data.responses:
+    #             response.criteria_types = criteria
+
+    #         obfuscated_model_to_model = self.obfuscate_model_names(data.responses)
+    #         synapse = TaskSynapseObject(
+    #             task_id=task_id,
+    #             prompt=data.prompt,
+    #             task_type=str(TaskTypeEnum.CODE_GENERATION),
+    #             expire_at=set_expire_time(dojo.TASK_DEADLINE),
+    #             completion_responses=data.responses,
+    #         )
+
+    #         return synapse, data.ground_truth, obfuscated_model_to_model
+
+    #     except (RetryError, ValueError, aiohttp.ClientError) as e:
+    #         logger.error(
+    #             f"Failed to generate synthetic request: {type(e).__name__}: {str(e)}"
+    #         )
+    #     except Exception as e:
+    #         logger.error(f"Unexpected error during synthetic data generation: {e}")
+    #         logger.debug(f"Traceback: {traceback.format_exc()}")
+
+    #     return None, None, {}
+
+    # async def send_request(
+    #     self,
+    #     synapse: TaskSynapseObject | None = None,
+    #     ground_truth: dict[str, int] | None = None,
+    #     obfuscated_model_to_model: ObfuscatedModelMap = {},
+    # ):
+    #     if not synapse:
+    #         logger.warning("No synapse provided... skipping")
+    #         return
+
+    #     if not self._active_miner_uids:
+    #         logger.info("No active miners to send request to... skipping")
+    #         return
+
+    #     if not synapse.completion_responses:
+    #         logger.warning("No completion responses to send... skipping")
+    #         return
+
+    #     start = get_epoch_time()
+    #     sel_miner_uids = await self.get_miner_uids()
+
+    #     axons = [
+    #         axon
+    #         for uid in sel_miner_uids
+    #         if (axon := self.metagraph.axons[uid]).hotkey.casefold()
+    #         != self.vali_hotkey.casefold()
+    #     ]
+
+    #     if not axons:
+    #         logger.warning("🤷 No axons to query ... skipping")
+    #         return
+
+    #     logger.info(
+    #         f"⬆️ Sending task request for task id: {synapse.task_id}, miners uids:{sel_miner_uids} with expire_at: {synapse.expire_at}"
+    #     )
+
+    #     miner_responses: List[TaskSynapseObject] = await self._send_shuffled_requests(
+    #         self.dendrite, axons, synapse
+    #     )
+
+    #     valid_miner_responses: List[TaskSynapseObject] = []
+    #     for response in miner_responses:
+    #         try:
+    #             if not response.dojo_task_id:
+    #                 continue
+
+    #             # map obfuscated model names back to the original model names
+    #             real_model_ids = []
+    #             if response.completion_responses:
+    #                 for i, completion in enumerate(response.completion_responses):
+    #                     found_model_id = obfuscated_model_to_model.get(
+    #                         completion.model, None
+    #                     )
+    #                     real_model_ids.append(found_model_id)
+    #                     if found_model_id:
+    #                         response.completion_responses[i].model = found_model_id
+    #                         synapse.completion_responses[i].model = found_model_id
+
+    #             if any(c is None for c in real_model_ids):
+    #                 logger.warning("Failed to map obfuscated model to original model")
+    #                 continue
+
+    #             response.miner_hotkey = response.axon.hotkey if response.axon else None
+    #             # Get coldkey from metagraph using hotkey index
+    #             if response.axon and response.axon.hotkey:
+    #                 try:
+    #                     hotkey_index = self.metagraph.hotkeys.index(
+    #                         response.axon.hotkey
+    #                     )
+    #                     response.miner_coldkey = self.metagraph.coldkeys[hotkey_index]
+    #                 except ValueError:
+    #                     response.miner_coldkey = None
+    #             else:
+    #                 response.miner_coldkey = None
+    #             valid_miner_responses.append(response)
+
+    #         except Exception as e:
+    #             logger.error(f"Error processing miner response: {e}")
+    #             continue
+
+    #     logger.info(f"⬇️ Received {len(valid_miner_responses)} valid responses")
+    #     if not valid_miner_responses:
+    #         logger.info("No valid miner responses to process... skipping")
+    #         return
+
+    #     # include the ground_truth to keep in data manager
+    #     synapse.ground_truth = ground_truth
+    #     synapse.dendrite.hotkey = self.vali_hotkey
+
+    #     logger.debug("Attempting to saving dendrite response")
+    #     if not await ORM.save_task(
+    #         validator_task=synapse,
+    #         miner_responses=valid_miner_responses,
+    #         ground_truth=ground_truth or {},
+    #     ):
+    #         logger.error("Failed to save dendrite response")
+    #         return
+
+    #     logger.success(f"Saved dendrite response for task id: {synapse.task_id}")
+    #     logger.info(
+    #         f"Sending request to miners & processing took {get_epoch_time() - start}"
+    #     )
+    #     return
 
     @staticmethod
     async def _send_shuffled_requests(
-        dendrite: bt.dendrite, axons: List[bt.AxonInfo], synapse: FeedbackRequest
-    ) -> list[FeedbackRequest]:
+        dendrite: bt.dendrite, axons: List[bt.AxonInfo], synapse: TaskSynapseObject
+    ) -> list[TaskSynapseObject]:
         """Send the same request to all miners without shuffling the order.
         WARNING: This should only be used for testing/debugging as it could allow miners to game the system.
 
@@ -242,10 +250,14 @@ class ValidatorSim(Validator):
             synapse (FeedbackRequest): The feedback request to send
 
         Returns:
-            list[FeedbackRequest]: List of miner responses
+            list[TaskSynapseObject]: List of miner responses
         """
         all_responses = []
         batch_size = 10
+
+        if not synapse.completion_responses:
+            logger.warning("No completion responses to send... skipping")
+            return all_responses
 
         for i in range(0, len(axons), batch_size):
             batch_axons = axons[i : i + batch_size]
@@ -257,7 +269,7 @@ class ValidatorSim(Validator):
                         axons=[axon],
                         synapse=synapse,
                         deserialize=False,
-                        timeout=60,
+                        timeout=12,
                     )
                 )
 
