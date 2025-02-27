@@ -187,5 +187,7 @@ services:
       - ./:/app
       - ./.env:/app/.env
       - prisma-binary:/root/prisma-python
+      - prisma-client:/app/database/prisma
+      - prisma-pip-cache:/root/.cache/pip
       - $HOME/.bittensor:/root/.bittensor
     logging: *default-logging

@@ -4,6 +4,7 @@ import multiprocessing
 from typing import AsyncGenerator
 
 from loguru import logger
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from commons.orm import ORM
 from commons.scoring import Scoring
@@ -221,28 +222,49 @@ async def _process_task(task: ValidatorTask):
             )
 
 
+@retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=2, max=30))
+async def connect_with_retry():
+    try:
+        await connect_db()
+        # Test the connection
+        await prisma.validatortask.count()
+        logger.info("Database connection established successfully")
+    except Exception as e:
+        logger.error(f"Failed to connect to database: {e}")
+        raise
+
+
 async def main():
-    await connect_db()
-    all_bg_tasks = []
+    try:
+        await connect_with_retry()
+        all_bg_tasks = []
 
-    async for validator_tasks, has_more_batches in get_processed_tasks(batch_size=20):
-        bg_tasks = []
-        for task in validator_tasks:
-            bg_task = asyncio.create_task(_process_task(task))
-            bg_tasks.append(bg_task)
-            all_bg_tasks.append(bg_task)
+        async for validator_tasks, has_more_batches in get_processed_tasks(
+            batch_size=20
+        ):
+            bg_tasks = []
+            for task in validator_tasks:
+                bg_task = asyncio.create_task(_process_task(task))
+                bg_tasks.append(bg_task)
+                all_bg_tasks.append(bg_task)
 
-        if bg_tasks:
-            await asyncio.gather(*bg_tasks)
+            if bg_tasks:
+                await asyncio.gather(*bg_tasks)
 
-        if not has_more_batches:
-            logger.info("No more task batches to process")
-            break
+            if not has_more_batches:
+                logger.info("No more task batches to process")
+                break
 
-    if all_bg_tasks:
-        await asyncio.gather(*all_bg_tasks)
+        if all_bg_tasks:
+            await asyncio.gather(*all_bg_tasks)
 
-    await disconnect_db()
+        await disconnect_db()
+    except Exception as e:
+        logger.error(f"Error in main function: {e}")
+        try:
+            await disconnect_db()
+        except Exception as e:
+            pass
 
 
 async def get_processed_tasks(
