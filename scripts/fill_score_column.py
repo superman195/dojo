@@ -72,61 +72,64 @@ async def _process_miner_response(miner_response: MinerResponse, task: Validator
         where={"feedback_request_id": feedback_request.id}
     )
 
-    async with prisma.tx() as tx:
-        for completion in completions:
-            # Find or create the criterion record
-            criterion = await tx.criterion.find_first(
-                where=CriterionWhereInput(
-                    {
-                        "completion_relation": {
-                            "is": {
-                                "completion_id": completion.completion_id,
-                                "validator_task_id": task.id,
+    try:
+        async with prisma.tx(timeout=120000) as tx:
+            for completion in completions:
+                # Find or create the criterion record
+                criterion = await tx.criterion.find_first(
+                    where=CriterionWhereInput(
+                        {
+                            "completion_relation": {
+                                "is": {
+                                    "completion_id": completion.completion_id,
+                                    "validator_task_id": task.id,
+                                }
                             }
                         }
-                    }
+                    )
                 )
-            )
 
-            if not criterion:
-                logger.warning("Criterion not found, but it should already exist")
-                continue
+                if not criterion:
+                    logger.warning("Criterion not found, but it should already exist")
+                    continue
 
-            # the basics, just create raw scores
-            if completion.score is None:
-                continue
+                # the basics, just create raw scores
+                if completion.score is None:
+                    continue
 
-            # TODO: figure out why the completion.score is None
-            # TODO: figure out completion.rank_id is None, need to reconstruct from ground truth
-            scores = Scores(
-                raw_score=completion.score,
-                rank_id=completion.rank_id,
-                # Initialize other scores as None - they'll be computed later
-                normalised_score=None,
-                ground_truth_score=None,
-                cosine_similarity_score=None,
-                normalised_cosine_similarity_score=None,
-                cubic_reward_score=None,
-            )
-
-            # Check if all fields in scores are None
-            if all(value is None for value in scores.model_dump().values()):
-                logger.warning(
-                    f"All scores are None for completion {completion.completion_id}"
+                # TODO: figure out why the completion.score is None
+                # TODO: figure out completion.rank_id is None, need to reconstruct from ground truth
+                scores = Scores(
+                    raw_score=completion.score,
+                    rank_id=completion.rank_id,
+                    # Initialize other scores as None - they'll be computed later
+                    normalised_score=None,
+                    ground_truth_score=None,
+                    cosine_similarity_score=None,
+                    normalised_cosine_similarity_score=None,
+                    cubic_reward_score=None,
                 )
-                continue
 
-            await tx.minerscore.update(
-                where={
-                    "criterion_id_miner_response_id": {
-                        "criterion_id": criterion.id,
-                        "miner_response_id": miner_response.id,
-                    }
-                },
-                data=MinerScoreUpdateInput(
-                    scores=Json(json.dumps(scores.model_dump()))
-                ),
-            )
+                # Check if all fields in scores are None
+                if all(value is None for value in scores.model_dump().values()):
+                    logger.warning(
+                        f"All scores are None for completion {completion.completion_id}"
+                    )
+                    continue
+
+                await tx.minerscore.update(
+                    where={
+                        "criterion_id_miner_response_id": {
+                            "criterion_id": criterion.id,
+                            "miner_response_id": miner_response.id,
+                        }
+                    },
+                    data=MinerScoreUpdateInput(
+                        scores=Json(json.dumps(scores.model_dump()))
+                    ),
+                )
+    except Exception as e:
+        logger.error(f"Transaction failed for miner response {miner_response.id}: {e}")
     return
 
 
