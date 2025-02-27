@@ -66,16 +66,17 @@ class MinerSim(Miner):
             new_synapse = synapse.model_copy(deep=True)
             new_synapse.completion_responses = []
 
-            synapse.dojo_task_id = synapse.request_id
+            # Use task_id instead of request_id
+            synapse.dojo_task_id = synapse.task_id
             self.hotkey_to_request[synapse.dendrite.hotkey] = synapse
 
-            redis_key = f"feedback:{synapse.request_id}"
+            redis_key = f"feedback:{synapse.task_id}"
             self.redis_client.set(
                 redis_key,
                 new_synapse.model_dump_json(),
                 ex=86400,  # expire after 24 hours
             )
-            logger.info(f"Stored feedback request {synapse.request_id}")
+            logger.info(f"Stored feedback request {synapse.task_id}")
 
             synapse.ground_truth = {}
             return synapse
