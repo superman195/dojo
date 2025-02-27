@@ -440,23 +440,13 @@ def verify_signature(hotkey: str, signature: str, message: str) -> bool:
     return True
 
 
-def check_stake(metagraph: bt.metagraph, hotkey: str) -> bool:
+def check_stake(subtensor: bt.subtensor, hotkey: str) -> bool:
     """
-    checks the root tao for a hotkey.
-    Returns true if hotkey has enough stake to be a validator and false otherwise.
+    returns true if hotkey has enough stake to be a validator and false otherwise.
     """
     from dojo import VALIDATOR_MIN_STAKE
 
-    uid = -1
-    try:
-        uid = metagraph.hotkeys.index(hotkey)
-    except ValueError:
-        logger.error(f"Hotkey {hotkey} not found in metagraph")
-        return False
-
-    # Check if stake meets minimum threshold
-    neuron: bt.NeuronInfo | bt.NeuronInfoLite = metagraph.neurons[uid]
-    stake = neuron.stake.tao
+    stake = get_effective_stake(hotkey, subtensor)
 
     if stake < VALIDATOR_MIN_STAKE:
         logger.error(
@@ -466,12 +456,3 @@ def check_stake(metagraph: bt.metagraph, hotkey: str) -> bool:
 
     logger.info(f"Stake check passed for {hotkey} with stake {stake}")
     return True
-
-
-def get_metagraph(subtensor: bt.subtensor) -> bt.metagraph:
-    """
-    Gets and syncs a metagraph from an input subtensor
-    """
-    metagraph = subtensor.metagraph(netuid=subtensor.config.netuid, lite=True)
-    metagraph.sync(block=None, lite=True)
-    return metagraph

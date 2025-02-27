@@ -8,12 +8,10 @@ from commons.api_settings import RedisSettings
 
 def build_redis_url(config: RedisSettings | None = None) -> str:
     if config is None:
-        host = os.getenv("REDIS_HOST", "localhost")
+        host = os.getenv("REDIS_HOST")
         port = int(os.getenv("REDIS_PORT", 6379))
-        # username = os.getenv("REDIS_USERNAME")
-        # password = os.getenv("REDIS_PASSWORD")
-        username = None  # remove in prod
-        password = None
+        username = os.getenv("REDIS_USERNAME")
+        password = os.getenv("REDIS_PASSWORD")
         if username and password:
             return f"redis://{username}:{password}@{host}:{port}"
         elif password:

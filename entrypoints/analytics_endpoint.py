@@ -12,7 +12,6 @@ from starlette.datastructures import State
 
 from commons.utils import (
     check_stake,
-    get_metagraph,
     verify_hotkey_in_metagraph,
     verify_signature,
 )
@@ -80,6 +79,9 @@ async def upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
                 Key=filename,
                 Body=formatted_data,
             )
+
+            # @dev to-do
+            # if aws upload unsuccessful, wipe redis cache
     except Exception as e:
         logger.error(f"Error uploading to s3: {str(e)}")
         raise
@@ -109,7 +111,10 @@ async def create_analytics_data(
     @param signature: the signature of the sender
     @param message: the message of the sender
     """
-    metagraph: bt.metagraph = get_metagraph(request.app.state.subtensor)
+    metagraph: bt.metagraph = request.app.state.subtensor.metagraph(
+        request.app.state.bt_cfg.netuid
+    )
+    metagraph.sync(block=None, lite=True)
     logger.info(f"Received request from hotkey: {hotkey}")
     try:
         if not verify_signature(hotkey, signature, message):
@@ -122,7 +127,7 @@ async def create_analytics_data(
                 status_code=401, detail="Hotkey not found in metagraph."
             )
 
-        if not check_stake(metagraph, hotkey):
+        if not check_stake(request.app.state.subtensor, hotkey):
             logger.error(f"Insufficient stake for hotkey {hotkey}")
             raise HTTPException(
                 status_code=401, detail="Insufficient stake for hotkey."

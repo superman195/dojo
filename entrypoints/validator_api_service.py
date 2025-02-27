@@ -19,7 +19,6 @@ from commons.cache import RedisCache
 from commons.objects import ObjectManager
 from commons.utils import (
     check_stake,
-    get_metagraph,
     verify_hotkey_in_metagraph,
     verify_signature,
 )
@@ -33,9 +32,11 @@ cfg: bt.config = ObjectManager.get_config()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.bt_cfg = cfg
+    # print(f"bt_cfg: {app.state.bt_cfg}")
     app.state.api_config = settings.aws
     app.state.redis = RedisCache(settings.redis)
     app.state.subtensor = bt.subtensor(config=app.state.bt_cfg)
+    # logger.info(f"@@@ {app.state.api_config}")
     yield
     await app.state.redis.close()
     app.state.subtensor.close()
@@ -62,7 +63,9 @@ async def upload_dataset(
     files: List[UploadFile] = File(...),
 ):
     api_config = app.state.api_config
-    metagraph = get_metagraph(app.state.subtensor)
+    metagraph = app.state.subtensor.metagraph(app.state.bt_cfg.netuid)
+    metagraph.sync(block=None, lite=True)
+
     try:
         if not signature.startswith("0x"):
             raise HTTPException(
@@ -117,8 +120,8 @@ async def upload_dataset(
 
 
 async def server():
-    # host endpoint with .env VALIDATOR_API_URL var; default to localhost:9999
-    api_url = os.getenv("VALIDATOR_API_URL", "http://0.0.0.0:9999")
+    # host endpoint with .env VALIDATOR_API_BASE_URL var; default to localhost:9999
+    api_url = os.getenv("VALIDATOR_API_BASE_URL", "http://0.0.0.0:9999")
     parsed_url = urlparse(api_url)
     # Extract host and port
     host = parsed_url.hostname or "0.0.0.0"
