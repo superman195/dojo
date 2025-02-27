@@ -606,7 +606,7 @@ class Validator:
         while True:
             await asyncio.sleep(dojo.VALIDATOR_HEARTBEAT)
             try:
-                all_miner_uids = extract_miner_uids(metagraph=self.metagraph)
+                all_miner_uids = await extract_miner_uids()
                 logger.debug(f"Sending heartbeats to {len(all_miner_uids)} miners")
 
                 axons: list[bt.AxonInfo] = [
@@ -1418,6 +1418,6 @@ class Validator:
         return hotkey_to_dojo_task_scores_and_gt
 
     async def block_headers_callback(self, block: dict):
-        logger.debug(f"Received block headers{block}")
+        logger.trace(f"Received block headers{block}")
         block_number = int(block.get("header", {}).get("number"))
         self._last_block = block_number
