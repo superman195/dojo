@@ -145,11 +145,13 @@ async def _post_task_data(payload, hotkey, signature, message):
     """
     # TIMEOUT = 15.0
     _http_client = httpx.AsyncClient()
-    VALIDATOR_API_URL = os.getenv("VALIDATOR_API_URL", "http://127.0.0.1:8000")
+    VALIDATOR_API_BASE_URL = os.getenv("VALIDATOR_API_BASE_URL")
 
+    if VALIDATOR_API_BASE_URL is None:
+        raise ValueError("VALIDATOR_API_BASE_URL must be set")
     try:
         response = await _http_client.post(
-            url=f"{VALIDATOR_API_URL}/api/v1/analytics/validators/{hotkey}/tasks",
+            url=f"{VALIDATOR_API_BASE_URL}/api/v1/analytics/validators/{hotkey}/tasks",
             json=payload.model_dump(mode="json"),
             headers={
                 "X-Hotkey": hotkey,
