@@ -80,10 +80,20 @@ async def upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
                 Body=formatted_data,
             )
 
-            # @dev to-do
-            # if aws upload unsuccessful, wipe redis cache
     except Exception as e:
         logger.error(f"Error uploading to s3: {str(e)}")
+        # Remove new tasks from redis on if AWS upload is unsuccessful
+        for task in new_tasks:
+            val_task_id = task.validator_task_id
+            key = redis._build_key(redis._anal_prefix_, redis._upload_key_, val_task_id)
+            try:
+                await redis.delete(key)
+            except Exception as redis_err:
+                logger.error(
+                    f"Error removing task {val_task_id} from Redis: {redis_err}"
+                )
+        logger.trace("Removed new tasks from analytics redis cache")
+
         raise
 
 

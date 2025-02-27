@@ -70,6 +70,11 @@ class RedisCache:
             return value
         return None
 
+    async def delete(self, key: str):
+        if self.redis is None:
+            await self.connect()
+        await self.redis.delete(key)
+
     async def close(self):
         if self.redis:
             await self.redis.aclose()

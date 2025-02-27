@@ -140,8 +140,6 @@ async def _post_task_data(payload, hotkey, signature, message):
     @param hotkey: the hotkey of the validator
     @param message: a message that is signed by the validator
     @param signature: the signature generated from signing the message with the validator's hotkey.
-
-    @to-do: confirm analytics url and add to config
     """
     # TIMEOUT = 15.0
     _http_client = httpx.AsyncClient()
