@@ -31,6 +31,16 @@ nproc = multiprocessing.cpu_count()
 sem = asyncio.Semaphore(nproc * 2 + 1)  # Limit concurrent operations
 
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+async def execute_transaction(miner_response_id, tx_function):
+    try:
+        async with prisma.tx(timeout=180000) as tx:
+            await tx_function(tx)
+    except Exception as e:
+        logger.error(f"Transaction failed for miner response {miner_response_id}: {e}")
+        raise  # Re-raise to trigger retry
+
+
 # 1. for each record from `miner_response` find the corresponding record from `Completion_Response_Model`
 # 2. gather all scores from multiple `Completion_Response_Model` records and fill the relevant records inside `miner_response.scores`
 # 3. based on all the raw scores provided by miners, apply the `Scoring.score_by_criteria` to calculate the scores for each criterion
@@ -72,64 +82,75 @@ async def _process_miner_response(miner_response: MinerResponse, task: Validator
         where={"feedback_request_id": feedback_request.id}
     )
 
-    try:
-        async with prisma.tx(timeout=120000) as tx:
-            for completion in completions:
-                # Find or create the criterion record
-                criterion = await tx.criterion.find_first(
-                    where=CriterionWhereInput(
-                        {
-                            "completion_relation": {
-                                "is": {
-                                    "completion_id": completion.completion_id,
-                                    "validator_task_id": task.id,
-                                }
+    if not completions:
+        logger.warning(
+            f"No completions found for feedback request {feedback_request.id}"
+        )
+        return
+
+    # Define the transaction function
+    async def tx_function(tx):
+        for completion in completions:
+            # Find or create the criterion record
+            criterion = await tx.criterion.find_first(
+                where=CriterionWhereInput(
+                    {
+                        "completion_relation": {
+                            "is": {
+                                "completion_id": completion.completion_id,
+                                "validator_task_id": task.id,
                             }
                         }
-                    )
+                    }
                 )
+            )
 
-                if not criterion:
-                    logger.warning("Criterion not found, but it should already exist")
-                    continue
+            if not criterion:
+                logger.warning("Criterion not found, but it should already exist")
+                continue
 
-                # the basics, just create raw scores
-                if completion.score is None:
-                    continue
+            # the basics, just create raw scores
+            if completion.score is None:
+                continue
 
-                # TODO: figure out why the completion.score is None
-                # TODO: figure out completion.rank_id is None, need to reconstruct from ground truth
-                scores = Scores(
-                    raw_score=completion.score,
-                    rank_id=completion.rank_id,
-                    # Initialize other scores as None - they'll be computed later
-                    normalised_score=None,
-                    ground_truth_score=None,
-                    cosine_similarity_score=None,
-                    normalised_cosine_similarity_score=None,
-                    cubic_reward_score=None,
+            scores = Scores(
+                raw_score=completion.score,
+                rank_id=completion.rank_id,
+                # Initialize other scores as None - they'll be computed later
+                normalised_score=None,
+                ground_truth_score=None,
+                cosine_similarity_score=None,
+                normalised_cosine_similarity_score=None,
+                cubic_reward_score=None,
+            )
+
+            # Check if all fields in scores are None
+            if all(value is None for value in scores.model_dump().values()):
+                logger.warning(
+                    f"All scores are None for completion {completion.completion_id}"
                 )
+                continue
 
-                # Check if all fields in scores are None
-                if all(value is None for value in scores.model_dump().values()):
-                    logger.warning(
-                        f"All scores are None for completion {completion.completion_id}"
-                    )
-                    continue
+            await tx.minerscore.update(
+                where={
+                    "criterion_id_miner_response_id": {
+                        "criterion_id": criterion.id,
+                        "miner_response_id": miner_response.id,
+                    }
+                },
+                data=MinerScoreUpdateInput(
+                    scores=Json(json.dumps(scores.model_dump()))
+                ),
+            )
 
-                await tx.minerscore.update(
-                    where={
-                        "criterion_id_miner_response_id": {
-                            "criterion_id": criterion.id,
-                            "miner_response_id": miner_response.id,
-                        }
-                    },
-                    data=MinerScoreUpdateInput(
-                        scores=Json(json.dumps(scores.model_dump()))
-                    ),
-                )
+    try:
+        # Use the retry-enabled transaction executor
+        await execute_transaction(miner_response.id, tx_function)
     except Exception as e:
-        logger.error(f"Transaction failed for miner response {miner_response.id}: {e}")
+        logger.error(
+            f"All transaction attempts failed for miner response {miner_response.id}: {e}"
+        )
+
     return
 
 
