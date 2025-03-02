@@ -9,7 +9,7 @@ from typing import Dict, Tuple
 import bittensor as bt
 from bittensor.utils.btlogging import logging as logger
 
-from commons.utils import get_epoch_time
+from commons.utils import get_effective_stake, get_epoch_time
 from commons.worker_api.dojo import DojoAPI
 from dojo import MINER_STATUS, VALIDATOR_MIN_STAKE
 from dojo.base.miner import BaseMinerNeuron
@@ -21,7 +21,6 @@ from dojo.protocol import (
     TaskSynapseObject,
 )
 from dojo.utils.config import get_config
-from dojo.utils.uids import is_miner
 
 
 class Miner(BaseMinerNeuron):
@@ -258,9 +257,6 @@ class Miner(BaseMinerNeuron):
 
         logger.debug(f"Got {request_tag} request from {caller_hotkey}")
 
-        caller_uid = self.metagraph.hotkeys.index(caller_hotkey)
-        validator_neuron: bt.NeuronInfo = self.metagraph.neurons[caller_uid]
-
         if get_config().ignore_min_stake:
             message = (
                 f"Ignoring min stake required: {VALIDATOR_MIN_STAKE} for {caller_hotkey}, "
@@ -272,14 +268,11 @@ class Miner(BaseMinerNeuron):
                 f"Ignored minimum validator stake requirement of {VALIDATOR_MIN_STAKE}",
             )
 
-        if is_miner(self.metagraph, caller_uid):
-            return True, "Not a validator"
-
-        if validator_neuron.total_stake.tao < float(VALIDATOR_MIN_STAKE):
-            logger.warning(
-                f"Blacklisting hotkey: {caller_hotkey} with insufficient stake, minimum stake required: {VALIDATOR_MIN_STAKE}, current stake: {validator_neuron.stake.tao}"
-            )
-            return True, "Insufficient validator stake"
+        effective_stake = get_effective_stake(caller_hotkey, self.metagraph.subtensor)
+        if effective_stake < float(VALIDATOR_MIN_STAKE):
+            message = f"Blacklisting hotkey: {caller_hotkey} with insufficient stake, minimum effective stake required: {VALIDATOR_MIN_STAKE}, current effective stake: {effective_stake}"
+            logger.warning(message)
+            return True, message
 
         return False, valid_msg
 

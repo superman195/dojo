@@ -12,6 +12,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from commons.objects import ObjectManager
+from commons.utils import get_effective_stake
 from dojo import VALIDATOR_MIN_STAKE
 
 app = FastAPI(title="Validator API Service")
@@ -45,15 +46,7 @@ def verify_signature(hotkey: str, signature: str, message: str) -> bool:
 
 
 def check_stake(hotkey: str) -> bool:
-    uid = -1
-    try:
-        uid = metagraph.hotkeys.index(hotkey)
-    except ValueError:
-        logger.error(f"Hotkey {hotkey} not found in metagraph")
-        return False
-
-    # Check if stake meets minimum threshold
-    stake = metagraph.S[uid].item()
+    stake = get_effective_stake(hotkey, subtensor)
 
     if stake < VALIDATOR_MIN_STAKE:
         logger.error(
