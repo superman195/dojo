@@ -1,3 +1,7 @@
+"""
+redis client class to use redis using singleton pattern.
+"""
+
 import os
 
 from redis import asyncio as aioredis

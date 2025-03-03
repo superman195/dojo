@@ -1,3 +1,9 @@
+"""
+analytics_endpoint.py
+is the endpoint for receiving analytics data from validators
+is hosted by validator_api_service.py
+"""
+
 import json
 import traceback
 from datetime import datetime
@@ -20,17 +26,17 @@ from dojo.protocol import AnalyticsData, AnalyticsPayload
 analytics_router = APIRouter()
 
 
-def save_to_athena_format(data: dict):
+def _save_to_athena_format(data: dict):
     """
-    Convert the data to athena format by un-nesting elements
+    converts input analytics JSON data to athena format by un-nesting elements
     """
     try:
-        pp = ""
-        for item in data["tasks"]:
+        formatted_data = ""
+        for task in data["tasks"]:
             # Format each item with proper indentation and save to file
-            formatted_data = json.dumps(item, indent=2)
-            pp += formatted_data + "\n"
-        return pp
+            unnested_obj = json.dumps(task, indent=2)
+            formatted_data += unnested_obj + "\n"
+        return formatted_data
     except OSError as e:
         logger.error(f"Error writing to athena_pp_output.json: {str(e)}")
         raise
@@ -39,9 +45,14 @@ def save_to_athena_format(data: dict):
         raise
 
 
-async def upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
+async def _upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
     """
-    to be implemented.
+    uploads received analytics data to s3.
+    caches uploaded task_ids in redis to prevent duplicate uploads to s3
+
+    @param data: the analytics data to be uploaded. Must be formatted according to AnalyticsPayload
+    @param hotkey: the hotkey of the sender
+    @param state: state var passed from API server, validator_api_service.py
     """
     redis = state.redis
     cfg = state.api_config
@@ -66,7 +77,7 @@ async def upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
         # convert to athena format
         # @dev: this can be optimized by converting to athena format when we are checking for uploaded tasks.
         data_to_upload = AnalyticsPayload(tasks=new_tasks)
-        formatted_data = save_to_athena_format(data_to_upload.model_dump())
+        formatted_data = _save_to_athena_format(data_to_upload.model_dump())
 
         session = aioboto3.Session(region_name=cfg.AWS_REGION)
         async with session.resource("s3") as s3:
@@ -82,7 +93,7 @@ async def upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
 
     except Exception as e:
         logger.error(f"Error uploading to s3: {str(e)}")
-        # Remove new tasks from redis on if AWS upload is unsuccessful
+        # Remove new tasks from redis if AWS upload is unsuccessful
         for task in new_tasks:
             val_task_id = task.validator_task_id
             key = redis._build_key(redis._anal_prefix_, redis._upload_key_, val_task_id)
@@ -107,11 +118,12 @@ async def create_analytics_data(
     message: str = Header(..., alias="X-Message"),
 ):
     """
-    create_analytics_data() is the endpoint that receives analytics data from analytics.py
+    create_analytics_data() is the route that receives analytics data from validators
     1. uses pydantic to validate incoming data against AnalyticsPayload. Rejects non-compliant data.
     2. verifies incoming signature against hotkey and message. Rejects invalid signatures.
     3. verifies incoming hotkey is in metagraph. Rejects invalid hotkeys.
-    4. converts data to athena string format and uploads to s3.
+    4. verifies incoming hotkey has sufficient stake to be a validator. Rejects insufficient stake.
+    5. converts data to athena string format and uploads to s3.
 
     @dev incoming requests must contain the Hotkey, Signature and Message headers.
     @param request: the fastAPI request object. Used to access state vars.
@@ -143,7 +155,7 @@ async def create_analytics_data(
                 status_code=401, detail="Insufficient stake for hotkey."
             )
 
-        await upload_to_s3(data, validator_hotkey, request.app.state)
+        await _upload_to_s3(data, validator_hotkey, request.app.state)
 
         response = {
             "success": True,
@@ -164,14 +176,6 @@ async def create_analytics_data(
             },
         }
         return JSONResponse(content=response, status_code=400)
-
-
-# For testing: remove in prod.
-# async def _test_s3_upload():
-#     # read JSON from sample_anal_payload.json
-#     with open("sample_anal_payload.json") as f:
-#         data_str = f.read()
-#     await upload_to_s3(data_str, "hotkey")
 
 
 if __name__ == "__main__":

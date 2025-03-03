@@ -447,10 +447,16 @@ def is_valid_expiry(expire_at: str) -> bool:
 
 
 def verify_hotkey_in_metagraph(metagraph: bt.metagraph, hotkey: str) -> bool:
+    """
+    returns true if input hotkey is in input metagraph, false otherwise.
+    """
     return hotkey in metagraph.hotkeys
 
 
 def verify_signature(hotkey: str, signature: str, message: str) -> bool:
+    """
+    returns true if input signature was created by input hotkey for input message.
+    """
     keypair = bt.Keypair(ss58_address=hotkey, ss58_format=42)
     if not keypair.verify(data=message, signature=signature):
         logger.error(f"Invalid signature for address={hotkey}")

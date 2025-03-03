@@ -17,20 +17,18 @@ from bittensor.utils.btlogging import logging as logger
 from commons.exceptions import NoProcessedTasksYet
 from commons.objects import ObjectManager
 from commons.orm import ORM
-from commons.utils import datetime_to_iso8601_str
+from commons.utils import check_stake, datetime_to_iso8601_str
 from database.client import connect_db
 from dojo.protocol import AnalyticsData, AnalyticsPayload
-from dojo.utils.uids import check_root_stake
 
 
-async def _get_all_miner_hotkeys(metagraph: bt.metagraph) -> List[str]:
+async def _get_all_miner_hotkeys(subtensor: bt.subtensor, netuid: int) -> List[str]:
     """
     returns a list of all miner hotkeys registered to the input metagraph at time of execution.
     """
+    metagraph = subtensor.metagraph(netuid=netuid, lite=True)
     return [
-        hotkey
-        for uid, hotkey in enumerate(metagraph.hotkeys)
-        if check_root_stake(metagraph, uid)
+        hotkey for hotkey in metagraph.hotkeys if not check_stake(subtensor, hotkey)
     ]
 
 
@@ -181,10 +179,8 @@ async def run_analytics_upload(scores_alock: asyncio.Lock, expire_from, expire_t
         config = ObjectManager.get_config()
         wallet = bt.wallet(config=config)
         validator_hotkey = wallet.hotkey.ss58_address
-        metagraph = bt.subtensor(config=config).metagraph(
-            netuid=config.netuid, lite=True
-        )
-        all_miners = await _get_all_miner_hotkeys(metagraph)
+        subtensor = bt.subtensor(config=config)
+        all_miners = await _get_all_miner_hotkeys(subtensor, config.netuid)
         anal_data = await _get_task_data(
             validator_hotkey, all_miners, expire_from, expire_to
         )
@@ -206,23 +202,23 @@ async def run_analytics_upload(scores_alock: asyncio.Lock, expire_from, expire_t
             raise
 
 
-# # Main function for testing. Remove / Comment in prod.
-if __name__ == "__main__":
-    import asyncio
+# # # Main function for testing. Remove / Comment in prod.
+# if __name__ == "__main__":
+#     import asyncio
 
-    async def main():
-        # for testing
-        from datetime import datetime, timedelta, timezone
+#     async def main():
+#         # for testing
+#         from datetime import datetime, timedelta, timezone
 
-        from commons.utils import datetime_as_utc
+#         from commons.utils import datetime_as_utc
 
-        from_14_days = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(days=14)
-        # from_24_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
-        #     hours=24
-        # )
-        # from_1_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(hours=1)
-        to_now = datetime_as_utc(datetime.now(timezone.utc))
-        res = await run_analytics_upload(asyncio.Lock(), from_14_days, to_now)
-        print(f"Response: {res}")
+#         from_14_days = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(days=14)
+#         # from_24_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
+#         #     hours=24
+#         # )
+#         # from_1_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(hours=1)
+#         to_now = datetime_as_utc(datetime.now(timezone.utc))
+#         res = await run_analytics_upload(asyncio.Lock(), from_14_days, to_now)
+#         print(f"Response: {res}")
 
-    asyncio.run(main())
+#     asyncio.run(main())

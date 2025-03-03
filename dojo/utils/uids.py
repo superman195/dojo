@@ -125,17 +125,6 @@ class MinerUidSelector:
         return nodes
 
 
-def check_root_stake(metagraph: bt.metagraph, uid: int) -> bool:
-    """
-    checks the total root stake of a neuron and returns true if it is less than the validator min stake.
-    if true, the neuron is a miner. False, it is a validator.
-    """
-    from dojo import VALIDATOR_MIN_STAKE
-
-    neuron: bt.NeuronInfo | bt.NeuronInfoLite = metagraph.neurons[uid]
-    return neuron.total_stake.tao < float(VALIDATOR_MIN_STAKE)
-
-
 if __name__ == "__main__":
     # example usage... always call __init__ then get_target_uids
     miner_uids = list(range(1, 193))

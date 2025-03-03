@@ -1,3 +1,8 @@
+"""
+validator_api_service.py
+    API to receive data from validators.
+"""
+
 import asyncio
 import os
 from contextlib import asynccontextmanager
@@ -32,11 +37,9 @@ cfg: bt.config = ObjectManager.get_config()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.bt_cfg = cfg
-    # print(f"bt_cfg: {app.state.bt_cfg}")
     app.state.api_config = settings.aws
     app.state.redis = RedisCache(settings.redis)
     app.state.subtensor = bt.subtensor(config=app.state.bt_cfg)
-    # logger.info(f"@@@ {app.state.api_config}")
     yield
     await app.state.redis.close()
     app.state.subtensor.close()
@@ -51,7 +54,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
+# Routes:
 app.include_router(analytics_router)
 
 

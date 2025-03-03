@@ -739,7 +739,9 @@ class ORM:
         expire_from: datetime | None = None,
         expire_to: datetime | None = None,
     ) -> AsyncGenerator[tuple[List[ValidatorTask], bool], None]:
-        """Returns batches of processed ValidatorTask records and a boolean indicating if there are more batches. Used to collect analytics data.
+        """
+        Returns batches of processed ValidatorTask records and a boolean indicating if there are more batches.
+        Used to collect analytics data.
 
         Args:
             batch_size (int, optional): Number of tasks to return in a batch. Defaults to 10.
@@ -756,7 +758,6 @@ class ORM:
             - List of ValidatorTask records with their related completions, miner_responses, and GroundTruth
             - Boolean indicating if there are more batches to process
 
-        @to-do: replace TASK_DEADLINE in the NoProcessedTasksYet error check with a dedicated config var for processing.
         @to-do: write unit test for this function.
         """
         # find all validator requests first
@@ -812,7 +813,7 @@ class ORM:
 
         if not task_count_processed:
             raise NoProcessedTasksYet(
-                f"No processed validator tasks found for uploading, please wait for tasks to pass the processing deadline of {TASK_DEADLINE} seconds."
+                "No processed tasks found for uploading, wait for next scoring execution."
             )
 
         yield first_batch, task_count_processed > batch_size

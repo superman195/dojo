@@ -237,7 +237,7 @@ class TaskResultRequest(bt.Synapse):
 
 class AnalyticsData(BaseModel):
     """
-    AnalyticsData is a schema that defines the structure of the analytics data.
+    defines the structure for analytics data that will be sent by validators to the analytics endpoint.
     """
 
     validator_task_id: str
