@@ -4,7 +4,7 @@ from typing import Any, Awaitable, Callable
 
 from bittensor.core.async_subtensor import AsyncSubstrateInterface
 from bittensor.core.subtensor import SubstrateRequestException
-from loguru import logger
+from bittensor.utils.btlogging import logging as logger
 
 from commons.objects import ObjectManager
 
@@ -55,7 +55,7 @@ async def monitor_subscription(
                 f"Subscription watchdog timeout - no blocks for {time_since_last:.1f} seconds"
             )
         else:
-            logger.debug(
+            logger.info(
                 f"Subscription is healthy - last block {time_since_last:.1f} seconds ago"
             )
 
