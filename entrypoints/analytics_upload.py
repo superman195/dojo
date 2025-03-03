@@ -139,7 +139,6 @@ async def _post_task_data(payload, hotkey, signature, message):
     @param message: a message that is signed by the validator
     @param signature: the signature generated from signing the message with the validator's hotkey.
     """
-    # TIMEOUT = 15.0
     _http_client = httpx.AsyncClient()
     VALIDATOR_API_BASE_URL = os.getenv("VALIDATOR_API_BASE_URL")
 

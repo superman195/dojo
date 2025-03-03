@@ -56,7 +56,7 @@ async def _upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
     """
     redis = state.redis
     cfg = state.api_config
-    print(f"Uploading to S3: {cfg.ANAL_BUCKET_NAME}")
+    print(f"Uploading to S3: {cfg.BUCKET_NAME}")
     try:
         # check if any tasks have been uploaded previously
         new_tasks: list[AnalyticsData] = []
@@ -81,10 +81,8 @@ async def _upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
 
         session = aioboto3.Session(region_name=cfg.AWS_REGION)
         async with session.resource("s3") as s3:
-            bucket = await s3.Bucket(cfg.ANAL_BUCKET_NAME)
-            filename = (
-                f"{hotkey}_{datetime.now().strftime('%Y-%m-%d_%H-%M')}_analytics.txt"
-            )
+            bucket = await s3.Bucket(cfg.BUCKET_NAME)
+            filename = f"analytics/{hotkey}_{datetime.now().strftime('%Y-%m-%d_%H-%M')}_analytics.txt"
 
             await bucket.put_object(
                 Key=filename,

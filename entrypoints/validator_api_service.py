@@ -15,7 +15,6 @@ import bittensor as bt
 import httpx
 import uvicorn
 from bittensor.utils.btlogging import logging as logger
-from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -27,9 +26,13 @@ from commons.utils import (
     verify_hotkey_in_metagraph,
     verify_signature,
 )
+
+# from dotenv import load_dotenv
+# load_dotenv()
+from dojo.utils.config import source_dotenv
 from entrypoints.analytics_endpoint import analytics_router
 
-load_dotenv()
+source_dotenv()
 settings: ValidatorAPISettings = get_settings()
 cfg: bt.config = ObjectManager.get_config()
 
@@ -40,6 +43,8 @@ async def lifespan(app: FastAPI):
     app.state.api_config = settings.aws
     app.state.redis = RedisCache(settings.redis)
     app.state.subtensor = bt.subtensor(config=app.state.bt_cfg)
+    # print(f"@@@ bt cfg {app.state.bt_cfg}")
+    # print(f"@@@@ api cfg {settings}")
     yield
     await app.state.redis.close()
     app.state.subtensor.close()
@@ -105,7 +110,7 @@ async def upload_dataset(
                         detail=f"File too large. Maximum size is {api_config.MAX_CHUNK_SIZE_MB}MB",
                     )
 
-                filename = f"hotkey_{hotkey}_{file.filename}"
+                filename = f"datasets/hotkey_{hotkey}_{file.filename}"
 
                 await bucket.put_object(
                     Key=filename,
@@ -131,7 +136,7 @@ async def server():
     port = parsed_url.port or 9999
 
     # Configure server
-    config = uvicorn.Config(app, host=host, port=port)
+    config = uvicorn.Config(app, host=host, port=port, log_level="debug")
     server = uvicorn.Server(config)
     await server.serve()
 

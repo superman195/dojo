@@ -25,7 +25,6 @@ class AWSSettings(BaseSettings):
     MAX_CHUNK_SIZE_MB: int = Field(default=int(os.getenv("MAX_CHUNK_SIZE_MB", 50)))
 
     # Analytics env vars
-    ANAL_BUCKET_NAME: str = Field(default=os.getenv("ANAL_BUCKET_NAME", ""))
     AWS_ACCESS_KEY_ID: SecretStr = Field(default=os.getenv("AWS_ACCESS_KEY_ID", ""))
     AWS_SECRET_ACCESS_KEY: SecretStr = Field(
         default=os.getenv("AWS_SECRET_ACCESS_KEY", "")
