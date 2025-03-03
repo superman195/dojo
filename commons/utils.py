@@ -475,10 +475,5 @@ def check_stake(subtensor: bt.subtensor, hotkey: str) -> bool:
     stake = get_effective_stake(hotkey, subtensor)
 
     if stake < VALIDATOR_MIN_STAKE:
-        logger.error(
-            f"Insufficient stake for hotkey {hotkey}: {stake} < {VALIDATOR_MIN_STAKE}"
-        )
         return False
-
-    logger.info(f"Stake check passed for {hotkey} with stake {stake}")
     return True
