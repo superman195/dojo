@@ -28,11 +28,13 @@ source_dotenv()
 
 BATCH_SIZE = int(os.getenv("FILL_SCORE_BATCH_SIZE", 20))
 MAX_CONCURRENT_TASKS = int(os.getenv("FILL_SCORE_MAX_CONCURRENT_TASKS", 15))
-TX_TIMEOUT = int(os.getenv("FILL_SCORE_TX_TIMEOUT", 300))
+TX_TIMEOUT = int(os.getenv("FILL_SCORE_TX_TIMEOUT", 5000))
 
 # Get number of CPU cores
 nproc = multiprocessing.cpu_count()
-sem = asyncio.Semaphore(nproc * 2 + 1)  # Limit concurrent operations
+sem = asyncio.Semaphore(
+    min(MAX_CONCURRENT_TASKS, nproc * 2 + 1)
+)  # Limit concurrent operations
 
 
 class FillScoreStats:
@@ -132,7 +134,7 @@ class FillScoreStats:
 stats = FillScoreStats()
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+@retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=2, min=4, max=60))
 async def execute_transaction(miner_response_id, tx_function):
     try:
         async with prisma.tx(timeout=TX_TIMEOUT) as tx:
