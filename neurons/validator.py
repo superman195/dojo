@@ -24,10 +24,11 @@ import dojo
 from commons.dataset.synthetic import SyntheticAPI
 from commons.exceptions import (
     EmptyScores,
+    FatalSyntheticGenerationError,
     InvalidMinerResponse,
     NoNewExpiredTasksYet,
     SetWeightsFailed,
-    SyntheticAPIUnavailable,
+    SyntheticGenerationError,
 )
 from commons.obfuscation.obfuscation_utils import obfuscate_html_and_js
 from commons.objects import ObjectManager
@@ -607,7 +608,7 @@ class Validator:
         while True:
             await asyncio.sleep(dojo.VALIDATOR_HEARTBEAT)
             try:
-                all_miner_uids = extract_miner_uids(metagraph=self.metagraph)
+                all_miner_uids = await extract_miner_uids()
                 logger.debug(f"Sending heartbeats to {len(all_miner_uids)} miners")
 
                 axons: list[bt.AxonInfo] = [
@@ -684,7 +685,7 @@ class Validator:
                 await self.sync()
                 await asyncio.sleep(dojo.VALIDATOR_RUN)
 
-            except (KeyboardInterrupt, SyntheticAPIUnavailable):
+            except (KeyboardInterrupt, FatalSyntheticGenerationError):
                 # Handle shutdown gracefully
                 await self._cleanup()
                 return
@@ -842,8 +843,8 @@ class Validator:
         task_id = get_new_uuid()
         try:
             if not await SyntheticAPI.get_health_status():
-                raise SyntheticAPIUnavailable(
-                    "synthetic-API unavailable. shutting down validator"
+                raise FatalSyntheticGenerationError(
+                    "synthetic API health check failed even after retry attempts. "
                 )
 
             data: SyntheticQA | None = await SyntheticAPI.get_qa()
@@ -873,8 +874,15 @@ class Validator:
             )
 
             return synapse, data.ground_truth, obfuscated_model_to_model
-
-        except (RetryError, ValueError, aiohttp.ClientError) as e:
+        except FatalSyntheticGenerationError as e:
+            logger.error(f"Fatal synthetic generation error: {e}")
+            raise
+        except (
+            RetryError,
+            ValueError,
+            aiohttp.ClientError,
+            SyntheticGenerationError,
+        ) as e:
             logger.error(
                 f"Failed to generate synthetic request: {type(e).__name__}: {str(e)}"
             )
@@ -1424,6 +1432,6 @@ class Validator:
         return hotkey_to_dojo_task_scores_and_gt
 
     async def block_headers_callback(self, block: dict):
-        logger.debug(f"Received block headers{block}")
+        logger.trace(f"Received block headers{block}")
         block_number = int(block.get("header", {}).get("number"))
         self._last_block = block_number

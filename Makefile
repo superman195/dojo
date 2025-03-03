@@ -1,6 +1,6 @@
 PRECOMMIT_VERSION="3.7.1"
 UNAME := $(shell uname)
-.PHONY: hooks install install-dev install-test btcli validator-pull miner-pull validator-down miner-down miner-decentralised miner-centralised validator validator-up-deps miner-worker-api dojo-cli miner-decentralised-logs miner-centralised-logs validator-logs subtensor-mainnet subtensor-testnet
+.PHONY: hooks install install-dev install-test btcli validator-pull miner-pull miner-decentralised miner-centralised validator validator-up-deps miner-worker-api dojo-cli miner-decentralised-logs miner-centralised-logs validator-logs
 
 hooks:
 	@echo "Grabbing pre-commit version ${PRECOMMIT_VERSION} and installing pre-commit hooks"
@@ -41,38 +41,35 @@ btcli:
 	docker compose -f docker-compose.shared.yaml run --rm btcli
 
 validator-pull:
-	docker compose --env-file .env.validator -f docker-compose.validator.yaml pull --include-deps
+	docker compose -f docker-compose.validator.yaml pull --include-deps
 
 miner-pull:
-	docker compose --env-file .env.miner -f docker-compose.miner.yaml pull --include-deps
+	docker compose -f docker-compose.miner.yaml pull --include-deps
 
 validator-down:
-	docker compose --env-file .env.validator -f docker-compose.validator.yaml down
+	docker compose -f docker-compose.validator.yaml down
 
 miner-down:
-	docker compose --env-file .env.miner -f docker-compose.miner.yaml down
+	docker compose -f docker-compose.miner.yaml down
 
 # ---------------------------------------------------------------------------- #
 #                                 CORE SERVICES                                #
 # ---------------------------------------------------------------------------- #
 
-miner-decentralised:
-	docker compose --env-file .env.miner -f docker-compose.miner.yaml up -d --build miner-decentralised
-
-miner-centralised:
-	docker compose --env-file .env.miner -f docker-compose.miner.yaml up --build -d miner-centralised
+miner:
+	docker compose -f docker-compose.miner.yaml up -d miner
 
 validator:
-	docker compose --env-file .env.validator -f docker-compose.validator.yaml up --build -d validator
+	docker compose -f docker-compose.validator.yaml up -d validator
 
 validator-up-deps:
-	docker compose --env-file .env.validator -f docker-compose.validator.yaml up -d --build synthetic-api postgres-vali prisma-setup-vali
+	docker compose -f docker-compose.validator.yaml up -d --build synthetic-api postgres prisma-setup-vali
 
-miner-worker-api:
-	docker compose --env-file .env.miner -f docker-compose.miner.yaml up -d worker-api
+dojo-platform:
+	docker compose -f docker-compose.platform.yaml up -d
 
 dojo-cli:
-	docker compose --env-file .env.miner -f docker-compose.miner.yaml run --rm dojo-cli
+	docker compose -f docker-compose.miner.yaml run --rm dojo-cli
 
 extract-dataset:
 	docker compose -f docker-compose.validator.yaml run --rm --remove-orphans extract-dataset
@@ -81,20 +78,20 @@ fill-score-column:
 	docker compose -f docker-compose.validator.yaml run --rm --remove-orphans fill-score-column
 
 migration:
-	docker compose --env-file .env.validator -f docker-compose.validator.yaml run --rm migration
+	docker compose -f docker-compose.validator.yaml run --rm migration
 
 # ---------------------------------------------------------------------------- #
 #                             CORE SERVICE LOGGING                             #
 # ---------------------------------------------------------------------------- #
 
 miner-decentralised-logs:
-	docker compose --env-file .env.miner -f docker-compose.miner.yaml logs -f miner-decentralised
+	docker compose -f docker-compose.miner.yaml logs -f miner-decentralised
 
 miner-centralised-logs:
-	docker compose --env-file .env.miner -f docker-compose.miner.yaml logs -f miner-centralised
+	docker compose -f docker-compose.miner.yaml logs -f miner-centralised
 
 validator-logs:
-	docker compose --env-file .env.validator -f docker-compose.validator.yaml logs -f validator
+	docker compose -f docker-compose.validator.yaml logs -f validator
 
 # ---------------------------------------------------------------------------- #
 #                             LOCAL SUBTENSOR                                  #
@@ -105,3 +102,20 @@ subtensor-mainnet:
 
 subtensor-testnet:
 	docker compose -f docker-compose.subtensor.yaml up -d testnet-lite
+
+# ---------------------------------------------------------------------------- #
+#                             WORKER PLATFORM                                  #
+# ---------------------------------------------------------------------------- #
+
+worker-platform:
+	docker compose -f docker-compose.platform.yaml up -d
+
+# ---------------------------------------------------------------------------- #
+#                                  OTHERS                                      #
+# ---------------------------------------------------------------------------- #
+
+watchtower:
+	docker compose -f docker-compose.shared.yaml up -d watchtower
+
+watchtower-down:
+	docker compose -f docker-compose.shared.yaml down watchtower

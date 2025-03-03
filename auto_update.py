@@ -25,22 +25,22 @@ BRANCH = "main"
 CONFIG = {
     "validator": {
         "images": ["dojo-synthetic-api", "dojo"],
-        "docker_compose_down": "docker compose --env-file .env.validator -f docker-compose.validator.yaml down",
-        "docker_compose_up": "docker compose --env-file .env.validator -f docker-compose.validator.yaml up --build -d validator",
+        "docker_compose_down": "docker compose -f docker-compose.validator.yaml down",
+        "docker_compose_up": "docker compose -f docker-compose.validator.yaml up --build -d validator",
     },
-    "miner-decentralised": {
+    "miner": {
         "images": ["dojo-worker-api", "dojo-ui", "dojo"],
-        "docker_compose_down": "docker compose --env-file .env.miner -f docker-compose.miner.yaml down",
-        "docker_compose_up": "docker compose --env-file .env.miner -f docker-compose.miner.yaml up --build -d miner-decentralised",
+        "docker_compose_down": "docker compose -f docker-compose.miner.yaml down",
+        "docker_compose_up": "docker compose -f docker-compose.miner.yaml up --build -d miner-decentralised",
     },
-    "miner-centralised": {
-        "services": [
-            "miner-centralised",
-        ],
-        "images": ["dojo"],
-        "docker_compose_down": "docker compose --env-file .env.miner -f docker-compose.miner.yaml down",
-        "docker_compose_up": "docker compose --env-file .env.miner -f docker-compose.miner.yaml up --build -d miner-centralised",
-    },
+    # "miner-centralised": {
+    #     "services": [
+    #         "miner-centralised",
+    #     ],
+    #     "images": ["dojo"],
+    #     "docker_compose_down": "docker compose --env-file .env.miner -f docker-compose.miner.yaml down",
+    #     "docker_compose_up": "docker compose --env-file .env.miner -f docker-compose.miner.yaml up --build -d miner-centralised",
+    # },
 }
 
 
