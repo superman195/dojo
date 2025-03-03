@@ -25,6 +25,21 @@ ROOT_WEIGHT = 0.18
 ROOT_NETUID = 0
 
 
+class aobject:
+    """Inheriting this class allows you to define an async __init__.
+
+    So you can create objects by doing something like `await MyClass(params)`
+    """
+
+    async def __new__(cls, *a, **kw):
+        instance = super().__new__(cls)
+        await instance.__init__(*a, **kw)
+        return instance
+
+    async def __init__(self):
+        pass
+
+
 def get_effective_stake(hotkey: str, subtensor: bt.subtensor) -> float:
     if isinstance(subtensor, bt.AsyncSubtensor):
         raise NotImplementedError("Async subtensor not supported")
@@ -176,18 +191,23 @@ def log_retry_info(retry_state):
     )
 
 
-def serve_axon(
-    subtensor: bt.subtensor, axon: bt.axon, config: bt.config, max_attempts: int = 10
+async def serve_axon(
+    subtensor: bt.AsyncSubtensor,
+    axon: bt.axon,
+    config: bt.config,
+    max_attempts: int = 10,
 ) -> bool:
     """A wrapper around the underlying self.axon.serve(...) call with retries"""
     try:
         for attempt in Retrying(
             stop=stop_after_attempt(max_attempts),
             before_sleep=log_retry_info,
-            wait=wait_exponential_jitter(initial=6, max=24, jitter=1),
+            wait=wait_exponential_jitter(initial=12, max=60, jitter=1),
         ):
             with attempt:
-                serve_success = subtensor.serve_axon(netuid=config.netuid, axon=axon)
+                serve_success = await subtensor.serve_axon(
+                    netuid=config.netuid, axon=axon
+                )
                 if serve_success:
                     return True
 
