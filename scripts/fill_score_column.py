@@ -2,6 +2,7 @@ import asyncio
 import json
 import multiprocessing
 import os
+import random
 import time
 
 from loguru import logger
@@ -26,15 +27,13 @@ from dojo.utils.config import source_dotenv
 
 source_dotenv()
 
-BATCH_SIZE = int(os.getenv("FILL_SCORE_BATCH_SIZE", 20))
-MAX_CONCURRENT_TASKS = int(os.getenv("FILL_SCORE_MAX_CONCURRENT_TASKS", 15))
-TX_TIMEOUT = int(os.getenv("FILL_SCORE_TX_TIMEOUT", 5000))
+BATCH_SIZE = int(os.getenv("FILL_SCORE_BATCH_SIZE", 10))
+MAX_CONCURRENT_TASKS = int(os.getenv("FILL_SCORE_MAX_CONCURRENT_TASKS", 5))
+TX_TIMEOUT = int(os.getenv("FILL_SCORE_TX_TIMEOUT", 10000))
 
 # Get number of CPU cores
 nproc = multiprocessing.cpu_count()
-sem = asyncio.Semaphore(
-    min(MAX_CONCURRENT_TASKS, nproc * 2 + 1)
-)  # Limit concurrent operations
+sem = asyncio.Semaphore(min(MAX_CONCURRENT_TASKS, nproc))  # Limit concurrent operations
 
 
 class FillScoreStats:
@@ -134,9 +133,11 @@ class FillScoreStats:
 stats = FillScoreStats()
 
 
-@retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=2, min=4, max=60))
+@retry(stop=stop_after_attempt(8), wait=wait_exponential(multiplier=3, min=5, max=120))
 async def execute_transaction(miner_response_id, tx_function):
     try:
+        # Add a small random delay before starting transaction to reduce contention
+        await asyncio.sleep(random.uniform(0.1, 1.0))
         async with prisma.tx(timeout=TX_TIMEOUT) as tx:
             await tx_function(tx)
     except Exception as e:
@@ -430,6 +431,8 @@ async def main():
                 stats.processed_tasks += len(batch_tasks)
                 stats.log_progress()
 
+            # Add a small delay between batches to reduce database load
+            await asyncio.sleep(1.0)
             skip += BATCH_SIZE
 
             # Check if we've processed all tasks
