@@ -21,6 +21,7 @@ from database.mappers import (
     map_validator_task_to_task_synapse_object,
 )
 from database.prisma import Json
+from database.prisma.enums import HFLStatusEnum, TaskTypeEnum
 from database.prisma.errors import PrismaError
 from database.prisma.models import GroundTruth, ValidatorTask
 from database.prisma.types import (
@@ -38,7 +39,6 @@ from dojo.protocol import (
     Scores,
     TaskResult,
     TaskSynapseObject,
-    TaskTypeEnum,
 )
 
 
@@ -453,6 +453,7 @@ class ORM:
         validator_task: TaskSynapseObject,
         miner_responses: List[TaskSynapseObject],
         ground_truth: dict[str, int],
+        prev_task_id: str | None = None,
     ) -> ValidatorTask | None:
         """Saves a task, which consists of both the validator's request and the miners' responses.
 
@@ -751,6 +752,62 @@ class ORM:
                 f"Error fetching completion scores and ground truths for dojo_task_id {dojo_task_id}: {e}"
             )
             return {}
+
+    @staticmethod
+    async def get_TF_tasks_by_hfl_status(
+        status: HFLStatusEnum,
+    ) -> list[ValidatorTask]:
+        """Get validator tasks by HFL status.
+
+        Args:
+            status: HFL status to filter by
+
+        Returns:
+            List of validator tasks with the specified HFL status
+        """
+        try:
+            tasks = await ValidatorTask.prisma().find_many(
+                where=ValidatorTaskWhereInput(
+                    task_type=TaskTypeEnum.TEXT_TO_COMPLETION,
+                    HFLState={
+                        "is": {
+                            "status": status,
+                        }
+                    },
+                ),
+                include={
+                    "HFLState": True,
+                },
+                order={"created_at": "desc"},
+            )
+            return tasks
+        except Exception as e:
+            logger.error(f"Error getting tasks by HFL status {status}: {e}")
+            return []
+
+    @staticmethod
+    # TODO include table name in the query as needed
+    async def get_sf_tasks_by_status(
+        status: HFLStatusEnum,
+    ) -> list[ValidatorTask]:
+        """Get Score-Feedback tasks by HFL status."""
+        try:
+            tasks = await ValidatorTask.prisma().find_many(
+                where=ValidatorTaskWhereInput(
+                    {
+                        "task_type": TaskTypeEnum.SCORE_FEEDBACK,
+                        "HFLState": {"is": {"status": status}},
+                    }
+                ),
+                include={
+                    "HFLState": True,
+                },
+                order={"created_at": "desc"},
+            )
+            return tasks
+        except Exception as e:
+            logger.error(f"Error getting SF tasks by status {status}: {e}")
+            return []
 
 
 # ---------------------------------------------------------------------------- #

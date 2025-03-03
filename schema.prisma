@@ -14,6 +14,7 @@ enum TaskTypeEnum {
     TEXT_TO_IMAGE
     TEXT_TO_THREE_D
     TEXT_TO_COMPLETION
+    SCORE_FEEDBACK
 }
 
 enum CriteriaTypeEnum {
@@ -22,6 +23,14 @@ enum CriteriaTypeEnum {
     SCORE
     MULTI_SELECT
     TEXT
+}
+
+enum HFLStatusEnum {
+    TF_PENDING // TF created, waiting for feedback, no TASK_RESULT yet
+    TF_COMPLETED // TF task completed, and TASK_RESULT are updated, waiting for synthetic request
+    SF_PENDING // SF created, waiting for scores from miners
+    SF_COMPLETED // SF task results received from miners
+    HFL_COMPLETED // HFL loop finished
 }
 
 model ValidatorTask {
@@ -34,6 +43,7 @@ model ValidatorTask {
     created_at       DateTime     @default(now())
     updated_at       DateTime     @updatedAt
     metadata         Json?        @db.JsonB
+    hfl_state_id     String?
 
     // Relationships
     parent_task     ValidatorTask?  @relation("PreviousTask", fields: [previous_task_id], references: [id])
@@ -41,6 +51,7 @@ model ValidatorTask {
     completions     Completion[]
     miner_responses MinerResponse[]
     ground_truth    GroundTruth[]
+    HFLState        HFLState?       @relation(fields: [hfl_state_id], references: [id])
 
     @@index([task_type, is_processed])
     @@index([expire_at])
@@ -200,4 +211,20 @@ model Score_Model {
     score      Json
     created_at DateTime @default(now())
     updated_at DateTime @updatedAt
+}
+
+model HFLState {
+    id                       String          @id @default(uuid())
+    original_task_id         String // original task that started HFL
+    current_task_id          String // current task in the process
+    current_iteration        Int             @default(1)
+    current_synthetic_req_id String? // Null when not in synthetic phase
+    status                   HFLStatusEnum // Current state of the HFL process (e.g., TF_PENDING, TF_COMPLETE, SF_PENDING)
+    events                   Json[]          @db.JsonB // Array of state transition events with metadata
+    created_at               DateTime        @default(now())
+    updated_at               DateTime        @updatedAt
+    ValidatorTask            ValidatorTask[]
+
+    @@unique([original_task_id, current_task_id])
+    @@map("hfl_state")
 }
