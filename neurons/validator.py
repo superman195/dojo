@@ -27,6 +27,7 @@ from commons.exceptions import (
     InvalidMinerResponse,
     NoNewExpiredTasksYet,
     SetWeightsFailed,
+    SyntheticGenerationError,
 )
 from commons.obfuscation.obfuscation_utils import obfuscate_html_and_js
 from commons.objects import ObjectManager
@@ -868,7 +869,12 @@ class Validator:
 
             return synapse, data.ground_truth, obfuscated_model_to_model
 
-        except (RetryError, ValueError, aiohttp.ClientError) as e:
+        except (
+            RetryError,
+            ValueError,
+            aiohttp.ClientError,
+            SyntheticGenerationError,
+        ) as e:
             logger.error(
                 f"Failed to generate synthetic request: {type(e).__name__}: {str(e)}"
             )
