@@ -116,7 +116,7 @@ class SyntheticAPI:
         returns True if the API is healthy, False otherwise.
         """
         await cls.init_session()
-        path = f"{SYNTHETIC_API_BASE_URL}/api/health"
+        path = f"{SYNTHETIC_API_BASE_URL}/health"
         logger.debug(f"Getting health status from {path}.")
 
         MAX_RETRIES = 6
