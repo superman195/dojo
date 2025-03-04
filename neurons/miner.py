@@ -48,6 +48,11 @@ class Miner(aobject):
         )
 
         # Attach determiners which functions are called when servicing a request.
+
+        # Note: The synapse parameter in blacklist functions is a different instance from the one in forward functions.
+        # The blacklist synapse comes from the request headers and is used for initial validation,
+        # while the forward synapse contains the full request body.
+
         logger.info("Attaching forward function to miner axon.")
         self.axon.attach(
             forward_fn=self.forward_task_request,
@@ -309,12 +314,6 @@ class Miner(aobject):
     async def blacklist_task_result_request(
         self, synapse: TaskResultRequest
     ) -> Tuple[bool, str]:
-        # Log the IP address of the incoming request.
-        if not synapse.dojo_task_id:
-            logger.error("TaskResultRequest missing dojo_task_id")
-            context = self.extract_synapse_info(synapse)
-            return True, f"Missing dojo_task_id. Context: {context}"
-
         return await self._blacklist_function(
             synapse, "task result", "Valid task result request from validator"
         )
@@ -341,6 +340,7 @@ class Miner(aobject):
     ) -> Tuple[bool, str]:
         """
         Common blacklist logic for any forward function to validate an incoming synapse.
+        Note: Validate network-level security concerns using the header-based synapse, not the request body data
 
         Parameters:
             synapse: The incoming synapse object (Heartbeat, ScoringResult, etc.)
