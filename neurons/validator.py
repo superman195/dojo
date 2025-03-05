@@ -59,6 +59,7 @@ from dojo.protocol import (
 )
 from dojo.utils.config import get_config
 from dojo.utils.uids import extract_miner_uids, is_miner
+from entrypoints.analytics_upload import run_analytics_upload
 
 ObfuscatedModelMap: TypeAlias = Dict[str, str]
 
@@ -755,6 +756,11 @@ class Validator:
                 )
                 await self.update_scores(hotkey_to_scores=final_hotkey_to_score)
 
+                # upload scores to analytics API after updating.
+                expire_from_analytics = expire_to - timedelta(minutes=65)
+                await run_analytics_upload(
+                    self._scores_alock, expire_from_analytics, expire_to
+                )
             except Exception:
                 traceback.print_exc()
                 pass
