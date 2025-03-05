@@ -2,7 +2,6 @@ import asyncio
 import json
 import multiprocessing
 import os
-import random
 import time
 
 from loguru import logger
@@ -136,8 +135,6 @@ stats = FillScoreStats()
 @retry(stop=stop_after_attempt(8), wait=wait_exponential(multiplier=3, min=5, max=120))
 async def execute_transaction(miner_response_id, tx_function):
     try:
-        # Add a small random delay before starting transaction to reduce contention
-        await asyncio.sleep(random.uniform(0.1, 1.0))
         async with prisma.tx(timeout=TX_TIMEOUT) as tx:
             await tx_function(tx)
     except Exception as e:
@@ -200,6 +197,8 @@ async def _process_miner_response(miner_response: MinerResponse, task: Validator
     # Define the transaction function
     async def tx_function(tx):
         updated_count = 0
+        updates = []
+
         for completion in completions:
             # Find or create the criterion record
             criterion = await tx.criterion.find_first(
@@ -241,25 +240,34 @@ async def _process_miner_response(miner_response: MinerResponse, task: Validator
                 )
                 continue
 
-            try:
-                await tx.minerscore.update(
-                    where={
+            # Prepare update (don't execute yet)
+            updates.append(
+                {
+                    "where": {
                         "criterion_id_miner_response_id": {
                             "criterion_id": criterion.id,
                             "miner_response_id": miner_response.id,
                         }
                     },
-                    data=MinerScoreUpdateInput(
+                    "data": MinerScoreUpdateInput(
                         scores=Json(json.dumps(scores.model_dump()))
                     ),
-                )
-                updated_count += 1
-            except Exception as e:
-                logger.warning(
-                    f"Failed to update score for criterion {criterion.id}, miner response {miner_response.id}: {e}"
-                )
-                # Continue with other updates instead of failing the whole transaction
-                continue
+                }
+            )
+
+        # Execute updates in batches
+        batch_size = 20
+        for i in range(0, len(updates), batch_size):
+            batch = updates[i : i + batch_size]
+            successful_updates = 0
+            for update in batch:
+                try:
+                    await tx.minerscore.update(**update)
+                    successful_updates += 1
+                except Exception as e:
+                    logger.warning(f"Failed to update score: {e}")
+
+            updated_count += successful_updates
 
         return updated_count
 
@@ -284,12 +292,18 @@ async def _process_task(task: ValidatorTask):
                 logger.warning("No miner responses for task, skipping")
                 return False
 
-            # Process each miner response
-            updated = False
-            for miner_response in task.miner_responses:
-                result = await _process_miner_response(miner_response, task)
-                updated = updated or result
-                # Add small delay between processing miner responses to avoid overloading DB
+            # Process responses in smaller chunks to avoid too many connections
+            chunk_size = 3  # Process only 3 responses at a time
+            for i in range(0, len(task.miner_responses), chunk_size):
+                responses_chunk = task.miner_responses[i : i + chunk_size]
+                tasks = []
+                for miner_response in responses_chunk:
+                    tasks.append(_process_miner_response(miner_response, task))
+
+                # Wait for this chunk to complete
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+                # Brief pause between chunks to let connections close
                 await asyncio.sleep(0.1)
 
             logger.info(f"Proceeding with score calculation for task {task.id}")
@@ -431,8 +445,6 @@ async def main():
                 stats.processed_tasks += len(batch_tasks)
                 stats.log_progress()
 
-            # Add a small delay between batches to reduce database load
-            await asyncio.sleep(1.0)
             skip += BATCH_SIZE
 
             # Check if we've processed all tasks
