@@ -8,17 +8,18 @@ class ObjectManager:
     _config = None
 
     @classmethod
-    def get_miner(cls):
+    async def get_miner(cls):
         if get_config().simulation:
             from simulator.miner import MinerSim
 
             if cls._miner is None:
+                # TODO: might need to be async
                 cls._miner = MinerSim()
         else:
             from neurons.miner import Miner
 
             if cls._miner is None:
-                cls._miner = Miner()
+                cls._miner = await Miner()
         return cls._miner
 
     @classmethod
