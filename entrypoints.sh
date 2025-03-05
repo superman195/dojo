@@ -104,6 +104,7 @@ if [ "$1" = 'validator-api-service' ]; then
     --subtensor.network finney
 fi
 
+
 if [ "$1" = 'migration' ]; then
     echo "Environment variables:"
     echo "DATABASE_URL: ${DATABASE_URL}"
