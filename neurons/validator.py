@@ -16,7 +16,6 @@ import numpy as np
 import torch
 from bittensor.utils.btlogging import logging as logger
 from bittensor.utils.weight_utils import process_weights_for_netuid
-from tenacity import RetryError
 from torch.nn import functional as F
 from websocket import create_connection
 
@@ -684,12 +683,14 @@ class Validator:
                 # Sync metagraph and potentially set weights.
                 await self.sync()
                 await asyncio.sleep(dojo.VALIDATOR_RUN)
-
-            except (KeyboardInterrupt, FatalSyntheticGenerationError):
+            except KeyboardInterrupt:
                 # Handle shutdown gracefully
                 await self._cleanup()
                 return
-
+            except FatalSyntheticGenerationError:
+                # if synthetic-API is unresponsive, shut down validator.
+                await self._cleanup()
+                raise
             # In case of unforeseen errors, the validator will log the error and continue operations.
             except Exception as err:
                 logger.error(f"Error during validation: {err}")
@@ -828,7 +829,7 @@ class Validator:
     async def _cleanup(self):
         """Handle cleanup operations when shutting down"""
         self.axon.stop()
-        logger.success("Validator shutdown complete")
+        logger.success("Validator axon stopped")
 
     async def _generate_synthetic_request(
         self,
@@ -842,10 +843,11 @@ class Validator:
         """
         task_id = get_new_uuid()
         try:
-            if not await SyntheticAPI.get_health_status():
-                raise FatalSyntheticGenerationError(
-                    "synthetic API health check failed even after retry attempts. "
-                )
+            # to-do remove this once approved.
+            # if not await SyntheticAPI.get_health_status():
+            #     raise FatalSyntheticGenerationError(
+            #         "synthetic API health check failed even after retry attempts. "
+            #     )
 
             data: SyntheticQA | None = await SyntheticAPI.get_qa()
             if not data or not data.responses:
@@ -874,11 +876,7 @@ class Validator:
             )
 
             return synapse, data.ground_truth, obfuscated_model_to_model
-        except FatalSyntheticGenerationError as e:
-            logger.error(f"Fatal synthetic generation error: {e}")
-            raise
         except (
-            RetryError,
             ValueError,
             aiohttp.ClientError,
             SyntheticGenerationError,
@@ -886,6 +884,10 @@ class Validator:
             logger.error(
                 f"Failed to generate synthetic request: {type(e).__name__}: {str(e)}"
             )
+        except FatalSyntheticGenerationError as e:
+            # propagate FatalSyntheticGenerationError upstream to trigger validator shutdown.
+            logger.error("QA generation failed after all retry attempts")
+            raise e
         except Exception as e:
             logger.error(f"Unexpected error during synthetic data generation: {e}")
             logger.debug(f"Traceback: {traceback.format_exc()}")
