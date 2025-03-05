@@ -56,7 +56,7 @@ async def _upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
     """
     redis = state.redis
     cfg = state.api_config
-    print(f"Uploading to S3: {cfg.BUCKET_NAME}")
+
     try:
         # check if any tasks have been uploaded previously
         new_tasks: list[AnalyticsData] = []
