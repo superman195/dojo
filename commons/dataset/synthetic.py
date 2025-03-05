@@ -69,8 +69,8 @@ class SyntheticAPI:
         path = f"{SYNTHETIC_API_BASE_URL}/api/synthetic-gen"
         logger.debug(f"Generating synthetic QA from {path}.")
 
-        # MAX_RETRIES = 6
-        MAX_RETRIES = 1
+        MAX_RETRIES = 6
+
         try:
             async for attempt in AsyncRetrying(
                 stop=stop_after_attempt(MAX_RETRIES),
