@@ -92,7 +92,7 @@ if [ "$1" = 'validator-api-service' ]; then
     echo "VALIDATOR_API_BASE_URL: ${VALIDATOR_API_BASE_URL}"
     echo "AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}"
     echo "AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}"
-    echo "S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}"
+    echo "S3_BUCKET_NAME: ${S3_BUCKET_NAME}"
     echo "AWS_REGION: ${AWS_REGION}"
     echo "REDIS_HOST: ${REDIS_HOST}"
     echo "REDIS_PORT: ${REDIS_PORT}" 
