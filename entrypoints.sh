@@ -95,7 +95,7 @@ if [ "$1" = 'validator-api-service' ]; then
     echo "S3_BUCKET_NAME: ${S3_BUCKET_NAME}"
     echo "AWS_REGION: ${AWS_REGION}"
     echo "REDIS_HOST: ${REDIS_HOST}"
-    echo "REDIS_PORT: ${REDIS_PORT}" 
+    echo "REDIS_PORT: ${REDIS_PORT}"
     echo "REDIS_USERNAME: ${REDIS_USERNAME}"
     echo "REDIS_PASSWORD: ${REDIS_PASSWORD}"
     echo "MAX_CHUNK_SIZE_MB: ${MAX_CHUNK_SIZE_MB}"
