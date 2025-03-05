@@ -84,14 +84,11 @@ migration:
 #                             CORE SERVICE LOGGING                             #
 # ---------------------------------------------------------------------------- #
 
-miner-decentralised-logs:
-	docker compose -f docker-compose.miner.yaml logs -f miner-decentralised
-
-miner-centralised-logs:
-	docker compose -f docker-compose.miner.yaml logs -f miner-centralised
+miner-logs:
+	docker compose -f docker-compose.miner.yaml logs --since=1h -f miner
 
 validator-logs:
-	docker compose -f docker-compose.validator.yaml logs -f validator
+	docker compose -f docker-compose.validator.yaml logs --since=1h -f validator
 
 # ---------------------------------------------------------------------------- #
 #                             LOCAL SUBTENSOR                                  #
