@@ -12,9 +12,10 @@ from typing import List
 
 import bittensor as bt
 import httpx
+from bittensor.core.async_subtensor import AsyncSubtensor
+from bittensor.core.metagraph import AsyncMetagraph
 from bittensor.utils.btlogging import logging as logger
 
-# from bittensor.core.async_subtensor import AsyncSubtensor
 from commons.exceptions import NoProcessedTasksYet
 from commons.objects import ObjectManager
 from commons.orm import ORM
@@ -24,13 +25,11 @@ from dojo.protocol import AnalyticsData, AnalyticsPayload
 
 
 async def _get_all_miner_hotkeys(
-    subtensor: bt.AsyncSubtensor, netuid: int
+    subnet_metagraph: AsyncMetagraph, root_metagraph: AsyncMetagraph
 ) -> List[str]:
     """
     returns a list of all miner hotkeys registered to the input metagraph at time of execution.
     """
-    subnet_metagraph = await subtensor.metagraph(netuid=netuid, lite=True)
-    root_metagraph = await subtensor.metagraph(0, lite=True)
     return [
         hotkey
         for hotkey in subnet_metagraph.hotkeys
@@ -192,8 +191,11 @@ async def run_analytics_upload(
         config = ObjectManager.get_config()
         wallet = bt.wallet(config=config)
         validator_hotkey = wallet.hotkey.ss58_address
-        subtensor = bt.AsyncSubtensor(config=config)
-        all_miners = await _get_all_miner_hotkeys(subtensor, config.netuid)
+
+        async with AsyncSubtensor(config=config) as subtensor:
+            subnet_metagraph = await subtensor.metagraph(config.netuid)
+            root_metagraph = await subtensor.metagraph(0)
+            all_miners = await _get_all_miner_hotkeys(subnet_metagraph, root_metagraph)
 
         # if there is no last_analytics_upload time, get tasks from 65 minutes ago.
         if expire_from is None:
