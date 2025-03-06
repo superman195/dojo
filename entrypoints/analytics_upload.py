@@ -53,6 +53,7 @@ async def _get_task_data(
     """
     processed_tasks = []
     await connect_db()
+    logger.debug(f"retrieving processed tasks from {expire_from} to {expire_to}")
     try:
         # get processed tasks in batches from db
         async for task_batch, has_more_batches in ORM.get_processed_tasks(
@@ -141,10 +142,10 @@ async def _post_task_data(payload, hotkey, signature, message):
     """
     _http_client = httpx.AsyncClient()
     VALIDATOR_API_BASE_URL = os.getenv("VALIDATOR_API_BASE_URL")
-
     if VALIDATOR_API_BASE_URL is None:
         raise ValueError("VALIDATOR_API_BASE_URL must be set")
     try:
+        logger.debug("POST-ing analytics data to validator API")
         response = await _http_client.post(
             url=f"{VALIDATOR_API_BASE_URL}/api/v1/analytics/validators/{hotkey}/tasks",
             json=payload.model_dump(mode="json"),
@@ -158,7 +159,7 @@ async def _post_task_data(payload, hotkey, signature, message):
             timeout=None,
         )
         if response.status_code == 200:
-            logger.info(f"Successfully uploaded analytics data for hotkey: {hotkey}")
+            logger.success(f"Successfully uploaded analytics data for hotkey: {hotkey}")
             return response
         else:
             logger.error(f"Error when _post_task_data(): {response}")
@@ -175,6 +176,9 @@ async def run_analytics_upload(scores_alock: asyncio.Lock, expire_from, expire_t
     Is called by the validator after the completion of the scoring process.
     """
     async with scores_alock:
+        logger.info(
+            "Uploading analytics data for processed tasks between {expire_from} and {expire_to}"
+        )
         config = ObjectManager.get_config()
         wallet = bt.wallet(config=config)
         validator_hotkey = wallet.hotkey.ss58_address
@@ -201,23 +205,32 @@ async def run_analytics_upload(scores_alock: asyncio.Lock, expire_from, expire_t
             raise
 
 
-# # # Main function for testing. Remove / Comment in prod.
-# if __name__ == "__main__":
-#     import asyncio
+# # Main function for testing. Remove / Comment in prod.
+if __name__ == "__main__":
+    import asyncio
 
-#     async def main():
-#         # for testing
-#         from datetime import datetime, timedelta, timezone
+    async def main():
+        # # for testing
+        # from datetime import datetime, timedelta, timezone
 
-#         from commons.utils import datetime_as_utc
+        # from commons.utils import datetime_as_utc
 
-#         from_14_days = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(days=14)
-#         # from_24_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
-#         #     hours=24
-#         # )
-#         # from_1_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(hours=1)
-#         to_now = datetime_as_utc(datetime.now(timezone.utc))
-#         res = await run_analytics_upload(asyncio.Lock(), from_14_days, to_now)
-#         print(f"Response: {res}")
+        # from_14_days = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(days=14)
+        # # from_24_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
+        # #     hours=24
+        # # )
+        # # from_1_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(hours=1)
+        # to_now = datetime_as_utc(datetime.now(timezone.utc))
+        # res = await run_analytics_upload(asyncio.Lock(), from_14_days, to_now)
+        # print(f"Response: {res}")
 
-#     asyncio.run(main())
+        payload = AnalyticsPayload(tasks=[])
+        hotkey = "test_hk"
+        signature = "0xtest"
+        message = "test_msg"
+        res = await _post_task_data(
+            payload=payload, hotkey=hotkey, signature=signature, message=message
+        )
+        print(f"Response: {res}")
+
+    asyncio.run(main())

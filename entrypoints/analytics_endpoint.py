@@ -56,7 +56,7 @@ async def _upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
     """
     redis = state.redis
     cfg = state.api_config
-    print(f"Uploading to S3: {cfg.BUCKET_NAME}")
+
     try:
         # check if any tasks have been uploaded previously
         new_tasks: list[AnalyticsData] = []
@@ -131,6 +131,7 @@ async def create_analytics_data(
     @param signature: the signature of the sender
     @param message: the message of the sender
     """
+    logger.info(f"Received request from hotkey: {hotkey}")
     metagraph: bt.metagraph = request.app.state.subtensor.metagraph(
         request.app.state.bt_cfg.netuid
     )
@@ -153,7 +154,7 @@ async def create_analytics_data(
                 status_code=401, detail="Insufficient stake for hotkey."
             )
 
-        await _upload_to_s3(data, validator_hotkey, request.app.state)
+        await _upload_to_s3(data, hotkey, request.app.state)
 
         response = {
             "success": True,
