@@ -7,7 +7,7 @@ import asyncio
 import gc
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import List
 
 import bittensor as bt
@@ -177,7 +177,9 @@ async def _post_task_data(payload, hotkey, signature, message):
         raise
 
 
-async def run_analytics_upload(scores_alock: asyncio.Lock, expire_from, expire_to):
+async def run_analytics_upload(
+    scores_alock: asyncio.Lock, expire_from: datetime | None, expire_to: datetime
+):
     """
     run_analytics_upload()
     triggers the collection and uploading of analytics data to analytics API.
@@ -192,6 +194,11 @@ async def run_analytics_upload(scores_alock: asyncio.Lock, expire_from, expire_t
         validator_hotkey = wallet.hotkey.ss58_address
         subtensor = bt.AsyncSubtensor(config=config)
         all_miners = await _get_all_miner_hotkeys(subtensor, config.netuid)
+
+        # if there is no last_analytics_upload time, get tasks from 65 minutes ago.
+        if expire_from is None:
+            expire_from = datetime.now(timezone.utc) - timedelta(minutes=65)
+
         anal_data = await _get_task_data(
             validator_hotkey, all_miners, expire_from, expire_to
         )
@@ -202,12 +209,18 @@ async def run_analytics_upload(scores_alock: asyncio.Lock, expire_from, expire_t
             signature = f"0x{signature}"
 
         try:
-            await _post_task_data(
+            res = await _post_task_data(
                 payload=anal_data,
                 hotkey=validator_hotkey,
                 signature=signature,
                 message=message,
             )
+
+            # if upload was successful, return latest upload time.
+            if res.status_code == 200:
+                return expire_to
+            else:
+                return None
         except Exception as e:
             logger.error(f"Error when run_analytics_upload(): {e}")
             raise
