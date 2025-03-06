@@ -131,13 +131,13 @@ async def create_analytics_data(
     @param signature: the signature of the sender
     @param message: the message of the sender
     """
-    logger.info(f"Received request from hotkey: {hotkey}")
-    metagraph: bt.metagraph = request.app.state.subtensor.metagraph(
-        request.app.state.bt_cfg.netuid
-    )
-    metagraph.sync(block=None, lite=True)
-    logger.info(f"Received request from hotkey: {hotkey}")
+
     try:
+        logger.info(f"Received request from hotkey: {hotkey}")
+        metagraph: bt.metagraph = request.app.state.subtensor.metagraph(
+            request.app.state.bt_cfg.netuid
+        )
+        metagraph.sync(block=None, lite=True)
         if not verify_signature(hotkey, signature, message):
             logger.error(f"Invalid signature for address={hotkey}")
             raise HTTPException(status_code=401, detail="Invalid signature")

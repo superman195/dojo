@@ -71,10 +71,10 @@ async def upload_dataset(
     files: List[UploadFile] = File(...),
 ):
     api_config = app.state.api_config
-    metagraph = app.state.subtensor.metagraph(app.state.bt_cfg.netuid)
-    metagraph.sync(block=None, lite=True)
 
     try:
+        metagraph = app.state.subtensor.metagraph(app.state.bt_cfg.netuid)
+        metagraph.sync(block=None, lite=True)
         if not signature.startswith("0x"):
             raise HTTPException(
                 status_code=401, detail="Invalid signature format, must be hex."
