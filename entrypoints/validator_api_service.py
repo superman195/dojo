@@ -90,7 +90,7 @@ async def upload_dataset(
                 status_code=401, detail="Hotkey not found in metagraph."
             )
 
-        if not check_stake(metagraph, hotkey):
+        if not check_stake(app.state.subtensor, hotkey):
             logger.error(f"Insufficient stake for hotkey {hotkey}")
             raise HTTPException(
                 status_code=401, detail="Insufficient stake for hotkey."
