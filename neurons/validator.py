@@ -843,12 +843,6 @@ class Validator:
         """
         task_id = get_new_uuid()
         try:
-            # to-do remove this once approved.
-            # if not await SyntheticAPI.get_health_status():
-            #     raise FatalSyntheticGenerationError(
-            #         "synthetic API health check failed even after retry attempts. "
-            #     )
-
             data: SyntheticQA | None = await SyntheticAPI.get_qa()
             if not data or not data.responses:
                 logger.error("Invalid or empty data returned from synthetic data API")
