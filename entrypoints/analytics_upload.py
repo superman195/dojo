@@ -7,28 +7,35 @@ import asyncio
 import gc
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import List
 
 import bittensor as bt
 import httpx
+from bittensor.core.async_subtensor import AsyncSubtensor
+from bittensor.core.metagraph import AsyncMetagraph
 from bittensor.utils.btlogging import logging as logger
 
 from commons.exceptions import NoProcessedTasksYet
 from commons.objects import ObjectManager
 from commons.orm import ORM
-from commons.utils import check_stake, datetime_to_iso8601_str
+from commons.utils import aget_effective_stake, datetime_to_iso8601_str
 from database.client import connect_db
 from dojo.protocol import AnalyticsData, AnalyticsPayload
 
 
-async def _get_all_miner_hotkeys(subtensor: bt.subtensor, netuid: int) -> List[str]:
+async def _get_all_miner_hotkeys(
+    subnet_metagraph: AsyncMetagraph, root_metagraph: AsyncMetagraph
+) -> List[str]:
     """
     returns a list of all miner hotkeys registered to the input metagraph at time of execution.
     """
-    metagraph = subtensor.metagraph(netuid=netuid, lite=True)
     return [
-        hotkey for hotkey in metagraph.hotkeys if not check_stake(subtensor, hotkey)
+        hotkey
+        for hotkey in subnet_metagraph.hotkeys
+        if not aget_effective_stake(
+            hotkey, root_metagraph=root_metagraph, subnet_metagraph=subnet_metagraph
+        )
     ]
 
 
@@ -169,7 +176,9 @@ async def _post_task_data(payload, hotkey, signature, message):
         raise
 
 
-async def run_analytics_upload(scores_alock: asyncio.Lock, expire_from, expire_to):
+async def run_analytics_upload(
+    scores_alock: asyncio.Lock, expire_from: datetime | None, expire_to: datetime
+):
     """
     run_analytics_upload()
     triggers the collection and uploading of analytics data to analytics API.
@@ -177,13 +186,21 @@ async def run_analytics_upload(scores_alock: asyncio.Lock, expire_from, expire_t
     """
     async with scores_alock:
         logger.info(
-            "Uploading analytics data for processed tasks between {expire_from} and {expire_to}"
+            f"Uploading analytics data for processed tasks between {expire_from} and {expire_to}"
         )
         config = ObjectManager.get_config()
         wallet = bt.wallet(config=config)
         validator_hotkey = wallet.hotkey.ss58_address
-        subtensor = bt.subtensor(config=config)
-        all_miners = await _get_all_miner_hotkeys(subtensor, config.netuid)
+
+        async with AsyncSubtensor(config=config) as subtensor:
+            subnet_metagraph = await subtensor.metagraph(config.netuid)
+            root_metagraph = await subtensor.metagraph(0)
+            all_miners = await _get_all_miner_hotkeys(subnet_metagraph, root_metagraph)
+
+        # if there is no last_analytics_upload time, get tasks from 65 minutes ago.
+        if expire_from is None:
+            expire_from = datetime.now(timezone.utc) - timedelta(minutes=65)
+
         anal_data = await _get_task_data(
             validator_hotkey, all_miners, expire_from, expire_to
         )
@@ -194,12 +211,18 @@ async def run_analytics_upload(scores_alock: asyncio.Lock, expire_from, expire_t
             signature = f"0x{signature}"
 
         try:
-            await _post_task_data(
+            res = await _post_task_data(
                 payload=anal_data,
                 hotkey=validator_hotkey,
                 signature=signature,
                 message=message,
             )
+
+            # if upload was successful, return latest upload time.
+            if res.status_code == 200:
+                return expire_to
+            else:
+                return None
         except Exception as e:
             logger.error(f"Error when run_analytics_upload(): {e}")
             raise

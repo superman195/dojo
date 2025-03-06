@@ -113,7 +113,7 @@ class Validator:
             f"Running neuron on subnet: {self.config.netuid} with uid {self.uid}"
         )
         self.step = 0
-
+        self.last_anal_upload_time: datetime | None = None
         # Dendrite lets us send messages to other nodes (axons) in the network.
         self.dendrite = bt.dendrite(wallet=self.wallet)
         logger.info(f"Dendrite: {self.dendrite}")
@@ -757,9 +757,9 @@ class Validator:
                 await self.update_scores(hotkey_to_scores=final_hotkey_to_score)
 
                 # upload scores to analytics API after updating.
-                expire_from_analytics = expire_to - timedelta(minutes=65)
-                await run_analytics_upload(
-                    self._scores_alock, expire_from_analytics, expire_to
+                # record last successful upload time. If unsuccessful, last_anal_upload_time will be None.
+                self.last_anal_upload_time = await run_analytics_upload(
+                    self._scores_alock, self.last_anal_upload_time, expire_to
                 )
             except Exception:
                 traceback.print_exc()
