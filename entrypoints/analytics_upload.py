@@ -14,21 +14,29 @@ import bittensor as bt
 import httpx
 from bittensor.utils.btlogging import logging as logger
 
+# from bittensor.core.async_subtensor import AsyncSubtensor
 from commons.exceptions import NoProcessedTasksYet
 from commons.objects import ObjectManager
 from commons.orm import ORM
-from commons.utils import check_stake, datetime_to_iso8601_str
+from commons.utils import aget_effective_stake, datetime_to_iso8601_str
 from database.client import connect_db
 from dojo.protocol import AnalyticsData, AnalyticsPayload
 
 
-async def _get_all_miner_hotkeys(subtensor: bt.subtensor, netuid: int) -> List[str]:
+async def _get_all_miner_hotkeys(
+    subtensor: bt.AsyncSubtensor, netuid: int
+) -> List[str]:
     """
     returns a list of all miner hotkeys registered to the input metagraph at time of execution.
     """
-    metagraph = subtensor.metagraph(netuid=netuid, lite=True)
+    subnet_metagraph = await subtensor.metagraph(netuid=netuid, lite=True)
+    root_metagraph = await subtensor.metagraph(0, lite=True)
     return [
-        hotkey for hotkey in metagraph.hotkeys if not check_stake(subtensor, hotkey)
+        hotkey
+        for hotkey in subnet_metagraph.hotkeys
+        if not aget_effective_stake(
+            hotkey, root_metagraph=root_metagraph, subnet_metagraph=subnet_metagraph
+        )
     ]
 
 
@@ -177,12 +185,12 @@ async def run_analytics_upload(scores_alock: asyncio.Lock, expire_from, expire_t
     """
     async with scores_alock:
         logger.info(
-            "Uploading analytics data for processed tasks between {expire_from} and {expire_to}"
+            f"Uploading analytics data for processed tasks between {expire_from} and {expire_to}"
         )
         config = ObjectManager.get_config()
         wallet = bt.wallet(config=config)
         validator_hotkey = wallet.hotkey.ss58_address
-        subtensor = bt.subtensor(config=config)
+        subtensor = bt.AsyncSubtensor(config=config)
         all_miners = await _get_all_miner_hotkeys(subtensor, config.netuid)
         anal_data = await _get_task_data(
             validator_hotkey, all_miners, expire_from, expire_to
