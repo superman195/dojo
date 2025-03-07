@@ -4,18 +4,14 @@ import multiprocessing
 import os
 import time
 
+import numpy as np
+import torch
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from commons.orm import ORM
-from commons.scoring import Scoring
 from database.client import connect_db, disconnect_db, prisma
-from database.mappers import (
-    map_miner_response_to_task_synapse_object,
-    map_validator_task_to_task_synapse_object,
-)
 from database.prisma import Json
-from database.prisma.models import MinerResponse, MinerScore, ValidatorTask
+from database.prisma.models import GroundTruth, MinerResponse, MinerScore, ValidatorTask
 from database.prisma.types import (
     CriterionWhereInput,
     MinerScoreUpdateInput,
@@ -23,6 +19,251 @@ from database.prisma.types import (
 )
 from dojo.protocol import Scores
 from dojo.utils.config import source_dotenv
+
+
+class Scoring:
+    @classmethod
+    def minmax_scale(cls, tensor: torch.Tensor | np.ndarray) -> torch.Tensor:
+        if isinstance(tensor, np.ndarray):
+            tensor = torch.from_numpy(tensor)
+        min = tensor.min()
+        max = tensor.max()
+
+        # If max == min, return a tensor of ones
+        if max == min:
+            return torch.ones_like(tensor)
+
+        return (tensor - min) / (max - min)
+
+    @classmethod
+    def _reward_cubic(
+        cls,
+        miner_outputs: np.ndarray,
+        ground_truth: np.ndarray,
+        scaling: float = 0.006,
+        translation: float = 7,
+        offset: float = 2,
+        visualize: bool = False,
+    ) -> tuple[np.ndarray, np.ndarray, torch.Tensor, torch.Tensor]:
+        """Calculate cubic reward based on miner outputs and ground truth.
+
+        Args:
+            miner_outputs (np.ndarray): 2D array of miner outputs (shape: num_miners x num_completions).
+            ground_truth (np.ndarray): 1D array of ground truth values (shape: num_completions).
+            scaling (float): Scaling factor for the cubic function.
+            translation (float): Translation factor for the cubic function.
+            offset (float): Offset for the cubic function.
+            visualize (bool): Whether to visualize the results.
+
+        Returns:
+            tuple: (points, cosine_similarity_scores, normalised_cosine_similarity_scores, cubic_reward_scores)
+        """
+        # ensure ground truth is a column vector for broadcasting
+        # shape: (1, num_completions)
+        ground_truth = ground_truth.reshape(1, -1)
+
+        # ensure dims for broadcasting
+        assert len(ground_truth.shape) == 2
+        assert len(miner_outputs.shape) == 2
+
+        # shape: (num_miners,)
+        # number range [-1, 1]
+        cosine_similarity_scores = torch.nn.functional.cosine_similarity(
+            torch.from_numpy(miner_outputs.copy()),
+            torch.from_numpy(ground_truth.copy()),
+            dim=1,
+        ).numpy()
+
+        # Convert nans to -1 to send it to the bottom
+        cosine_similarity_scores = np.where(
+            np.isnan(cosine_similarity_scores), -1, cosine_similarity_scores
+        )
+
+        # transform from range [-1, 1] to [0, 1]
+        normalised_cosine_similarity_scores = (cosine_similarity_scores + 1) / 2
+
+        # ensure sum is 1
+        normalised_cosine_similarity_scores = torch.nn.functional.normalize(
+            torch.from_numpy(normalised_cosine_similarity_scores), p=1, dim=0
+        )
+        assert normalised_cosine_similarity_scores.shape[0] == miner_outputs.shape[0]
+
+        # apply the cubic transformation
+        cubic_reward_scores = (
+            scaling * (normalised_cosine_similarity_scores - translation) ** 3 + offset
+        )
+
+        # case where a miner provides the same score for all completions
+        # convert any nans to zero
+        points = np.where(np.isnan(cubic_reward_scores), 0, cubic_reward_scores)
+
+        # ensure all values are in the range [0, 1]
+        points = cls.minmax_scale(points)
+        points = points.numpy()
+
+        assert isinstance(points, np.ndarray)
+        return (
+            points,
+            cosine_similarity_scores,
+            normalised_cosine_similarity_scores,
+            cubic_reward_scores,
+        )
+
+    @classmethod
+    def _convert_ground_truth_ranks_to_scores(
+        cls,
+        cids_with_ranks: list[tuple[str, int]],
+    ) -> np.ndarray:
+        # check if the cids with ranks are sorted in ascending order
+        ranks = [rank for _, rank in cids_with_ranks]
+        # check if the ranks are continuous e.g. [0, 1, 2, 3] and not [0, 1, 3, 2]
+        is_sorted_and_continuous = all(
+            ranks[i] == ranks[i - 1] + 1 for i in range(1, len(ranks))
+        )
+        if not is_sorted_and_continuous:
+            raise ValueError("Provided ranks must be sorted and must be continuous")
+
+        # use minmax scale to ensure ground truth is in the range [0, 1]
+        ground_truth_arr = cls.minmax_scale(np.array(ranks)).numpy()
+
+        # reverse order here, because the lowest rank is the best
+        # e.g. ranks: ('cid1', 0), ('cid2', 1), ('cid3', 2), ('cid4', 3)
+        # after minmax scale: [0, 0.33, 0.667, 1]
+        # but we want the reverse, so: [1, 0.667, 0.33, 0], since cid1 is the best
+        ground_truth_arr = ground_truth_arr[::-1]
+
+        return ground_truth_arr
+
+    @classmethod
+    def ground_truth_scoring(
+        cls,
+        ground_truth: dict[str, int],
+        miner_outputs: list[float],
+    ) -> tuple[
+        torch.Tensor,
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        """
+        Calculate score between all miner outputs and ground truth.
+        Ensures that the resulting tensor is normalized to sum to 1.
+
+        Args:
+            ground_truth (dict[str, int]): Ground truth, where key is completion id and value is rank.
+            miner_outputs (list[float]): Miner outputs
+
+        Raises:
+            ValueError: If miner outputs are empty or contain None values.
+
+        Returns:
+            tuple: (cubic_reward, miner_outputs, miner_outputs_normalised,
+                   cosine_similarity_scores, normalised_cosine_similarity_scores, cubic_reward_scores)
+        """
+        cid_rank_tuples = [
+            (completion_id, rank) for completion_id, rank in ground_truth.items()
+        ]
+
+        # Sort cids by rank. In the order, 0 is the best, 1 is the second best, etc.
+        cid_with_rank_sorted = sorted(
+            cid_rank_tuples, key=lambda x: x[1], reverse=False
+        )
+
+        if not miner_outputs:
+            raise ValueError("Miner outputs cannot be empty")
+
+        if None in miner_outputs:
+            raise ValueError("Miner outputs cannot contain None values")
+
+        # Convert to numpy array and reshape for single miner case
+        miner_outputs_arr = np.array(miner_outputs, dtype=np.float32).reshape(1, -1)
+
+        # convert miner outputs to something ordinal
+        miner_outputs_normalised = np.array(
+            [cls.minmax_scale(m) for m in miner_outputs_arr]
+        )
+
+        # use minmax scale to ensure ground truth is in the range [0, 1]
+        ground_truth_arr = cls._convert_ground_truth_ranks_to_scores(
+            cid_with_rank_sorted
+        )
+
+        (
+            cubic_reward,
+            cosine_similarity_scores,
+            normalised_cosine_similarity_scores,
+            cubic_reward_scores,
+        ) = cls._reward_cubic(
+            miner_outputs_arr, ground_truth_arr, 0.006, 7, 2, visualize=False
+        )
+
+        # normalize to ensure sum is 1
+        cubic_reward = cubic_reward / np.sum(cubic_reward)
+
+        return (
+            torch.from_numpy(cubic_reward.copy()),
+            miner_outputs_arr,
+            miner_outputs_normalised,
+            cosine_similarity_scores,
+            normalised_cosine_similarity_scores,
+            cubic_reward_scores,
+        )
+
+    @classmethod
+    def calculate_scores_for_completion(
+        cls,
+        raw_score: float,
+        rank_id: int | None,
+        ground_truth: list[GroundTruth],
+        miner_outputs: list[float],
+    ) -> Scores | None:
+        """Calculate scores for a single miner completion."""
+        if not ground_truth:
+            logger.warning("No ground truth data provided for score calculation")
+            return None
+
+        # Prepare ground truth data
+        ground_truth_dict = {
+            gt.real_model_id: gt.rank_id
+            for gt in ground_truth
+            if gt.real_model_id is not None and gt.rank_id is not None
+        }
+
+        if not ground_truth_dict:
+            logger.warning(
+                "No valid ground truth data found, ground truth length: ",
+                len(ground_truth),
+            )
+            return None
+
+        try:
+            (
+                gt_score,
+                miner_outputs_arr,
+                miner_outputs_normalised,
+                cosine_similarity_scores,
+                normalised_cosine_similarity_scores,
+                cubic_reward_scores,
+            ) = cls.ground_truth_scoring(ground_truth_dict, miner_outputs)
+
+            return Scores(
+                raw_score=raw_score,
+                rank_id=rank_id,
+                normalised_score=float(miner_outputs_normalised[0, 0]),
+                ground_truth_score=float(gt_score[0]),
+                cosine_similarity_score=float(cosine_similarity_scores[0]),
+                normalised_cosine_similarity_score=float(
+                    normalised_cosine_similarity_scores[0]
+                ),
+                cubic_reward_score=float(cubic_reward_scores[0]),
+            )
+
+        except Exception as e:
+            logger.warning(f"Failed to calculate scores: {e}")
+            return None
+
 
 source_dotenv()
 
@@ -199,6 +440,20 @@ async def _process_miner_response(miner_response: MinerResponse, task: Validator
         updated_count = 0
         updates = []
 
+        # Collect all raw scores for this miner
+        miner_outputs = []
+        for completion in completions:
+            if completion.score is not None:
+                miner_outputs.append(completion.score)
+
+        if not miner_outputs:
+            logger.debug("No valid scores found for miner")
+            return 0
+
+        if not task.ground_truth:
+            logger.debug("No ground truth data found for task")
+            return 0
+
         for completion in completions:
             # Find or create the criterion record
             criterion = await tx.criterion.find_first(
@@ -218,42 +473,44 @@ async def _process_miner_response(miner_response: MinerResponse, task: Validator
                 logger.warning("Criterion not found, but it should already exist")
                 continue
 
-            # the basics, just create raw scores
+            # Skip if no score
             if completion.score is None:
                 continue
 
-            scores = Scores(
-                raw_score=completion.score,
-                rank_id=completion.rank_id,
-                # Initialize other scores as None - they'll be computed later
-                normalised_score=None,
-                ground_truth_score=None,
-                cosine_similarity_score=None,
-                normalised_cosine_similarity_score=None,
-                cubic_reward_score=None,
-            )
+            try:
+                # Calculate all scores immediately
+                scores = Scoring.calculate_scores_for_completion(
+                    raw_score=completion.score,
+                    rank_id=completion.rank_id,
+                    ground_truth=task.ground_truth,
+                    miner_outputs=miner_outputs,
+                )
 
-            # Check if all fields in scores are None
-            if all(value is None for value in scores.model_dump().values()):
+                if not scores:
+                    logger.warning(
+                        f"Failed to calculate scores for completion {completion.completion_id}"
+                    )
+                    continue
+
+                # Prepare update
+                updates.append(
+                    {
+                        "where": {
+                            "criterion_id_miner_response_id": {
+                                "criterion_id": criterion.id,
+                                "miner_response_id": miner_response.id,
+                            }
+                        },
+                        "data": MinerScoreUpdateInput(
+                            scores=Json(json.dumps(scores.model_dump()))
+                        ),
+                    }
+                )
+            except Exception as e:
                 logger.warning(
-                    f"All scores are None for completion {completion.completion_id}"
+                    f"Failed to calculate scores for completion {completion.completion_id}: {e}"
                 )
                 continue
-
-            # Prepare update (don't execute yet)
-            updates.append(
-                {
-                    "where": {
-                        "criterion_id_miner_response_id": {
-                            "criterion_id": criterion.id,
-                            "miner_response_id": miner_response.id,
-                        }
-                    },
-                    "data": MinerScoreUpdateInput(
-                        scores=Json(json.dumps(scores.model_dump()))
-                    ),
-                }
-            )
 
         # Execute updates in batches
         batch_size = 20
@@ -292,99 +549,24 @@ async def _process_task(task: ValidatorTask):
                 logger.warning("No miner responses for task, skipping")
                 return False
 
-            # Process responses in smaller chunks to avoid too many connections
-            chunk_size = 3  # Process only 3 responses at a time
-            for i in range(0, len(task.miner_responses), chunk_size):
-                responses_chunk = task.miner_responses[i : i + chunk_size]
-                tasks = []
-                for miner_response in responses_chunk:
-                    tasks.append(_process_miner_response(miner_response, task))
-
-                # Wait for this chunk to complete
-                await asyncio.gather(*tasks, return_exceptions=True)
-
-                # Brief pause between chunks to let connections close
-                await asyncio.sleep(0.1)
-
-            logger.info(f"Proceeding with score calculation for task {task.id}")
-
-            # Reload miner responses with updated scores
-            updated_task = await prisma.validatortask.find_unique(
-                where={"id": task.id},
-                include={
-                    "completions": {
-                        "include": {"criterion": {"include": {"scores": True}}}
-                    },
-                    "ground_truth": True,
-                    "miner_responses": {
-                        "include": {
-                            "scores": True,
-                        }
-                    },
-                },
-            )
-
-            if not updated_task:
-                logger.error(f"Failed to reload task {task.id} with updated scores")
-                return False
-
-            task = updated_task
-
-            # ensure completions are all json strings
-            assert task.completions is not None, "Completions should not be None"
-            # Ensure completions are in string format for the mapper
-            for completion in task.completions:
-                if isinstance(completion.completion, dict):
-                    # NOTE: hack because otherwise the mapper.py function fails
-                    completion.completion = json.dumps(completion.completion)  # type: ignore
-                elif isinstance(completion.completion, str):
-                    # Already in the right format
-                    pass
-                else:
-                    logger.warning(
-                        f"Unexpected completion type: {type(completion.completion)}"
-                    )
-
-            mapped_miner_responses = [
-                map_miner_response_to_task_synapse_object(
-                    miner_response,
-                    validator_task=task,
-                )
-                for miner_response in (task.miner_responses or [])
-            ]
-
-            updated_miner_responses = Scoring.calculate_score(
-                validator_task=map_validator_task_to_task_synapse_object(task),
-                miner_responses=mapped_miner_responses,
-            )
-
-            max_retries = 3
-            retry_delay = 0.5  # seconds
-            attempt = 0
-
-            while attempt < max_retries:
-                success, failed_hotkeys = await ORM.update_miner_scores(
-                    task_id=task.id,
-                    miner_responses=updated_miner_responses,
-                )
-
-                if success and not failed_hotkeys:
-                    return True
-
-                attempt += 1
-                if attempt < max_retries:
-                    logger.warning(
-                        f"Failed to update scores for task: {task.id} on attempt {attempt}. "
-                        f"Failed hotkeys: {failed_hotkeys}. Retrying in {retry_delay} seconds..."
-                    )
-                    await asyncio.sleep(retry_delay)
-                else:
+            # Process responses sequentially
+            any_updated = False
+            for miner_response in task.miner_responses or []:
+                try:
+                    result = await _process_miner_response(miner_response, task)
+                    if result:
+                        logger.info(
+                            f"Updated scores for miner response {miner_response.id}"
+                        )
+                        any_updated = True
+                except Exception as e:
                     logger.error(
-                        f"Failed to update scores for task: {task.id} after {max_retries} attempts. "
-                        f"Failed hotkeys: {failed_hotkeys}"
+                        f"Failed to process miner response {miner_response.id}: {e}"
                     )
+                    continue
 
-            return False
+            return any_updated
+
         except Exception as e:
             logger.error(f"Error processing task {task.id}: {e}")
             stats.failed_tasks += 1
