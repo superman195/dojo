@@ -38,7 +38,7 @@ if [ "$1" = 'miner' ]; then
     --netuid ${NETUID} \
     --subtensor.network ${SUBTENSOR_NETWORK} \
     --subtensor.chain_endpoint ${SUBTENSOR_ENDPOINT} \
-    --logging.debug \
+    --logging.info \
     --wallet.name ${WALLET_COLDKEY} \
     --wallet.hotkey ${WALLET_HOTKEY} \
     --axon.port ${AXON_PORT} \

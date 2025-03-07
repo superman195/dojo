@@ -1,3 +1,67 @@
+## [1.6.6](https://github.com/tensorplex-labs/dojo/compare/v1.6.5...v1.6.6) (2025-02-15)
+
+### Bug Fixes
+
+* validator event loop ([#130](https://github.com/tensorplex-labs/dojo/issues/130)) ([53082e7](https://github.com/tensorplex-labs/dojo/commit/53082e72f1f5ae39ec0a96ffbd07a798cb1c1c8e))
+
+## [1.6.5](https://github.com/tensorplex-labs/dojo/compare/v1.6.4...v1.6.5) (2025-02-14)
+
+## [1.6.4](https://github.com/tensorplex-labs/dojo/compare/v1.6.3...v1.6.4) (2025-02-14)
+
+## [1.6.3](https://github.com/tensorplex-labs/dojo/compare/v1.6.2...v1.6.3) (2025-02-14)
+
+## [1.6.2](https://github.com/tensorplex-labs/dojo/compare/v1.6.1...v1.6.2) (2025-02-13)
+
+## [1.6.1](https://github.com/tensorplex-labs/dojo/compare/v1.6.0...v1.6.1) (2025-01-23)
+
+### Bug Fixes
+
+* fix typo in README.md ([#89](https://github.com/tensorplex-labs/dojo/issues/89)) ([eb7c534](https://github.com/tensorplex-labs/dojo/commit/eb7c534802d67b13b3f11d3df81d8789fe9a6200))
+* remove old fastapi route ([ffd9a18](https://github.com/tensorplex-labs/dojo/commit/ffd9a184cb7d4e7c649fa2ca1f525f505cce1d20))
+* unset github header in git config ([#105](https://github.com/tensorplex-labs/dojo/issues/105)) ([2d2dc0a](https://github.com/tensorplex-labs/dojo/commit/2d2dc0a76a697ff504ac950d77d64a6782a519a0))
+
+### Performance Improvements
+
+* optimized migration script on miner-response ([#116](https://github.com/tensorplex-labs/dojo/issues/116)) ([76b1759](https://github.com/tensorplex-labs/dojo/commit/76b17599387e5a0c07003e0d3abbecc6926ea516))
+
+## [1.6.0](https://github.com/tensorplex-labs/dojo/compare/v1.5.1...v1.6.0) (2024-12-20)
+
+### Features
+
+* enable commit reveal V3 ([#100](https://github.com/tensorplex-labs/dojo/issues/100)) ([42f06f7](https://github.com/tensorplex-labs/dojo/commit/42f06f7dfd9c88cf6faa2a71043af064ebe7fe3c))
+
+## [1.5.1](https://github.com/tensorplex-labs/dojo/compare/v1.5.0...v1.5.1) (2024-12-12)
+
+### Bug Fixes
+
+* hotfix for db connection issue ([#95](https://github.com/tensorplex-labs/dojo/issues/95)) ([5251701](https://github.com/tensorplex-labs/dojo/commit/52517013d283fa8bd8b73d37ce4b821aa6949d49))
+
+## [1.5.0](https://github.com/tensorplex-labs/dojo/compare/v1.4.2...v1.5.0) (2024-12-10)
+
+### Features
+
+* add dataset collection endpoint, script to scrape validator db ([#78](https://github.com/tensorplex-labs/dojo/issues/78)) ([1b4ef9e](https://github.com/tensorplex-labs/dojo/commit/1b4ef9e33966beaa94bffae9ba0683711ca4dbf4))
+* added script to inspect score ([f9dd7e4](https://github.com/tensorplex-labs/dojo/commit/f9dd7e4707bedd0f03d66cd26b83bac4934138c5))
+* simulator ([ed110e3](https://github.com/tensorplex-labs/dojo/commit/ed110e3c12f2ad35d99b440f371bd9fa0fc8517a))
+
+### Bug Fixes
+
+* add VALIDATOR_MIN_STAKE in environment ([84774a4](https://github.com/tensorplex-labs/dojo/commit/84774a42afeceb932c823440895f1e3dcc5a8c70))
+* fixed from PR feedback ([23d085a](https://github.com/tensorplex-labs/dojo/commit/23d085a6db8535068254463a5c4e5efd57da567d))
+* fixed linter issue, and commitizen ([553ad66](https://github.com/tensorplex-labs/dojo/commit/553ad66a305c03d4527f56b5483ced2318633656))
+* ground truth arr ordering ([75f008a](https://github.com/tensorplex-labs/dojo/commit/75f008aff492ccc5aa137485ee273a285280016b))
+* minersim task scoring, validatorsim  subtensor retry mechanism and dendrite forward timeout ([956f5cf](https://github.com/tensorplex-labs/dojo/commit/956f5cfd4acaa15a6f8b06c47f6d4afe95db3163))
+* negative stride error from scoring ([#86](https://github.com/tensorplex-labs/dojo/issues/86)) ([50c86c6](https://github.com/tensorplex-labs/dojo/commit/50c86c68b020404f9d3422288f67083bf7ffbd40))
+* scoring interval ([94e050b](https://github.com/tensorplex-labs/dojo/commit/94e050bf049c473a967e78cb61dee45087ae145e))
+* use correct dimension when calculating mean scores ([2f30931](https://github.com/tensorplex-labs/dojo/commit/2f30931f3fdc7ae65bc86c44f69c284a78dd14ed))
+* wandb missing final scores ([#88](https://github.com/tensorplex-labs/dojo/issues/88)) ([0d8b93d](https://github.com/tensorplex-labs/dojo/commit/0d8b93deaf41d31b662a0e1525714c5bc3ff7fef))
+* wandb now storing final scores correctly ([#87](https://github.com/tensorplex-labs/dojo/issues/87)) ([affcd3e](https://github.com/tensorplex-labs/dojo/commit/affcd3e1d54b8d90fb5bb3e9733c66b53f03b0f1))
+
+### Performance Improvements
+
+* add subtensor retries ([#90](https://github.com/tensorplex-labs/dojo/issues/90)) ([ca07d46](https://github.com/tensorplex-labs/dojo/commit/ca07d466536f286ac8e8b82e19c733095c670de1))
+* increase timeout ([23669b7](https://github.com/tensorplex-labs/dojo/commit/23669b7245ba85663fbf2674a86d691603487f89))
+
 ## [1.4.2](https://github.com/tensorplex-labs/dojo/compare/v1.4.1...v1.4.2) (2024-11-22)
 
 ### Performance Improvements

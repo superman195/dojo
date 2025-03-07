@@ -43,14 +43,9 @@
     - [Required Software](#required-software-1)
     - [System Requirements](#system-requirements-1)
 - [Getting Started](#getting-started)
-  - [Mining](#mining)
-    - [Option 1: Centralised Method](#option-1-centralised-method)
-    - [Option 2: Decentralised Method](#option-2-decentralised-method)
-    - [Setup Subscription Key for Labellers on UI to connect to Dojo Subnet for scoring](#setup-subscription-key-for-labellers-on-ui-to-connect-to-dojo-subnet-for-scoring)
-  - [Validating](#validating)
-  - [Data Collection](#data-collection)
+  - [For Miners](#for-miners)
+  - [For Validators](#for-validators)
 - [Auto-updater](#auto-updater)
-- [Dojo CLI](#dojo-cli)
 - [For Dojo developers](#for-dojo-developers)
   - [Dataset Extraction](#dataset-extraction)
 - [License](#license)
@@ -209,7 +204,7 @@ docker plugin install grafana/loki-docker-driver:3.3.2-amd64 --alias loki --gran
 ```
 
 4. Start local subtensor node (**optional**)
-> The included subtensor service only expose 30333 (p2p) to the public, 9933 and 9944 are only accesssible internally in the docker network, feel free to change the configuration if required.
+   > The included subtensor service only expose 30333 (p2p) to the public, 9933 and 9944 are only accesssible internally in the docker network, feel free to change the configuration if required.
 
 ```bash
 # Mainnet
@@ -262,6 +257,7 @@ btcli s register --wallet.name coldkey --wallet.hotkey hotkey --netuid 98 --subt
 ```
 
 ## [For Miners](README-miner.md)
+
 ## [For Validators](README-validator.md)
 
 # Auto-updater
