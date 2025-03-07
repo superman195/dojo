@@ -23,11 +23,12 @@ from database.mappers import (
 from database.prisma import Json
 from database.prisma.enums import HFLStatusEnum, TaskTypeEnum
 from database.prisma.errors import PrismaError
-from database.prisma.models import GroundTruth, MinerScore, ValidatorTask
+from database.prisma.models import GroundTruth, HFLState, MinerScore, ValidatorTask
 from database.prisma.types import (
     CriterionWhereInput,
     MinerResponseCreateWithoutRelationsInput,
     MinerResponseInclude,
+    MinerResponseWhereInput,
     MinerScoreCreateInput,
     MinerScoreUpdateInput,
     ValidatorTaskInclude,
@@ -797,10 +798,25 @@ class ORM:
             return []
 
     @staticmethod
-    async def get_miner_scores_by_sf_task(sf_task: ValidatorTask) -> list[MinerScore]:
+    async def get_hfl_state_by_current_task_id(task_id: str) -> HFLState | None:
+        try:
+            hfl_state = await prisma.hflstate.find_first(
+                where={"current_task_id": task_id}, include={"ValidatorTask": True}
+            )
+            return hfl_state
+        except:  # noqa: E722
+            logger.error(f"Failed to get HFL State with current task id: {task_id}")
+        return None
+
+    @staticmethod
+    async def get_scores_for_completed_sf(sf_task: ValidatorTask) -> list[MinerScore]:
         # Get all related data in a single query using nested includes
         miner_responses = await prisma.minerresponse.find_many(
-            where={"validator_task_id": sf_task.id},
+            where=MinerResponseWhereInput(
+                {
+                    "validator_task_id": sf_task.id,
+                }
+            ),
             include={
                 "scores": {
                     "include": {
@@ -833,6 +849,52 @@ class ORM:
         all_miner_scores.sort(key=lambda x: criteria_order[x.criterion_id])
 
         return all_miner_scores
+
+    @staticmethod
+    async def get_original_or_parent_sf_task(sf_task_id: str):
+        """
+        Get the original or parent task for scoring purposes.
+
+        ┌─────────────┐       ┌──────┐       ┌──────┐      ┌──────┐     ┌──────┐
+        │Original Task│──────▶│ TF_1 │──────▶│ SF_1 │─────▶│ TF_2 │────▶│ SF_2 │
+        └─────────────┘       └──────┘       └──────┘      └──────┘     └──────┘
+        """
+        hfl_state = await HFLState.prisma().find_first(
+            where={"status": HFLStatusEnum.SF_COMPLETED, "current_task_id": sf_task_id},
+            include={"ValidatorTask": True},
+        )
+        if not hfl_state:
+            return None
+        if hfl_state.current_iteration == 1:
+            original_task = await ValidatorTask.prisma().find_first(
+                where={"id": hfl_state.original_task_id}
+            )
+            if not original_task:
+                logger.error(f"Original task not found for SF task {sf_task_id}")
+            return original_task
+
+        # iterate through states to get original task
+        events = hfl_state.events[::-1]
+        for idx, event in enumerate(events):
+            iteration_num = event["iteration_num"]
+            if iteration_num != hfl_state.current_iteration:
+                continue
+            if event["event_type"] == HFLStatusEnum.SF_COMPLETED:
+                # find the previous task by index
+                # TODO: possible indecerror? add error handling
+                prev_event = events[idx - 2]
+                prev_event_dict = json.loads(prev_event)
+                assert prev_event_dict.get("status") == HFLStatusEnum.TF_COMPLETED
+
+                prev_task = await ValidatorTask.prisma().find_first(
+                    where={"id": prev_event_dict.get("task_id")}
+                )
+                if not prev_task:
+                    logger.error(f"Original task not found for SF task {sf_task_id}")
+
+                return prev_task
+
+        return None
 
 
 # ---------------------------------------------------------------------------- #

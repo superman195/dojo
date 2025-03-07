@@ -120,6 +120,10 @@ class Validator:
         self.scores: torch.Tensor = torch.zeros(
             len(self.metagraph.hotkeys), dtype=torch.float32
         )
+        # TODO: update based on outputs of scoring func
+        self.hfl_score = torch.Tensor = torch.zeros(
+            len(self.metagraph.hotkey), dtype=torch.float32
+        )
         self.check_registered()
 
         # Run score migration before loading state
