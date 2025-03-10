@@ -21,6 +21,7 @@ from commons.objects import ObjectManager
 from commons.orm import ORM
 from commons.utils import aget_effective_stake, datetime_to_iso8601_str
 from database.client import connect_db
+from dojo import VALIDATOR_MIN_STAKE
 from dojo.protocol import AnalyticsData, AnalyticsPayload
 
 
@@ -28,14 +29,15 @@ async def _get_all_miner_hotkeys(
     subnet_metagraph: AsyncMetagraph, root_metagraph: AsyncMetagraph
 ) -> List[str]:
     """
-    returns a list of all miner hotkeys registered to the input metagraph at time of execution.
+    returns a list of all metagraph hotkeys with stake less than VALIDATOR_MIN_STAKE
     """
     return [
         hotkey
         for hotkey in subnet_metagraph.hotkeys
-        if not aget_effective_stake(
+        if await aget_effective_stake(
             hotkey, root_metagraph=root_metagraph, subnet_metagraph=subnet_metagraph
         )
+        < VALIDATOR_MIN_STAKE
     ]
 
 
@@ -185,9 +187,15 @@ async def run_analytics_upload(
     Is called by the validator after the completion of the scoring process.
     """
     async with scores_alock:
+        logger.debug(f"Last analytics upload time: {expire_from}")
+        # if there is no last_analytics_upload time, get tasks from 65 minutes ago.
+        if expire_from is None:
+            expire_from = datetime.now(timezone.utc) - timedelta(minutes=65)
+
         logger.info(
             f"Uploading analytics data for processed tasks between {expire_from} and {expire_to}"
         )
+
         config = ObjectManager.get_config()
         wallet = bt.wallet(config=config)
         validator_hotkey = wallet.hotkey.ss58_address
@@ -196,10 +204,6 @@ async def run_analytics_upload(
             subnet_metagraph = await subtensor.metagraph(config.netuid)
             root_metagraph = await subtensor.metagraph(0)
             all_miners = await _get_all_miner_hotkeys(subnet_metagraph, root_metagraph)
-
-        # if there is no last_analytics_upload time, get tasks from 65 minutes ago.
-        if expire_from is None:
-            expire_from = datetime.now(timezone.utc) - timedelta(minutes=65)
 
         anal_data = await _get_task_data(
             validator_hotkey, all_miners, expire_from, expire_to
