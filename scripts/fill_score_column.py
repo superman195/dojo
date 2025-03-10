@@ -1,6 +1,5 @@
 import asyncio
 import json
-import multiprocessing
 import os
 import time
 
@@ -21,6 +20,79 @@ from dojo.protocol import Scores
 from dojo.utils.config import source_dotenv
 
 
+def _reward_cubic(
+    miner_outputs: np.ndarray,
+    ground_truth: np.ndarray,
+    scaling: float = 0.006,
+    translation: float = 7,
+    offset: float = 2,
+    visualize: bool = False,
+) -> tuple[np.ndarray, np.ndarray, torch.Tensor, torch.Tensor]:
+    """Calculate cubic reward based on miner outputs and ground truth.
+
+    Args:
+        miner_outputs (np.ndarray): 2D array of miner outputs (shape: num_miners x num_completions).
+        ground_truth (np.ndarray): 1D array of ground truth values (shape: num_completions).
+        scaling (float): Scaling factor for the cubic function.
+        translation (float): Translation factor for the cubic function.
+        offset (float): Offset for the cubic function.
+        visualize (bool): Whether to visualize the results.
+
+    Returns:
+        tuple: (points, cosine_similarity_scores, normalised_cosine_similarity_scores, cubic_reward_scores)
+    """
+    # ensure ground truth is a column vector for broadcasting
+    # shape: (1, num_completions)
+    ground_truth = ground_truth.reshape(1, -1)
+
+    # ensure dims for broadcasting
+    assert len(ground_truth.shape) == 2
+    assert len(miner_outputs.shape) == 2
+
+    # shape: (num_miners,)
+    # number range [-1, 1]
+    cosine_similarity_scores = torch.nn.functional.cosine_similarity(
+        torch.from_numpy(miner_outputs.copy()),
+        torch.from_numpy(ground_truth.copy()),
+        dim=1,
+    ).numpy()
+
+    # Convert nans to -1 to send it to the bottom
+    cosine_similarity_scores = np.where(
+        np.isnan(cosine_similarity_scores), -1, cosine_similarity_scores
+    )
+
+    # transform from range [-1, 1] to [0, 1]
+    normalised_cosine_similarity_scores = (cosine_similarity_scores + 1) / 2
+
+    # ensure sum is 1
+    normalised_cosine_similarity_scores = torch.nn.functional.normalize(
+        torch.from_numpy(normalised_cosine_similarity_scores), p=1, dim=0
+    )
+    assert normalised_cosine_similarity_scores.shape[0] == miner_outputs.shape[0]
+
+    # apply the cubic transformation
+    cubic_reward_scores = (
+        scaling * (normalised_cosine_similarity_scores - translation) ** 3 + offset
+    )
+
+    # case where a miner provides the same score for all completions
+    # convert any nans to zero
+    points = np.where(np.isnan(cubic_reward_scores), 0, cubic_reward_scores)
+
+    # ensure all values are in the range [0, 1]
+    points = Scoring.minmax_scale(points)
+    points = points.numpy()
+
+    assert isinstance(points, np.ndarray)
+    return (
+        points,
+        cosine_similarity_scores,
+        normalised_cosine_similarity_scores,
+        cubic_reward_scores,
+    )
+
+
 class Scoring:
     @classmethod
     def minmax_scale(cls, tensor: torch.Tensor | np.ndarray) -> torch.Tensor:
@@ -34,80 +106,6 @@ class Scoring:
             return torch.ones_like(tensor)
 
         return (tensor - min) / (max - min)
-
-    @classmethod
-    def _reward_cubic(
-        cls,
-        miner_outputs: np.ndarray,
-        ground_truth: np.ndarray,
-        scaling: float = 0.006,
-        translation: float = 7,
-        offset: float = 2,
-        visualize: bool = False,
-    ) -> tuple[np.ndarray, np.ndarray, torch.Tensor, torch.Tensor]:
-        """Calculate cubic reward based on miner outputs and ground truth.
-
-        Args:
-            miner_outputs (np.ndarray): 2D array of miner outputs (shape: num_miners x num_completions).
-            ground_truth (np.ndarray): 1D array of ground truth values (shape: num_completions).
-            scaling (float): Scaling factor for the cubic function.
-            translation (float): Translation factor for the cubic function.
-            offset (float): Offset for the cubic function.
-            visualize (bool): Whether to visualize the results.
-
-        Returns:
-            tuple: (points, cosine_similarity_scores, normalised_cosine_similarity_scores, cubic_reward_scores)
-        """
-        # ensure ground truth is a column vector for broadcasting
-        # shape: (1, num_completions)
-        ground_truth = ground_truth.reshape(1, -1)
-
-        # ensure dims for broadcasting
-        assert len(ground_truth.shape) == 2
-        assert len(miner_outputs.shape) == 2
-
-        # shape: (num_miners,)
-        # number range [-1, 1]
-        cosine_similarity_scores = torch.nn.functional.cosine_similarity(
-            torch.from_numpy(miner_outputs.copy()),
-            torch.from_numpy(ground_truth.copy()),
-            dim=1,
-        ).numpy()
-
-        # Convert nans to -1 to send it to the bottom
-        cosine_similarity_scores = np.where(
-            np.isnan(cosine_similarity_scores), -1, cosine_similarity_scores
-        )
-
-        # transform from range [-1, 1] to [0, 1]
-        normalised_cosine_similarity_scores = (cosine_similarity_scores + 1) / 2
-
-        # ensure sum is 1
-        normalised_cosine_similarity_scores = torch.nn.functional.normalize(
-            torch.from_numpy(normalised_cosine_similarity_scores), p=1, dim=0
-        )
-        assert normalised_cosine_similarity_scores.shape[0] == miner_outputs.shape[0]
-
-        # apply the cubic transformation
-        cubic_reward_scores = (
-            scaling * (normalised_cosine_similarity_scores - translation) ** 3 + offset
-        )
-
-        # case where a miner provides the same score for all completions
-        # convert any nans to zero
-        points = np.where(np.isnan(cubic_reward_scores), 0, cubic_reward_scores)
-
-        # ensure all values are in the range [0, 1]
-        points = cls.minmax_scale(points)
-        points = points.numpy()
-
-        assert isinstance(points, np.ndarray)
-        return (
-            points,
-            cosine_similarity_scores,
-            normalised_cosine_similarity_scores,
-            cubic_reward_scores,
-        )
 
     @classmethod
     def _convert_ground_truth_ranks_to_scores(
@@ -195,7 +193,7 @@ class Scoring:
             cosine_similarity_scores,
             normalised_cosine_similarity_scores,
             cubic_reward_scores,
-        ) = cls._reward_cubic(
+        ) = _reward_cubic(
             miner_outputs_arr, ground_truth_arr, 0.006, 7, 2, visualize=False
         )
 
@@ -272,8 +270,7 @@ MAX_CONCURRENT_TASKS = int(os.getenv("FILL_SCORE_MAX_CONCURRENT_TASKS", 5))
 TX_TIMEOUT = int(os.getenv("FILL_SCORE_TX_TIMEOUT", 10000))
 
 # Get number of CPU cores
-nproc = multiprocessing.cpu_count()
-sem = asyncio.Semaphore(min(MAX_CONCURRENT_TASKS, nproc))  # Limit concurrent operations
+sem = asyncio.Semaphore(MAX_CONCURRENT_TASKS)  # Limit concurrent operations
 
 
 class FillScoreStats:
