@@ -155,9 +155,13 @@ async def _post_task_data(payload, hotkey, signature, message):
         raise ValueError("VALIDATOR_API_BASE_URL must be set")
     try:
         logger.debug("POST-ing analytics data to validator API")
+        payload_json = payload.model_dump(mode="json")
+        payload_bytes = json.dumps(payload_json).encode("utf-8")
+        size_bytes = len(payload_bytes)
+        start_time = datetime.now()
         response = await _http_client.post(
             url=f"{VALIDATOR_API_BASE_URL}/api/v1/analytics/validators/{hotkey}/tasks",
-            json=payload.model_dump(mode="json"),
+            json=payload_json,
             headers={
                 "X-Hotkey": hotkey,
                 "X-Signature": signature,
@@ -165,13 +169,16 @@ async def _post_task_data(payload, hotkey, signature, message):
                 "Content-Type": "application/json",
             },
             # timeout=TIMEOUT,
-            timeout=None,
+            timeout=300,
         )
         if response.status_code == 200:
             logger.success(f"Successfully uploaded analytics data for hotkey: {hotkey}")
             return response
         else:
-            logger.error(f"Error when _post_task_data(): {response}")
+            time_taken = {datetime.now() - start_time}
+            logger.error(
+                f"Error when _post_task_data(): {response} in {time_taken} seconds size {size_bytes}"
+            )
             return response
     except Exception as e:
         logger.error(f"Error when _post_task_data(): {str(e)}", exc_info=True)
