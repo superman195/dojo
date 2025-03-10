@@ -179,6 +179,9 @@ async def _post_task_data(payload, hotkey, signature, message):
             logger.error(
                 f"Error when _post_task_data(): {response} in {time_taken} seconds size {size_bytes}"
             )
+            logger.error(
+                f"@@@ {VALIDATOR_API_BASE_URL}/api/v1/analytics/validators/{hotkey}/tasks"
+            )  # remove me
             return response
     except Exception as e:
         logger.error(f"Error when _post_task_data(): {str(e)}", exc_info=True)
