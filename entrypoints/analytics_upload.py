@@ -133,7 +133,7 @@ async def _get_task_data(
 
     except NoProcessedTasksYet as e:
         logger.info(f"{e}")
-        # raise
+        raise
     except Exception as e:
         logger.error(f"Error when _get_task_data(): {e}")
         raise
@@ -154,12 +154,12 @@ async def _post_task_data(payload, hotkey, signature, message):
     VALIDATOR_API_BASE_URL = os.getenv("VALIDATOR_API_BASE_URL")
     if VALIDATOR_API_BASE_URL is None:
         raise ValueError("VALIDATOR_API_BASE_URL must be set")
+    start_time = datetime.now()
     try:
         logger.debug("POST-ing analytics data to validator API")
         payload_json = payload.model_dump(mode="json")
         payload_bytes = json.dumps(payload_json).encode("utf-8")
         size_bytes = len(payload_bytes)
-        start_time = datetime.now()
         response = await _http_client.post(
             url=f"{VALIDATOR_API_BASE_URL}/api/v1/analytics/validators/{hotkey}/tasks",
             json=payload_json,
