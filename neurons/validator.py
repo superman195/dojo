@@ -701,6 +701,12 @@ class Validator:
 
     async def update_score_and_send_feedback(self):
         while True:
+            # delete me
+            self.last_anal_upload_time = await run_analytics_upload(
+                self._scores_alock,
+                self.last_anal_upload_time,
+                datetime.now(timezone.utc),
+            )
             await asyncio.sleep(dojo.VALIDATOR_UPDATE_SCORE)
             # for each hotkey, a list of scores from all tasks being scored
             hotkey_to_all_scores = defaultdict(list)
@@ -712,6 +718,12 @@ class Validator:
                 expire_to = datetime_as_utc(datetime.now(timezone.utc))
                 logger.debug(
                     f"Updating with expire_from: {expire_from} and expire_to: {expire_to}"
+                )
+
+                await run_analytics_upload(
+                    self._scores_alock,
+                    self.last_anal_upload_time,
+                    datetime.now(timezone.utc),
                 )
 
                 # Update task results before scoring

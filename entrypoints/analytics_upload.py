@@ -7,6 +7,7 @@ import asyncio
 import gc
 import json
 import os
+import traceback
 from datetime import datetime, timedelta, timezone
 from typing import List
 
@@ -149,7 +150,7 @@ async def _post_task_data(payload, hotkey, signature, message):
     @param message: a message that is signed by the validator
     @param signature: the signature generated from signing the message with the validator's hotkey.
     """
-    _http_client = httpx.AsyncClient()
+    _http_client = httpx.AsyncClient(timeout=300)
     VALIDATOR_API_BASE_URL = os.getenv("VALIDATOR_API_BASE_URL")
     if VALIDATOR_API_BASE_URL is None:
         raise ValueError("VALIDATOR_API_BASE_URL must be set")
@@ -177,14 +178,35 @@ async def _post_task_data(payload, hotkey, signature, message):
         else:
             time_taken = {datetime.now() - start_time}
             logger.error(
-                f"Error when _post_task_data(): {response} in {time_taken} seconds size {size_bytes}"
+                f"_post_task_data() response error: in {time_taken} seconds size {size_bytes}"
             )
+            logger.error(traceback.format_exc())
             logger.error(
                 f"@@@ {VALIDATOR_API_BASE_URL}/api/v1/analytics/validators/{hotkey}/tasks"
-            )  # remove me
+            )
+            logger.error(f" @@ {response.text}")
+            logger.error(f" @@ {response.status_code}")
+            logger.error(f" @@ {response.headers}")
+            logger.error(f" @@ {response.content}")
+
             return response
     except Exception as e:
+        time_taken = {datetime.now() - start_time}
         logger.error(f"Error when _post_task_data(): {str(e)}", exc_info=True)
+        logger.error(
+            f"Error when _post_task_data(): {response} in {time_taken} seconds size {size_bytes}",
+            exc_info=True,
+        )
+        logger.error(traceback.format_exc())
+        logger.error(
+            f"@@@ {VALIDATOR_API_BASE_URL}/api/v1/analytics/validators/{hotkey}/tasks"
+        )
+
+        logger.error(f" @@ {response.text}")
+        logger.error(f" @@ {response.status_code}")
+        logger.error(f" @@ {response.headers}")
+        logger.error(f" @@ {response.content}")
+        # remove me
         raise
 
 

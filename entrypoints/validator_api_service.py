@@ -136,7 +136,14 @@ async def server():
     port = parsed_url.port or 9999
 
     # Configure server
-    config = uvicorn.Config(app, host=host, port=port, log_level="debug")
+    config = uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_level="debug",
+        timeout_notify=300,
+        timeout_keep_alive=240,
+    )
     server = uvicorn.Server(config)
     await server.serve()
 
