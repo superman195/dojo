@@ -393,25 +393,20 @@ class Scoring:
         return valid_responses
 
 
+def calc_sf_score(validator_task):
+    # ensure completion ordering
+    validator_task = ensure_miner_response_order(validator_task)
+    # TODO: score sf_task
+
+
 async def score_hfl_tasks():
     sf_tasks = await ORM.get_sf_tasks_by_status(status=HFLStatusEnum.SF_COMPLETED)
 
     for task in sf_tasks:
-        await _score_tf_task(task)
-
-
-# # TODO: skeleton for actual function
-# async def __score_hfl_task(task: ValidatorTask):
-#     validate()
-#     _prep_for_sf_scores
-#     score_sf_task
-#     _prep_for_tf_scores
-#     score_tf_task
-#     return sf_score, tf_score
-#
-def validate_task(task: ValidatorTask, hfl_state: HFLState):
-    if not hfl_state:
-        raise Exception("HFL State not found for task")
+        # NOTE: we can only determine the score for a TF_TASK after SF_TASK is
+        # completed by comparing the increment/decrement in the ratings from miners
+        hotkey_to_tf_score = await calc_tf_score(task)
+        hotkey_to_sf_score = await calc_sf_score(task)
 
     if not hfl_state.ValidatorTask or hfl_state.status == HFLStatusEnum.SF_COMPLETED:
         raise Exception("HFL State not ready for scoring")
@@ -419,7 +414,7 @@ def validate_task(task: ValidatorTask, hfl_state: HFLState):
         raise Exception("Task completions not found")
 
 
-async def _score_tf_task(task: ValidatorTask):
+async def calc_tf_score(task: ValidatorTask):
     """Use a completed SF_TASK to determine the TF_TASK score"""
     hfl_state = await ORM.get_hfl_state_by_current_task_id(task.id)
     try:
@@ -436,10 +431,6 @@ async def _score_tf_task(task: ValidatorTask):
         raise ValueError("Parent task not found")
 
     # Create a mapping of completion IDs to their order in task.completions
-    completion_order: dict[str, int] = {
-        comp.id: idx
-        for idx, comp in enumerate(task.completions)  # type: ignore
-    }
     parent_task_scores = await _calc_avg_score_by_completion_id(
         parent_task, completion_order
     )
@@ -460,13 +451,19 @@ async def _score_tf_task(task: ValidatorTask):
 
     #### FINDING MINER REPSONSES TO TF
 
-    # TODO:figure out and score participants of TF
     # figure out the TF_task that led to SF_task
-    tf_task_id = get_tf_task_id_for_sf_task(hfl_state, task)
+    # TODO: rely on the previous_task_id ? or the events
+    # tf_task_id = get_tf_task_id_for_sf_task(hfl_state, task)
+    tf_task_id = task.previous_task_id
+    if not tf_task_id:
+        # NOTE: should be data integrity error or something
+        raise ValueError(
+            f"Previous task id should be filled for SF_TASK, task id: {task.id}"
+        )
+
     tf_task = await ORM.get_validator_task_by_id(tf_task_id)
     # find miners that responded to the tf task
     miner_responses = await ORM.get_miner_responses_by_task_id(tf_task_id)
-    #### FINDING MINER REPSONSES TO TF
     #### FINDING MINER REPSONSES TO TF
 
     #### CALCULATE TF SCORES BASED ON SF
@@ -474,8 +471,8 @@ async def _score_tf_task(task: ValidatorTask):
     hotkey_to_tf_score: dict[str, float] = {}
     for response in miner_responses:
         hotkey_to_tf_score[response.hotkey] = 0.0
-
-    # NOTE: generate SF score by simply calculating based on existing scoring
+    # FIXME: currently no way to link the individual SF_TASK's completion to
+    # the previous task's completion
 
     #### CALCULATE TF SCORES BASED ON SF
     return hotkey_to_tf_score
@@ -499,13 +496,12 @@ def get_tf_task_id_for_sf_task(hfl_state: HFLState, task: ValidatorTask):
     )
 
 
-async def _calc_avg_score_by_completion_id(
-    task: ValidatorTask, completion_order: dict[str, int]
-) -> dict[str, float]:
-    if not task or not task.completions:
-        raise ValueError("TF task must have completions for scoring")
-    if not task.miner_responses:
-        raise ValueError("TF task must have miner responses for scoring")
+def ensure_miner_response_order(validator_task: ValidatorTask) -> ValidatorTask:
+    """Ensure that the order of miner responses matches the order of completions in the task"""
+    completion_order: dict[str, int] = {
+        comp.id: idx
+        for idx, comp in enumerate(task.completions)  # type: ignore
+    }
 
     # For each miner response, sort completions in-place based on task.completions order
     for miner_response in task.miner_responses:
@@ -523,6 +519,18 @@ async def _calc_avg_score_by_completion_id(
             return completion_order[completion_id]
 
         miner_response.scores.sort(key=get_order)
+    return validator_task
+
+
+async def _calc_avg_score_by_completion_id(
+    task: ValidatorTask, completion_order: dict[str, int]
+) -> dict[str, float]:
+    if not task or not task.completions:
+        raise ValueError("TF task must have completions for scoring")
+    if not task.miner_responses:
+        raise ValueError("TF task must have miner responses for scoring")
+
+    task = ensure_miner_response_order(task)
 
     # calculate the average score per completion
     # Create a dictionary to store the sum of scores and the count of scores for each completion

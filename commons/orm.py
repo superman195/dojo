@@ -922,6 +922,17 @@ class ORM:
             logger.error(f"Failed to get miner responses for task {task_id}: {e}")
         return []
 
+    @staticmethod
+    async def get_task_by_id(task_id: str) -> ValidatorTask | None:
+        """Given a current task id, fetch the previous task"""
+        try:
+            task = await prisma.validatortask.find_unique(where={"id": task_id})
+            if task is None:
+                raise
+        except Exception as e:
+            logger.error(f"Failed to get validator task with ID {task_id}: {e}")
+        return None
+
 
 # ---------------------------------------------------------------------------- #
 #                          Test custom ORM functions                           #
