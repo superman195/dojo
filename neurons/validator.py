@@ -74,6 +74,7 @@ if latest_local != latest_remote:
 
 class Validator:
     _should_exit: bool = False
+    # NOTE: this is a shared lock between both self.score and self.hfl_score
     _scores_alock = asyncio.Lock()
     _uids_alock = asyncio.Lock()
     _request_alock = asyncio.Lock()
@@ -1461,5 +1462,21 @@ class Validator:
         block_number = int(block.get("header", {}).get("number"))
         self._last_block = block_number
 
-    async def _update_scores(self, hotkey_to_sf_score, hotkey_to_tf_score):
-        pass
+    async def update_hfl_score(self, hotkey_to_tf_score):
+        async with self._scores_alock:
+            previous_hfl_scores = self.hfl_score
+            for hotkey, score in hotkey_to_tf_score:
+                try:
+                    uid = self.metagraph.hotkeys[hotkey]
+                    hfl_alpha = self.config.weights.hfl_ema_alpha  # type: ignore
+                    self.hfl_score[uid] = (
+                        hfl_alpha * hotkey_to_tf_score[hotkey]
+                        + (1 - hfl_alpha) * self.hfl_score[uid]
+                    )
+                except IndexError:
+                    logger.debug(
+                        f"Error getting uid from hotkey: {hotkey} from metagraph, must've deregistered"
+                    )
+
+            logger.info(f"Previous HFL Scores: {previous_hfl_scores}")
+            logger.info(f"Update HFL scores: {self.hfl_score}")

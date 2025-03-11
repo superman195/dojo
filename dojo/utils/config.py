@@ -226,6 +226,13 @@ def add_args(parser):
             default=0.3,
         )
 
+        parser.add_argument(
+            "--weights.hfl_ema_alpha",
+            type=float,
+            help="Moving average alpha parameter, how much to add of the new observation.",
+            default=0.3,
+        )
+
     elif neuron_type == "miner":
         pass
 
