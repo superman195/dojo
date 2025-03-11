@@ -408,6 +408,8 @@ async def score_hfl_tasks():
         hotkey_to_tf_score = await calc_tf_score(task)
         hotkey_to_sf_score = await calc_sf_score(task)
 
+
+def validate_task(task, hfl_state):
     if not hfl_state.ValidatorTask or hfl_state.status == HFLStatusEnum.SF_COMPLETED:
         raise Exception("HFL State not ready for scoring")
     if not task.completions:
@@ -431,6 +433,9 @@ async def calc_tf_score(task: ValidatorTask):
         raise ValueError("Parent task not found")
 
     # Create a mapping of completion IDs to their order in task.completions
+
+    # FIXME: currently no way to link the individual SF_TASK's completion to
+    # the previous task's completion
     parent_task_scores = await _calc_avg_score_by_completion_id(
         parent_task, completion_order
     )
@@ -449,7 +454,7 @@ async def calc_tf_score(task: ValidatorTask):
 
     ### CALC CHANGE IN SCORES
 
-    #### FINDING MINER REPSONSES TO TF
+    #### FINDING MINER RESPONSES TO TF
 
     # figure out the TF_task that led to SF_task
     # TODO: rely on the previous_task_id ? or the events
@@ -464,7 +469,7 @@ async def calc_tf_score(task: ValidatorTask):
     tf_task = await ORM.get_validator_task_by_id(tf_task_id)
     # find miners that responded to the tf task
     miner_responses = await ORM.get_miner_responses_by_task_id(tf_task_id)
-    #### FINDING MINER REPSONSES TO TF
+    #### FINDING MINER RESPONSES TO TF
 
     #### CALCULATE TF SCORES BASED ON SF
     # TODO: score miner responses for tf_task
