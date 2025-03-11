@@ -5,11 +5,13 @@ import torch
 from bittensor.utils.btlogging import logging as logger
 from torch.nn import functional as F
 
+from commons.exceptions import HFLStateNotContinuous
 from commons.orm import ORM
 from commons.stats.icc import _calculate_icc
 from commons.utils import _terminal_plot
+from database.mappers import _parse_hfl_events
 from database.prisma.enums import HFLStatusEnum
-from database.prisma.models import ValidatorTask
+from database.prisma.models import HFLState, ValidatorTask
 from dojo.protocol import (
     CompletionResponse,
     CriteriaType,
@@ -399,6 +401,16 @@ async def score_hfl_tasks():
         await _score_hfl_task(task)
 
 
+# # TODO: skeleton for actual function
+# async def __score_hfl_task(task: ValidatorTask):
+#     validate()
+#     _prep_for_sf_scores
+#     score_sf_task
+#     _prep_for_tf_scores
+#     score_tf_task
+#     return sf_score, tf_score
+
+
 async def _score_hfl_task(task: ValidatorTask):
     hfl_state = await ORM.get_hfl_state_by_current_task_id(task.id)
     if not hfl_state:
@@ -419,6 +431,7 @@ async def _score_hfl_task(task: ValidatorTask):
     if parent_task is None:
         raise ValueError("Parent task not found")
     parent_task_scores = await _calc_avg_score_by_completion_id(parent_task)
+    # NOTE: this is not for sf_scoring itself, but for comparing the increments
     sf_task_scores = await _calc_avg_score_by_completion_id(task)
 
     # calculate differences per completion id
@@ -426,14 +439,45 @@ async def _score_hfl_task(task: ValidatorTask):
 
     # TODO: select only the cid that was selected from original task / SF_1
     completion_id = "dummy"
-    for completion_id, score in sf_task_scores.items():
+    for completion_id, sf_score in sf_task_scores.items():
         # positive means improvement, negative means regression
-        diff = score - parent_task_scores[completion_id]
-        cid_to_scores_dt[completion_id] = diff
+        diff = sf_score - parent_task_scores[completion_id]
+        cid_to_scores_dt[completion_id] = float(diff)
+
     # TODO: for each of these, reward the miners with diff
     # from commons.stats.icc import _calculate_icc
 
     # TODO:figure out and score participants of TF
+    # figure out the TF_task that led to SF_task
+    tf_task_id = get_tf_task_id_for_sf_task(hfl_state, task)
+    tf_task = await ORM.get_validator_task_by_id(tf_task_id)
+    logger.info(tf_task)
+    # find miners that responded to the tf task
+    miner_responses = await ORM.get_miner_responses_by_task_id(tf_task_id)
+    logger.info(miner_responses)
+
+    # TODO: score miner responses for tf_task
+    hotkey_to_tf_score = {}
+    # NOTE: generate SF score by simply calculating based on existing scoring
+    return hotkey_to_tf_score
+
+
+def get_tf_task_id_for_sf_task(hfl_state: HFLState, task: ValidatorTask):
+    events = _parse_hfl_events(hfl_state)
+    status = HFLStatusEnum.TF_COMPLETED
+    for idx, event in enumerate(events):
+        if event.task_id != task.id:
+            continue
+
+        # found the SF_TASK, now find the tf task
+        sublist = events[:idx]
+
+        for event in reversed(sublist):
+            if event.type == status:
+                return event.task_id
+    raise HFLStateNotContinuous(
+        f"Expected to find {status} while processing {HFLStatusEnum.SF_COMPLETED}"
+    )
 
 
 async def _calc_avg_score_by_completion_id(task: ValidatorTask) -> dict[str, float]:

@@ -1460,3 +1460,6 @@ class Validator:
         logger.trace(f"Received block headers{block}")
         block_number = int(block.get("header", {}).get("number"))
         self._last_block = block_number
+
+    async def _update_scores(self, hotkey_to_sf_score, hotkey_to_tf_score):
+        pass

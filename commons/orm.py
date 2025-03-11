@@ -23,7 +23,13 @@ from database.mappers import (
 from database.prisma import Json
 from database.prisma.enums import HFLStatusEnum, TaskTypeEnum
 from database.prisma.errors import PrismaError
-from database.prisma.models import GroundTruth, HFLState, MinerScore, ValidatorTask
+from database.prisma.models import (
+    GroundTruth,
+    HFLState,
+    MinerResponse,
+    MinerScore,
+    ValidatorTask,
+)
 from database.prisma.types import (
     CriterionWhereInput,
     MinerResponseCreateWithoutRelationsInput,
@@ -895,6 +901,26 @@ class ORM:
                 return prev_task
 
         return None
+
+    @staticmethod
+    async def get_validator_task_by_id(task_id: str) -> ValidatorTask | None:
+        try:
+            task = await ValidatorTask.prisma().find_unique(where={"id": task_id})
+            return task
+        except Exception as e:
+            logger.error(f"Failed to get validator task with ID {task_id}: {e}")
+        return None
+
+    @staticmethod
+    async def get_miner_responses_by_task_id(task_id: str) -> list[MinerResponse]:
+        try:
+            miner_responses = await prisma.minerresponse.find_many(
+                where={"validator_task_id": task_id}
+            )
+            return miner_responses
+        except Exception as e:
+            logger.error(f"Failed to get miner responses for task {task_id}: {e}")
+        return []
 
 
 # ---------------------------------------------------------------------------- #
