@@ -519,17 +519,11 @@ stats = FillScoreStats()
 
 @retry(stop=stop_after_attempt(8), wait=wait_exponential(multiplier=3, min=5, max=120))
 async def execute_transaction(miner_response_id, tx_function):
-    start_time = time.time()
     try:
         async with prisma.tx(timeout=TX_TIMEOUT) as tx:
             result = await tx_function(tx)
-            elapsed = time.time() - start_time
-            logger.info(
-                f"Transaction completed for miner response {miner_response_id} in {elapsed:.2f} seconds"
-            )
             return result
     except Exception as e:
-        elapsed = time.time() - start_time
         logger.error(f"Transaction failed for miner response {miner_response_id}: {e}")
         raise  # Re-raise to trigger retry
 
@@ -622,9 +616,9 @@ async def batch_update_scores(tx, updates) -> int:
 
     # Process in smaller batches
     batch_size = UPDATE_BATCH_SIZE
-    logger.info(
-        f"Updating {len(updates)} scores in {len(updates) // batch_size} batches"
-    )
+    # logger.info(
+    #     f"Updating {len(updates)} scores in {len(updates) // batch_size} batches"
+    # )
     for i in range(0, len(updates), batch_size):
         batch = updates[i : i + batch_size]
         async with tx.batch_() as batcher:  # type: ignore
