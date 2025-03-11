@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import time
+import traceback
 
 import numpy as np
 import torch
@@ -405,6 +406,7 @@ class Scoring:
             return results
 
         except Exception as e:
+            traceback.print_exc()
             logger.error(f"Failed to calculate scores for all completions: {e}")
             return {}
 
