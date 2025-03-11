@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import sys
 import time
 import traceback
 
@@ -25,6 +26,13 @@ from database.prisma.types import (
 )
 from dojo.protocol import Scores
 from dojo.utils.config import source_dotenv
+
+logger.remove()  # Remove default handlers
+logger.add(
+    sink=sys.stderr,
+    level="INFO",
+    format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+)
 
 
 def minmax_scale(tensor: torch.Tensor | np.ndarray) -> torch.Tensor:
@@ -327,7 +335,7 @@ class Scoring:
             if miner.hotkey not in completion_data:
                 continue
 
-            hotkey_to_index[miner.hotkey] = i
+            # hotkey_to_index[miner.hotkey] = i
 
             # Sort the completion scores by completion ID order
             completion_scores = completion_data[miner.hotkey]
@@ -340,6 +348,7 @@ class Scoring:
             if None in sorted_scores:
                 continue
 
+            hotkey_to_index[miner.hotkey] = len(miner_outputs_list)
             miner_outputs_list.append(sorted_scores)
 
         if not miner_outputs_list:
@@ -654,7 +663,7 @@ async def _process_task(task: ValidatorTask):
             # logger.info(f"All completion data: {all_completion_data}")
 
             if not all_completion_data:
-                logger.warning("No valid completion data found for any miner")
+                logger.debug("No valid completion data found for any miner")
                 return False
 
             # 2. Calculate scores for all miners together
