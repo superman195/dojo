@@ -414,6 +414,7 @@ source_dotenv()
 BATCH_SIZE = int(os.getenv("FILL_SCORE_BATCH_SIZE", 10))
 MAX_CONCURRENT_TASKS = int(os.getenv("FILL_SCORE_MAX_CONCURRENT_TASKS", 5))
 TX_TIMEOUT = int(os.getenv("FILL_SCORE_TX_TIMEOUT", 30000))
+UPDATE_BATCH_SIZE = int(os.getenv("FILL_SCORE_UPDATE_BATCH_SIZE", 10))
 
 # Get number of CPU cores
 sem = asyncio.Semaphore(MAX_CONCURRENT_TASKS)  # Limit concurrent operations
@@ -620,7 +621,7 @@ async def batch_update_scores(tx, updates):
     successful_updates = 0
 
     # Process in smaller batches
-    batch_size = 20
+    batch_size = UPDATE_BATCH_SIZE
     logger.info(
         f"Updating {len(updates)} scores in {len(updates) // batch_size} batches"
     )
