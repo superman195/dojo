@@ -7,7 +7,6 @@ from torch.nn import functional as F
 
 from commons.exceptions import HFLStateNotContinuous
 from commons.orm import ORM
-from commons.stats.icc import _calculate_icc
 from commons.utils import _terminal_plot
 from database.mappers import _parse_hfl_events
 from database.prisma.enums import HFLStatusEnum
@@ -398,7 +397,7 @@ async def score_hfl_tasks():
     sf_tasks = await ORM.get_sf_tasks_by_status(status=HFLStatusEnum.SF_COMPLETED)
 
     for task in sf_tasks:
-        await _score_hfl_task(task)
+        await _score_tf_task(task)
 
 
 # # TODO: skeleton for actual function
@@ -409,30 +408,43 @@ async def score_hfl_tasks():
 #     _prep_for_tf_scores
 #     score_tf_task
 #     return sf_score, tf_score
-
-
-async def _score_hfl_task(task: ValidatorTask):
-    hfl_state = await ORM.get_hfl_state_by_current_task_id(task.id)
+#
+def validate_task(task: ValidatorTask, hfl_state: HFLState):
     if not hfl_state:
-        logger.warning("HFL State not found for task")
-        return
+        raise Exception("HFL State not found for task")
 
     if not hfl_state.ValidatorTask or hfl_state.status == HFLStatusEnum.SF_COMPLETED:
-        logger.warning("HFL State not ready for scoring")
+        raise Exception("HFL State not ready for scoring")
+    if not task.completions:
+        raise Exception("Task completions not found")
+
+
+async def _score_tf_task(task: ValidatorTask):
+    """Use a completed SF_TASK to determine the TF_TASK score"""
+    hfl_state = await ORM.get_hfl_state_by_current_task_id(task.id)
+    try:
+        validate_task(task, hfl_state)
+    except Exception as e:
+        logger.error(f"Error validating task: {e}")
         return
 
+    ### CALC CHANGE IN SCORES
     miner_scores = await ORM.get_scores_for_completed_sf(task)
     logger.info(f"Got {miner_scores}")
-    # TODO: prepare hotkey_to_miner_raw_scores from DB
-    hotkey_to_raw_scores: dict[str, list[float]] = {}
-    hotkey_to_icc = _calculate_icc(hotkey_to_scores=hotkey_to_raw_scores)
-    logger.info(f"Got hotkey to icc score: {hotkey_to_icc}")
     parent_task = await ORM.get_original_or_parent_sf_task(task.id)
     if parent_task is None:
         raise ValueError("Parent task not found")
-    parent_task_scores = await _calc_avg_score_by_completion_id(parent_task)
+
+    # Create a mapping of completion IDs to their order in task.completions
+    completion_order: dict[str, int] = {
+        comp.id: idx
+        for idx, comp in enumerate(task.completions)  # type: ignore
+    }
+    parent_task_scores = await _calc_avg_score_by_completion_id(
+        parent_task, completion_order
+    )
     # NOTE: this is not for sf_scoring itself, but for comparing the increments
-    sf_task_scores = await _calc_avg_score_by_completion_id(task)
+    sf_task_scores = await _calc_avg_score_by_completion_id(task, completion_order)
 
     # calculate differences per completion id
     cid_to_scores_dt: dict[str, float] = {}
@@ -444,21 +456,28 @@ async def _score_hfl_task(task: ValidatorTask):
         diff = sf_score - parent_task_scores[completion_id]
         cid_to_scores_dt[completion_id] = float(diff)
 
-    # TODO: for each of these, reward the miners with diff
-    # from commons.stats.icc import _calculate_icc
+    ### CALC CHANGE IN SCORES
+
+    #### FINDING MINER REPSONSES TO TF
 
     # TODO:figure out and score participants of TF
     # figure out the TF_task that led to SF_task
     tf_task_id = get_tf_task_id_for_sf_task(hfl_state, task)
     tf_task = await ORM.get_validator_task_by_id(tf_task_id)
-    logger.info(tf_task)
     # find miners that responded to the tf task
     miner_responses = await ORM.get_miner_responses_by_task_id(tf_task_id)
-    logger.info(miner_responses)
+    #### FINDING MINER REPSONSES TO TF
+    #### FINDING MINER REPSONSES TO TF
 
+    #### CALCULATE TF SCORES BASED ON SF
     # TODO: score miner responses for tf_task
-    hotkey_to_tf_score = {}
+    hotkey_to_tf_score: dict[str, float] = {}
+    for response in miner_responses:
+        hotkey_to_tf_score[response.hotkey] = 0.0
+
     # NOTE: generate SF score by simply calculating based on existing scoring
+
+    #### CALCULATE TF SCORES BASED ON SF
     return hotkey_to_tf_score
 
 
@@ -480,16 +499,13 @@ def get_tf_task_id_for_sf_task(hfl_state: HFLState, task: ValidatorTask):
     )
 
 
-async def _calc_avg_score_by_completion_id(task: ValidatorTask) -> dict[str, float]:
+async def _calc_avg_score_by_completion_id(
+    task: ValidatorTask, completion_order: dict[str, int]
+) -> dict[str, float]:
     if not task or not task.completions:
         raise ValueError("TF task must have completions for scoring")
     if not task.miner_responses:
         raise ValueError("TF task must have miner responses for scoring")
-
-    # Create a mapping of completion IDs to their order in task.completions
-    completion_order: dict[str, int] = {
-        comp.id: idx for idx, comp in enumerate(task.completions)
-    }
 
     # For each miner response, sort completions in-place based on task.completions order
     for miner_response in task.miner_responses:
