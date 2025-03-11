@@ -4,10 +4,19 @@ from contextlib import asynccontextmanager
 from bittensor.utils.btlogging import logging as logger
 
 from database.prisma import Prisma
+from database.prisma.errors import PrismaError
 
 db = None
 
 prisma = Prisma(auto_register=True)
+
+
+async def get_db():
+    if db is None:
+        raise PrismaError(
+            "You must call `connect_db` before trying to get the Prisma db handle"
+        )
+    return db
 
 
 async def connect_db(retries: int = 5, delay: int = 2) -> None:

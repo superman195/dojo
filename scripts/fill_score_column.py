@@ -8,7 +8,7 @@ import torch
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from database.client import connect_db, disconnect_db, prisma
+from database.client import connect_db, disconnect_db, get_db, prisma
 from database.prisma import Json
 from database.prisma.models import (
     Criterion,
@@ -616,7 +616,7 @@ async def prefetch_criteria(task_id, completion_ids):
     return result
 
 
-async def batch_update_scores(tx, updates):
+async def batch_update_scores(tx, updates) -> int:
     """Process updates in batches to reduce database round trips"""
     successful_updates = 0
 
@@ -625,14 +625,17 @@ async def batch_update_scores(tx, updates):
     logger.info(
         f"Updating {len(updates)} scores in {len(updates) // batch_size} batches"
     )
+    db = await get_db()
     for i in range(0, len(updates), batch_size):
         batch = updates[i : i + batch_size]
-        for update in batch:
-            try:
-                await tx.minerscore.update(**update)
-                successful_updates += 1
-            except Exception as e:
-                logger.warning(f"Failed to update score: {e}")
+        async with db.batch_() as batcher:  # type: ignore
+            for update in batch:
+                try:
+                    batcher.minerscore.update(**update)
+
+                    successful_updates += 1
+                except Exception as e:
+                    logger.warning(f"Failed to update score: {e}")
 
     return successful_updates
 
