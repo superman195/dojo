@@ -413,7 +413,7 @@ source_dotenv()
 
 BATCH_SIZE = int(os.getenv("FILL_SCORE_BATCH_SIZE", 10))
 MAX_CONCURRENT_TASKS = int(os.getenv("FILL_SCORE_MAX_CONCURRENT_TASKS", 5))
-TX_TIMEOUT = int(os.getenv("FILL_SCORE_TX_TIMEOUT", 10000))
+TX_TIMEOUT = int(os.getenv("FILL_SCORE_TX_TIMEOUT", 30000))
 
 # Get number of CPU cores
 sem = asyncio.Semaphore(MAX_CONCURRENT_TASKS)  # Limit concurrent operations
@@ -518,10 +518,17 @@ stats = FillScoreStats()
 
 @retry(stop=stop_after_attempt(8), wait=wait_exponential(multiplier=3, min=5, max=120))
 async def execute_transaction(miner_response_id, tx_function):
+    start_time = time.time()
     try:
         async with prisma.tx(timeout=TX_TIMEOUT) as tx:
-            await tx_function(tx)
+            result = await tx_function(tx)
+            elapsed = time.time() - start_time
+            logger.info(
+                f"Transaction completed for miner response {miner_response_id} in {elapsed:.2f} seconds"
+            )
+            return result
     except Exception as e:
+        elapsed = time.time() - start_time
         logger.error(f"Transaction failed for miner response {miner_response_id}: {e}")
         raise  # Re-raise to trigger retry
 
@@ -613,7 +620,7 @@ async def batch_update_scores(tx, updates):
     successful_updates = 0
 
     # Process in smaller batches
-    batch_size = 50
+    batch_size = 20
     logger.info(
         f"Updating {len(updates)} scores in {len(updates) // batch_size} batches"
     )
