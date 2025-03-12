@@ -1,7 +1,9 @@
 import asyncio
 import json
 import os
+import sys
 import time
+import traceback
 
 import numpy as np
 import torch
@@ -10,7 +12,13 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from database.client import connect_db, disconnect_db, prisma
 from database.prisma import Json
-from database.prisma.models import GroundTruth, MinerResponse, MinerScore, ValidatorTask
+from database.prisma.models import (
+    Criterion,
+    GroundTruth,
+    MinerResponse,
+    MinerScore,
+    ValidatorTask,
+)
 from database.prisma.types import (
     CriterionWhereInput,
     MinerScoreUpdateInput,
@@ -18,6 +26,13 @@ from database.prisma.types import (
 )
 from dojo.protocol import Scores
 from dojo.utils.config import source_dotenv
+
+logger.remove()  # Remove default handlers
+logger.add(
+    sink=sys.stderr,
+    level="INFO",
+    format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+)
 
 
 def minmax_scale(tensor: torch.Tensor | np.ndarray) -> torch.Tensor:
@@ -320,7 +335,7 @@ class Scoring:
             if miner.hotkey not in completion_data:
                 continue
 
-            hotkey_to_index[miner.hotkey] = i
+            # hotkey_to_index[miner.hotkey] = i
 
             # Sort the completion scores by completion ID order
             completion_scores = completion_data[miner.hotkey]
@@ -333,6 +348,7 @@ class Scoring:
             if None in sorted_scores:
                 continue
 
+            hotkey_to_index[miner.hotkey] = len(miner_outputs_list)
             miner_outputs_list.append(sorted_scores)
 
         if not miner_outputs_list:
@@ -353,7 +369,8 @@ class Scoring:
             # Organize results by miner response ID
             results = {}
             miner_index = 0
-
+            # logger.info(f"hotkey_to_index: {hotkey_to_index}")
+            # logger.info(f"Number of valid miners: {len(miner_outputs_list)}")
             for miner in miner_responses:
                 if miner.hotkey not in hotkey_to_index:
                     continue
@@ -362,6 +379,7 @@ class Scoring:
                 miner_results = {}
 
                 # For each completion by this miner
+                # logger.info(f"Processing miner {miner.hotkey} with index {miner_index}")
                 for cid_idx, cid in enumerate(sorted_cids):
                     # Find the completion record for this miner and completion
                     completion_scores = [
@@ -392,11 +410,13 @@ class Scoring:
                     miner_results[cid] = scores
 
                 results[miner.id] = miner_results
+                # logger.info(f"Processed miner {miner.hotkey} with index {miner_index}")
 
             return results
 
         except Exception as e:
-            logger.warning(f"Failed to calculate scores for all completions: {e}")
+            traceback.print_exc()
+            logger.error(f"Failed to calculate scores for all completions: {e}")
             return {}
 
 
@@ -404,7 +424,8 @@ source_dotenv()
 
 BATCH_SIZE = int(os.getenv("FILL_SCORE_BATCH_SIZE", 10))
 MAX_CONCURRENT_TASKS = int(os.getenv("FILL_SCORE_MAX_CONCURRENT_TASKS", 5))
-TX_TIMEOUT = int(os.getenv("FILL_SCORE_TX_TIMEOUT", 10000))
+TX_TIMEOUT = int(os.getenv("FILL_SCORE_TX_TIMEOUT", 30000))
+UPDATE_BATCH_SIZE = int(os.getenv("FILL_SCORE_UPDATE_BATCH_SIZE", 10))
 
 # Get number of CPU cores
 sem = asyncio.Semaphore(MAX_CONCURRENT_TASKS)  # Limit concurrent operations
@@ -511,7 +532,8 @@ stats = FillScoreStats()
 async def execute_transaction(miner_response_id, tx_function):
     try:
         async with prisma.tx(timeout=TX_TIMEOUT) as tx:
-            await tx_function(tx)
+            result = await tx_function(tx)
+            return result
     except Exception as e:
         logger.error(f"Transaction failed for miner response {miner_response_id}: {e}")
         raise  # Re-raise to trigger retry
@@ -540,164 +562,189 @@ def _is_all_empty_scores(records: list[MinerScore]) -> bool:
     return all(_is_empty_scores(record) for record in records)
 
 
-async def _process_miner_response(
-    miner_response: MinerResponse,
-    task: ValidatorTask,
-    all_completion_data: dict[str, list[tuple[str, float]]],
-):
-    """Process a single miner response, but using the collective scoring approach.
+async def prefetch_completion_data(task_id, miner_hotkeys):
+    """Fetch all completion data for a task in a single query"""
+    # Get all feedback requests for this task
+    feedback_requests = await prisma.feedback_request_model.find_many(
+        where={"parent_id": task_id, "hotkey": {"in": miner_hotkeys}},
+    )
 
-    Args:
-        miner_response: The miner response object to process
-        task: The validator task
-        all_completion_data: Dictionary mapping miner hotkeys to lists of (completion_id, score) tuples
+    # Get all completions for these feedback requests
+    if not feedback_requests:
+        return {}
 
-    Returns:
-        bool: Whether any scores were updated
-    """
-    scores = miner_response.scores
+    # we do this because we want to avoid a N+1 query
+    request_ids = [fr.id for fr in feedback_requests]
+    hotkey_by_request = {fr.hotkey: fr.id for fr in feedback_requests}
 
-    if scores is not None and not _is_all_empty_scores(scores):
-        return False  # No update needed
+    # collect all completions for these child feedback requests (previously miner responses)
+    completions = await prisma.completion_response_model.find_many(
+        where={"feedback_request_id": {"in": request_ids}},
+    )
 
-    # Skip if we don't have this miner's data in the completion_data
-    if miner_response.hotkey not in all_completion_data:
-        logger.debug(f"No completion data for miner {miner_response.hotkey}")
-        return False
+    # Organize by miner hotkey
+    result = {}
+    for completion in completions:
+        if completion.score is not None and completion.completion_id:
+            for hotkey, request_id in hotkey_by_request.items():
+                if completion.feedback_request_id == request_id:
+                    if hotkey not in result:
+                        result[hotkey] = []
+                    result[hotkey].append((completion.completion_id, completion.score))
+                    break
 
-    # Define the transaction function
-    async def tx_function(tx):
-        updated_count = 0
+    return result
 
-        # Calculate scores using all miners' data
-        all_scores = Scoring.calculate_scores_for_all_completions(
-            task,
-            [m for m in task.miner_responses or [] if m.hotkey in all_completion_data],
-            all_completion_data,
-        )
 
-        # Only use the scores for this specific miner
-        if miner_response.id not in all_scores:
-            logger.warning(f"No scores calculated for miner {miner_response.hotkey}")
-            return 0
-
-        miner_scores = all_scores[miner_response.id]
-
-        # Update each completion's score
-        for completion_id, score_obj in miner_scores.items():
-            # Find the criterion record
-            criterion = await tx.criterion.find_first(
-                where=CriterionWhereInput(
-                    {
-                        "completion_relation": {
-                            "is": {
-                                "completion_id": completion_id,
-                                "validator_task_id": task.id,
-                            }
-                        }
+async def prefetch_criteria(task_id, completion_ids):
+    """Prefetch all criteria for a task to avoid individual queries"""
+    criteria: list[Criterion] = await prisma.criterion.find_many(
+        where=CriterionWhereInput(
+            {
+                "completion_relation": {
+                    "is": {
+                        "validator_task_id": task_id,
+                        "completion_id": {"in": completion_ids},
                     }
-                )
-            )
+                }
+            }
+        ),
+        include={"completion_relation": True},
+    )
 
-            if not criterion:
-                logger.warning(f"Criterion not found for completion {completion_id}")
-                continue
+    # Create lookup dictionary
+    result = {}
+    for c in criteria:
+        if c.completion_relation and c.completion_relation.completion_id:
+            result[c.completion_relation.completion_id] = c
 
-            # Update the score
-            try:
-                await tx.minerscore.update(
-                    where={
-                        "criterion_id_miner_response_id": {
-                            "criterion_id": criterion.id,
-                            "miner_response_id": miner_response.id,
-                        }
-                    },
-                    data=MinerScoreUpdateInput(
-                        scores=Json(json.dumps(score_obj.model_dump()))
-                    ),
-                )
-                updated_count += 1
-            except Exception as e:
-                logger.warning(f"Failed to update score: {e}")
+    return result
 
-        return updated_count
 
-    try:
-        # Use the retry-enabled transaction executor
-        updated_count = await execute_transaction(miner_response.id, tx_function)
-        if updated_count:
-            stats.updated_scores += updated_count
-            return True
-        return False
-    except Exception as e:
-        logger.error(
-            f"All transaction attempts failed for miner response {miner_response.id}: {e}"
-        )
-        return False
+async def batch_update_scores(tx, updates) -> int:
+    """Process updates in batches to reduce database round trips"""
+    successful_updates = 0
+
+    # Process in smaller batches
+    batch_size = UPDATE_BATCH_SIZE
+    # logger.info(
+    #     f"Updating {len(updates)} scores in {len(updates) // batch_size} batches"
+    # )
+    for i in range(0, len(updates), batch_size):
+        batch = updates[i : i + batch_size]
+        async with tx.batch_() as batcher:  # type: ignore
+            for update in batch:
+                try:
+                    batcher.minerscore.update(**update)
+
+                    successful_updates += 1
+                except Exception as e:
+                    logger.warning(f"Failed to update score: {e}")
+
+    return successful_updates
 
 
 async def _process_task(task: ValidatorTask):
     async with sem:  # Use semaphore to limit concurrent tasks
         try:
+            # Check if miner_responses exists and is not empty
             if not task.miner_responses:
                 logger.warning("No miner responses for task, skipping")
                 return False
 
-            # First, collect all completion data for all miners
-            all_completion_data = {}
+            # 1. Collect all miner data for the task
+            miner_hotkeys = []
+            for miner in task.miner_responses:
+                if miner.hotkey:
+                    miner_hotkeys.append(miner.hotkey)
 
-            for miner_response in task.miner_responses:
-                feedback_request = await prisma.feedback_request_model.find_first(
-                    where={
-                        "parent_id": task.id,
-                        "hotkey": miner_response.hotkey,
-                    }
-                )
+            all_completion_data = await prefetch_completion_data(task.id, miner_hotkeys)
 
-                if not feedback_request:
-                    continue
-
-                completions = await prisma.completion_response_model.find_many(
-                    where={"feedback_request_id": feedback_request.id}
-                )
-
-                if not completions:
-                    continue
-
-                # Collect scores for all completions by this miner
-                miner_scores = []
-                for completion in completions:
-                    if completion.score is not None and completion.completion_id:
-                        miner_scores.append(
-                            (completion.completion_id, completion.score)
-                        )
-
-                if miner_scores:
-                    all_completion_data[miner_response.hotkey] = miner_scores
+            # logger.info(f"All completion data: {all_completion_data}")
 
             if not all_completion_data:
-                logger.warning("No valid completion data found for any miner")
+                logger.debug("No valid completion data found for any miner")
                 return False
 
-            # Now process each miner response with the collective data
-            any_updated = False
-            for miner_response in task.miner_responses:
-                try:
-                    result = await _process_miner_response(
-                        miner_response, task, all_completion_data
-                    )
-                    if result:
-                        logger.info(
-                            f"Updated scores for miner response {miner_response.id}"
-                        )
-                        any_updated = True
-                except Exception as e:
-                    logger.error(
-                        f"Failed to process miner response {miner_response.id}: {e}"
-                    )
-                    continue
+            # 2. Calculate scores for all miners together
+            all_scores = Scoring.calculate_scores_for_all_completions(
+                task,
+                [
+                    m
+                    for m in task.miner_responses or []
+                    if m.hotkey in all_completion_data
+                ],
+                all_completion_data,
+            )
 
-            return any_updated
+            if not all_scores:
+                logger.warning("No scores calculated for any miner")
+                return False
+
+            # 3. Update database in a single transaction
+            async def tx_function(tx):
+                # Collect all completion IDs
+                all_completion_ids = set()
+                for miner_id, completions in all_scores.items():
+                    all_completion_ids.update(completions.keys())
+
+                # Prefetch all criteria
+                criteria_by_completion = await prefetch_criteria(
+                    task.id, list(all_completion_ids)
+                )
+
+                # Prepare all updates
+                all_updates = []
+
+                if not task.miner_responses:
+                    logger.warning("No miner responses for task, skipping")
+                    return False
+
+                for miner in task.miner_responses:
+                    # Skip if no scores calculated for this miner
+                    if miner.id not in all_scores:
+                        continue
+
+                    # Skip if already has scores
+                    if miner.scores is not None and not _is_all_empty_scores(
+                        miner.scores
+                    ):
+                        continue
+
+                    miner_scores = all_scores[miner.id]
+
+                    for completion_id, score_obj in miner_scores.items():
+                        if completion_id not in criteria_by_completion:
+                            continue
+
+                        criterion = criteria_by_completion[completion_id]
+                        all_updates.append(
+                            {
+                                "where": {
+                                    "criterion_id_miner_response_id": {
+                                        "criterion_id": criterion.id,
+                                        "miner_response_id": miner.id,
+                                    }
+                                },
+                                "data": MinerScoreUpdateInput(
+                                    scores=Json(json.dumps(score_obj.model_dump()))
+                                ),
+                            }
+                        )
+
+                # Batch update all scores
+                return await batch_update_scores(tx, all_updates)
+
+            try:
+                # Use the retry-enabled transaction executor
+                updated_count = await execute_transaction(task.id, tx_function)
+                if updated_count:
+                    stats.updated_scores += updated_count
+                    return True
+                return False
+            except Exception as e:
+                logger.error(f"All transaction attempts failed for task {task.id}: {e}")
+                return False
 
         except Exception as e:
             logger.error(f"Error processing task {task.id}: {e}")
