@@ -137,7 +137,9 @@ services:
       - dojo-validator
     volumes:
       - ./.env:/app/.env
+      - prisma-client:/app/database/prisma
       - prisma-binary:/root/prisma-python
+      - prisma-pip-cache:/root/.cache/pip
       - $BITTENSOR_DIR:/root/.bittensor
     logging: *default-logging
 
@@ -187,5 +189,7 @@ services:
       - ./:/app
       - ./.env:/app/.env
       - prisma-binary:/root/prisma-python
+      - prisma-client:/app/database/prisma
+      - prisma-pip-cache:/root/.cache/pip
       - $HOME/.bittensor:/root/.bittensor
     logging: *default-logging
