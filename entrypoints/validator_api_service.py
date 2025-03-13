@@ -73,8 +73,7 @@ async def lifespan(app: FastAPI):
 # Periodic metagraph update function
 async def periodic_metagraph_update(app):
     """Periodically updates the metagraph in the background"""
-    # sync metagraph every 20 minutes
-    update_interval = 20 * 60
+    update_interval = 20 * 60  # Update every 20 minutes
     while True:
         try:
             await asyncio.sleep(update_interval)

@@ -102,11 +102,12 @@ async def _upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
         raise
 
 
-@analytics_router.post("/api/v1/analytics/validators/{hotkey}/tasks")
+@analytics_router.post("/api/v1/analytics/validators/{path_hotkey}/tasks")
 async def create_analytics_data(
     request: Request,
     data: AnalyticsPayload,
-    hotkey: str = Header(..., alias="X-Hotkey"),
+    path_hotkey: str,  # Path parameter
+    header_hotkey: str = Header(..., alias="X-Hotkey"),
     signature: str = Header(..., alias="X-Signature"),
     message: str = Header(..., alias="X-Message"),
 ):
@@ -121,28 +122,35 @@ async def create_analytics_data(
     @dev incoming requests must contain the Hotkey, Signature and Message headers.
     @param request: the fastAPI request object. Used to access state vars.
     @param data: the analytics data to be uploaded. Must be formatted according to AnalyticsPayload
-    @param hotkey: the hotkey of the sender
+    @param path_hotkey: the hotkey of the sender from the path
+    @param header_hotkey: the hotkey of the sender from the headers
     @param signature: the signature of the sender
     @param message: the message of the sender
     """
     start_time = time.time()
 
     try:
-        logger.info(f"Received request from hotkey: {hotkey}")
+        logger.info(f"Received request from hotkey: {header_hotkey}")
         metagraph = request.app.state.metagraph
 
-        if not verify_signature(hotkey, signature, message):
-            logger.error(f"Invalid signature for address={hotkey}")
+        # Verify that path hotkey matches header hotkey
+        if path_hotkey != header_hotkey:
+            raise HTTPException(
+                status_code=401, detail="Hotkey in path does not match hotkey in header"
+            )
+
+        if not verify_signature(header_hotkey, signature, message):
+            logger.error(f"Invalid signature for address={header_hotkey}")
             raise HTTPException(status_code=401, detail="Invalid signature")
 
-        if not verify_hotkey_in_metagraph(metagraph, hotkey):
-            logger.error(f"Hotkey {hotkey} not found in metagraph")
+        if not verify_hotkey_in_metagraph(metagraph, header_hotkey):
+            logger.error(f"Hotkey {header_hotkey} not found in metagraph")
             raise HTTPException(
                 status_code=401, detail="Hotkey not found in metagraph."
             )
 
-        if not check_stake(request.app.state.subtensor, hotkey):
-            logger.error(f"Insufficient stake for hotkey {hotkey}")
+        if not check_stake(request.app.state.subtensor, header_hotkey):
+            logger.error(f"Insufficient stake for hotkey {header_hotkey}")
             raise HTTPException(
                 status_code=401, detail="Insufficient stake for hotkey."
             )
@@ -151,11 +159,11 @@ async def create_analytics_data(
         execution_time = end_time - start_time
         logger.info(f"Auth completed in {execution_time:.4f} seconds")
 
-        await _upload_to_s3(data, hotkey, request.app.state)
+        await _upload_to_s3(data, header_hotkey, request.app.state)
 
         response = {
             "success": True,
-            "message": f"Analytics data received from {hotkey}",
+            "message": f"Analytics data received from {header_hotkey}",
         }
 
         end_time = time.time()
