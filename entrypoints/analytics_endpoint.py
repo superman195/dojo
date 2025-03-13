@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from starlette.datastructures import State
 
 from commons.utils import check_stake, verify_hotkey_in_metagraph, verify_signature
-from dojo.protocol import AnalyticsData, AnalyticsPayload
+from dojo.protocol import AnalyticsPayload
 
 analytics_router = APIRouter()
 
@@ -52,29 +52,57 @@ async def _upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
     """
     redis = state.redis
     cfg = state.api_config
-
+    ONE_DAY_SECONDS = 60 * 60 * 24  # 1 day
+    start_time = time.time()
     try:
-        # check if any tasks have been uploaded previously
-        new_tasks: list[AnalyticsData] = []
-        for task in data.tasks:
+        # Create task ID to index mapping and prepare keys for pipelining
+        task_keys = []
+        task_ids = []
+        task_id_to_task = {}
+
+        # batch retrieve task ids and redis keys for incoming tasks
+        for i, task in enumerate(data.tasks):
             val_task_id = task.validator_task_id
             key = redis._build_key(redis._anal_prefix_, redis._upload_key_, val_task_id)
-            task_exists = await redis.get(key)
-            if task_exists:
-                # if task already exists in redis then do not upload it.
-                logger.error(f"Task {val_task_id} already exists in Redis")
-                continue
-            else:
-                # upload task to cache
-                ONE_DAY_SECONDS = 60 * 60 * 24  # 1 day
-                await redis.put(key, val_task_id, ONE_DAY_SECONDS)
-                new_tasks.append(task)
+            task_keys.append(key)
+            task_ids.append(val_task_id)
+            task_id_to_task[val_task_id] = task
 
-        # convert to athena format
-        # @dev: this can be optimized by converting to athena format when we are checking for uploaded tasks.
+        # Use pipelining to retrieve existing tasks from redis
+        pipe = redis.redis.pipeline()
+        for key in task_keys:
+            pipe.get(key)
+        results = await pipe.execute()
+
+        # Determine which tasks are new
+        new_tasks = []
+        new_task_keys = []
+        new_task_ids = []
+
+        for i, result in enumerate(results):
+            if not result:  # Task doesn't exist in Redis
+                new_tasks.append(task_id_to_task[task_ids[i]])
+                new_task_keys.append(task_keys[i])
+                new_task_ids.append(task_ids[i])
+            else:
+                logger.error(f"Task {task_ids[i]} already exists in Redis")
+
+        # Use pipelining to add all new tasks to Redis at once
+        if new_tasks:
+            pipe = redis.redis.pipeline()
+            for i, key in enumerate(new_task_keys):
+                pipe.setex(key, ONE_DAY_SECONDS, new_task_ids[i])
+            await pipe.execute()
+        logger.info(
+            f"Completed Redis operations in {time.time() - start_time:.4f} seconds"
+        )
+        # Convert to athena format
+        start_time = time.time()
         data_to_upload = AnalyticsPayload(tasks=new_tasks)
         formatted_data = _save_to_athena_format(data_to_upload.model_dump())
-
+        logger.info(
+            f"Completed athena format in {time.time() - start_time:.4f} seconds"
+        )
         session = aioboto3.Session(region_name=cfg.AWS_REGION)
         async with session.resource("s3") as s3:
             bucket = await s3.Bucket(cfg.BUCKET_NAME)
@@ -87,18 +115,16 @@ async def _upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
 
     except Exception as e:
         logger.error(f"Error uploading to s3: {str(e)}")
-        # Remove new tasks from redis if AWS upload is unsuccessful
-        for task in new_tasks:
-            val_task_id = task.validator_task_id
-            key = redis._build_key(redis._anal_prefix_, redis._upload_key_, val_task_id)
+        # Use pipelining to remove new tasks from redis if AWS upload is unsuccessful
+        if new_task_keys:
             try:
-                await redis.delete(key)
+                pipe = redis.redis.pipeline()
+                for key in new_task_keys:
+                    pipe.delete(key)
+                await pipe.execute()
+                logger.trace("Removed new tasks from analytics redis cache")
             except Exception as redis_err:
-                logger.error(
-                    f"Error removing task {val_task_id} from Redis: {redis_err}"
-                )
-        logger.trace("Removed new tasks from analytics redis cache")
-
+                logger.error(f"Error removing tasks from Redis: {redis_err}")
         raise
 
 
