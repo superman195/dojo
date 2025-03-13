@@ -53,10 +53,15 @@ async def _upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
     redis = state.redis
     cfg = state.api_config
     ONE_DAY_SECONDS = 60 * 60 * 24  # 1 day
-    start_time = time.time()
     key_prefix = "analytics:uploaded:"
+
     try:
+        if not data.tasks:
+            raise ValueError("No analytics data to upload to s3")
+
+        start_time = time.time()
         await redis.connect()
+        logger.info(f"Connected to Redis in {time.time() - start_time:.4f} seconds")
 
         # Create task ID to index mapping and prepare keys for pipelining
         task_keys = []
