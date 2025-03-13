@@ -228,3 +228,14 @@ model HFLState {
     @@unique([original_task_id, current_task_id])
     @@map("hfl_state")
 }
+
+// relational table to decouple things needed for HFL from completion table
+model HFLCompletionRelation {
+    id               String   @id @default(uuid())
+    tf_completion_id String
+    sf_completion_id String
+    created_at       DateTime @default(now())
+    updated_at       DateTime @updatedAt
+
+    @@map("hfl_completion_relation")
+}
