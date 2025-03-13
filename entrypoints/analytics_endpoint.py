@@ -5,22 +5,18 @@ is hosted by validator_api_service.py
 """
 
 import json
+import time
 import traceback
 from datetime import datetime
 
 import aioboto3
-import bittensor as bt
 import uvicorn
 from bittensor.utils.btlogging import logging as logger
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.datastructures import State
 
-from commons.utils import (
-    check_stake,
-    verify_hotkey_in_metagraph,
-    verify_signature,
-)
+from commons.utils import check_stake, verify_hotkey_in_metagraph, verify_signature
 from dojo.protocol import AnalyticsData, AnalyticsPayload
 
 analytics_router = APIRouter()
@@ -106,10 +102,9 @@ async def _upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
         raise
 
 
-@analytics_router.post("/api/v1/analytics/validators/{validator_hotkey}/tasks")
+@analytics_router.post("/api/v1/analytics/validators/{hotkey}/tasks")
 async def create_analytics_data(
     request: Request,
-    validator_hotkey: str,
     data: AnalyticsPayload,
     hotkey: str = Header(..., alias="X-Hotkey"),
     signature: str = Header(..., alias="X-Signature"),
@@ -125,19 +120,17 @@ async def create_analytics_data(
 
     @dev incoming requests must contain the Hotkey, Signature and Message headers.
     @param request: the fastAPI request object. Used to access state vars.
-    @param validator_hotkey: the hotkey of the validator
     @param data: the analytics data to be uploaded. Must be formatted according to AnalyticsPayload
     @param hotkey: the hotkey of the sender
     @param signature: the signature of the sender
     @param message: the message of the sender
     """
+    start_time = time.time()
 
     try:
         logger.info(f"Received request from hotkey: {hotkey}")
-        metagraph: bt.metagraph = request.app.state.subtensor.metagraph(
-            request.app.state.bt_cfg.netuid
-        )
-        metagraph.sync(block=None, lite=True)
+        metagraph = request.app.state.metagraph
+
         if not verify_signature(hotkey, signature, message):
             logger.error(f"Invalid signature for address={hotkey}")
             raise HTTPException(status_code=401, detail="Invalid signature")
@@ -154,12 +147,20 @@ async def create_analytics_data(
                 status_code=401, detail="Insufficient stake for hotkey."
             )
 
+        end_time = time.time()
+        execution_time = end_time - start_time
+        logger.info(f"Auth completed in {execution_time:.4f} seconds")
+
         await _upload_to_s3(data, hotkey, request.app.state)
 
         response = {
             "success": True,
             "message": f"Analytics data received from {hotkey}",
         }
+
+        end_time = time.time()
+        execution_time = end_time - start_time
+        logger.info(f"Request completed in {execution_time:.4f} seconds")
 
         return JSONResponse(content=response, status_code=200)
 

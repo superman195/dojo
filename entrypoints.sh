@@ -101,7 +101,8 @@ if [ "$1" = 'validator-api-service' ]; then
     echo "MAX_CHUNK_SIZE_MB: ${MAX_CHUNK_SIZE_MB}"
     python entrypoints/validator_api_service.py \
     --netuid 52 \
-    --subtensor.network finney
+    --subtensor.network ${SUBTENSOR_NETWORK} \
+    --subtensor.chain_endpoint ${SUBTENSOR_ENDPOINT}
 fi
 
 

@@ -6,6 +6,7 @@ validator_api_service.py
 import asyncio
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import List
 from urllib.parse import urlparse
 
@@ -26,15 +27,13 @@ from commons.utils import (
     verify_hotkey_in_metagraph,
     verify_signature,
 )
-
-# from dotenv import load_dotenv
-# load_dotenv()
 from dojo.utils.config import source_dotenv
 from entrypoints.analytics_endpoint import analytics_router
 
 source_dotenv()
 settings: ValidatorAPISettings = get_settings()
 cfg: bt.config = ObjectManager.get_config()
+bt.logging.set_debug(True)
 
 
 @asynccontextmanager
@@ -43,11 +42,53 @@ async def lifespan(app: FastAPI):
     app.state.api_config = settings.aws
     app.state.redis = RedisCache(settings.redis)
     app.state.subtensor = bt.subtensor(config=app.state.bt_cfg)
+
+    # Initialize metagraph once during startup
+    logger.info("Initializing metagraph...")
+    app.state.metagraph = app.state.subtensor.metagraph(app.state.bt_cfg.netuid)
+    app.state.metagraph.sync(block=None, lite=True)
+    logger.info("Metagraph initialized successfully")
+
+    # Create task for periodic metagraph updates
+    app.state.metagraph_update_task = asyncio.create_task(
+        periodic_metagraph_update(app)
+    )
+
     # print(f"@@@ bt cfg {app.state.bt_cfg}")
     # print(f"@@@@ api cfg {settings}")
     yield
+
+    # Cancel the metagraph update task
+    if hasattr(app.state, "metagraph_update_task"):
+        app.state.metagraph_update_task.cancel()
+        try:
+            await app.state.metagraph_update_task
+        except asyncio.CancelledError:
+            pass
+
     await app.state.redis.close()
     app.state.subtensor.close()
+
+
+# Periodic metagraph update function
+async def periodic_metagraph_update(app):
+    """Periodically updates the metagraph in the background"""
+    update_interval = 20 * 60  # Update every 20 minutes
+    while True:
+        try:
+            await asyncio.sleep(update_interval)
+            app.state.last_metagraph_update = datetime.now()
+            logger.info("Updating metagraph...")
+            app.state.metagraph = app.state.subtensor.metagraph(app.state.bt_cfg.netuid)
+            app.state.metagraph.sync(block=None, lite=True)
+            app.state.last_metagraph_update = datetime.now()
+            logger.info("Metagraph updated successfully")
+        # If cancelled then break. For any other exception log and continue trying.
+        except asyncio.CancelledError:
+            logger.info("Metagraph update task cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Error updating metagraph: {e}")
 
 
 app = FastAPI(title="Validator API Service", lifespan=lifespan)
@@ -73,8 +114,8 @@ async def upload_dataset(
     api_config = app.state.api_config
 
     try:
-        metagraph = app.state.subtensor.metagraph(app.state.bt_cfg.netuid)
-        metagraph.sync(block=None, lite=True)
+        metagraph = app.state.metagraph
+
         if not signature.startswith("0x"):
             raise HTTPException(
                 status_code=401, detail="Invalid signature format, must be hex."
