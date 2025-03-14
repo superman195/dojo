@@ -45,7 +45,7 @@ class RedisCache:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             redis_url = build_redis_url(config)
-            cls._instance.redis = aioredis.from_url(url=redis_url, ssl=True)
+            cls._instance.redis = aioredis.from_url(url=redis_url)
 
         return cls._instance
 
