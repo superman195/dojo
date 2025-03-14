@@ -172,6 +172,10 @@ async def _post_task_data(payload, hotkey, signature, message):
             # timeout=TIMEOUT,
             timeout=300,
         )
+
+        if not response:
+            raise Exception("No response from analytics API")
+
         if response.status_code == 200:
             logger.success(f"Successfully uploaded analytics data for hotkey: {hotkey}")
             return response
