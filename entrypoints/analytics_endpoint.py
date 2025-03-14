@@ -52,7 +52,7 @@ async def _upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
     """
     redis = state.redis
     cfg = state.api_config
-
+    start_time = time.time()
     try:
         # check if any tasks have been uploaded previously
         new_tasks: list[AnalyticsData] = []
@@ -69,12 +69,19 @@ async def _upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
                 ONE_DAY_SECONDS = 60 * 60 * 24  # 1 day
                 await redis.put(key, val_task_id, ONE_DAY_SECONDS)
                 new_tasks.append(task)
-
+        logger.info(
+            f"redis operations completed in {time.time() - start_time:.4f} seconds"
+        )
         # convert to athena format
         # @dev: this can be optimized by converting to athena format when we are checking for uploaded tasks.
         data_to_upload = AnalyticsPayload(tasks=new_tasks)
-        formatted_data = _save_to_athena_format(data_to_upload.model_dump())
+        start_time = time.time()
 
+        formatted_data = _save_to_athena_format(data_to_upload.model_dump())
+        logger.info(
+            f"athena format completed in {time.time() - start_time:.4f} seconds"
+        )
+        start_time = time.time()
         session = aioboto3.Session(region_name=cfg.AWS_REGION)
         async with session.resource("s3") as s3:
             bucket = await s3.Bucket(cfg.BUCKET_NAME)
@@ -84,7 +91,7 @@ async def _upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
                 Key=filename,
                 Body=formatted_data,
             )
-
+        logger.info(f"s3 upload completed in {time.time() - start_time:.4f} seconds")
     except Exception as e:
         logger.error(f"Error uploading to s3: {str(e)}")
         # Remove new tasks from redis if AWS upload is unsuccessful
