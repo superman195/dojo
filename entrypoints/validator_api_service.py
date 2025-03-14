@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize metagraph once during startup
     logger.info("Initializing metagraph...")
-    app.state.metagraph = app.state.subtensor.metagraph(app.state.bt_cfg.netuid)
+    app.state.metagraph = app.state.subtensor.metagraph(app.state.bt_cfg.netuid)  # type: ignore
     app.state.metagraph.sync(block=None, lite=True)
     logger.info("Metagraph initialized successfully")
 
@@ -53,9 +53,6 @@ async def lifespan(app: FastAPI):
     app.state.metagraph_update_task = asyncio.create_task(
         periodic_metagraph_update(app)
     )
-
-    # print(f"@@@ bt cfg {app.state.bt_cfg}")
-    # print(f"@@@@ api cfg {settings}")
     yield
 
     # Cancel the metagraph update task
@@ -83,7 +80,6 @@ async def periodic_metagraph_update(app):
             app.state.metagraph.sync(block=None, lite=True)
             app.state.last_metagraph_update = datetime.now()
             logger.info("Metagraph updated successfully")
-        # If cancelled then break. For any other exception log and continue trying.
         except asyncio.CancelledError:
             logger.info("Metagraph update task cancelled")
             break

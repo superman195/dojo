@@ -50,54 +50,39 @@ async def _upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
     @param hotkey: the hotkey of the sender
     @param state: state var passed from API server, validator_api_service.py
     """
-    redis = state.redis
+    rc = state.redis
     cfg = state.api_config
 
     if not data.tasks:
         logger.error("No analytics data to upload")
         return
 
-    start_time = time.time()
     logger.info("Connecting to Redis...")
-    await redis.connect()
-    # await redis.redis.connect()
-    logger.info(f"Redis ping:{await redis.redis.ping()}")
-    logger.info(f"Connected to Redis in {time.time() - start_time:.4f} seconds")
-    start_time = time.time()
+    await rc.connect()
     try:
         # check if any tasks have been uploaded previously
         new_tasks: list[AnalyticsData] = []
-        prefix = "analytics:uploaded:"
 
         for task in data.tasks:
             val_task_id = task.validator_task_id
-            # key = redis._build_key(redis._anal_prefix_, redis._upload_key_, val_task_id)
-            key = f"{prefix}{val_task_id}"
-            logger.info(f"Checking if task {val_task_id} exists in Redis")
-            task_exists = await redis.redis.get(key)
+            key = rc._build_key(rc._anal_prefix_, rc._upload_key_, val_task_id)
+
+            # if task already exists in redis then do not upload it.
+            task_exists = await rc.redis.get(key)
             if task_exists:
-                # if task already exists in redis then do not upload it.
                 logger.error(f"Task {val_task_id} already exists in Redis")
                 continue
+            # cache new tasks
             else:
-                # upload task to cache
-                logger.info(f"Uploading task {val_task_id} to Redis")
                 ONE_DAY_SECONDS = 60 * 60 * 24  # 1 day
-                await redis.redis.set(key, val_task_id, ONE_DAY_SECONDS)
+                await rc.redis.set(key, val_task_id, ONE_DAY_SECONDS)
                 new_tasks.append(task)
-        logger.info(
-            f"redis operations completed in {time.time() - start_time:.4f} seconds"
-        )
+
         # convert to athena format
         # @dev: this can be optimized by converting to athena format when we are checking for uploaded tasks.
         data_to_upload = AnalyticsPayload(tasks=new_tasks)
-        start_time = time.time()
-
         formatted_data = _save_to_athena_format(data_to_upload.model_dump())
-        logger.info(
-            f"athena format completed in {time.time() - start_time:.4f} seconds"
-        )
-        start_time = time.time()
+
         session = aioboto3.Session(region_name=cfg.AWS_REGION)
         async with session.resource("s3") as s3:
             bucket = await s3.Bucket(cfg.BUCKET_NAME)
@@ -107,15 +92,14 @@ async def _upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
                 Key=filename,
                 Body=formatted_data,
             )
-        logger.info(f"s3 upload completed in {time.time() - start_time:.4f} seconds")
     except Exception as e:
-        logger.info(f"Error uploading to s3: {str(e)}")
         # Remove new tasks from redis if AWS upload is unsuccessful
+        logger.info(f"Error uploading to s3: {str(e)}")
         for task in new_tasks:
             val_task_id = task.validator_task_id
-            key = redis._build_key(redis._anal_prefix_, redis._upload_key_, val_task_id)
+            key = rc._build_key(rc._anal_prefix_, rc._upload_key_, val_task_id)
             try:
-                await redis.delete(key)
+                await rc.delete(key)
             except Exception as redis_err:
                 logger.error(
                     f"Error removing task {val_task_id} from Redis: {redis_err}"

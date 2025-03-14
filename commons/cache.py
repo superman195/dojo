@@ -11,6 +11,7 @@ from commons.api_settings import RedisSettings
 
 
 def build_redis_url(config: RedisSettings | None = None) -> str:
+    """uses redisss for ssl connection; required for production analytics API"""
     if config is None:
         host = os.getenv("REDIS_HOST")
         port = int(os.getenv("REDIS_PORT", 6379))

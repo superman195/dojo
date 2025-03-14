@@ -154,22 +154,17 @@ async def _post_task_data(payload, hotkey, signature, message):
     VALIDATOR_API_BASE_URL = os.getenv("VALIDATOR_API_BASE_URL")
     if VALIDATOR_API_BASE_URL is None:
         raise ValueError("VALIDATOR_API_BASE_URL must be set")
-    start_time = datetime.now()
     try:
         logger.debug("POST-ing analytics data to validator API")
-        payload_json = payload.model_dump(mode="json")
-        payload_bytes = json.dumps(payload_json).encode("utf-8")
-        size_bytes = len(payload_bytes)
         response = await _http_client.post(
             url=f"{VALIDATOR_API_BASE_URL}/api/v1/analytics/validators/{hotkey}/tasks",
-            json=payload_json,
+            json=payload.model_dump(mode="json"),
             headers={
                 "X-Hotkey": hotkey,
                 "X-Signature": signature,
                 "X-Message": message,
                 "Content-Type": "application/json",
             },
-            # timeout=TIMEOUT,
             timeout=300,
         )
 
@@ -180,37 +175,13 @@ async def _post_task_data(payload, hotkey, signature, message):
             logger.success(f"Successfully uploaded analytics data for hotkey: {hotkey}")
             return response
         else:
-            time_taken = {datetime.now() - start_time}
-            logger.error(
-                f"_post_task_data() response error: in {time_taken} seconds size {size_bytes}"
-            )
+            logger.error(f"_post_task_data() response error {response.status_code}")
             logger.error(traceback.format_exc())
-            logger.error(
-                f"@@@ {VALIDATOR_API_BASE_URL}/api/v1/analytics/validators/{hotkey}/tasks"
-            )
-            logger.error(f" @@ {response.text}")
-            logger.error(f" @@ {response.status_code}")
-            logger.error(f" @@ {response.headers}")
-            logger.error(f" @@ {response.content}")
 
             return response
     except Exception as e:
-        time_taken = {datetime.now() - start_time}
-        logger.error(f"Error when _post_task_data(): {str(e)}", exc_info=True)
-        logger.error(
-            f"Error when _post_task_data(): {response} in {time_taken} seconds size {size_bytes}",
-            exc_info=True,
-        )
+        logger.error(f"Error when _post_task_data(): {str(e)}")
         logger.error(traceback.format_exc())
-        logger.error(
-            f"@@@ {VALIDATOR_API_BASE_URL}/api/v1/analytics/validators/{hotkey}/tasks"
-        )
-
-        logger.error(f" @@ {response.text}")
-        logger.error(f" @@ {response.status_code}")
-        logger.error(f" @@ {response.headers}")
-        logger.error(f" @@ {response.content}")
-        # remove me
         raise
 
 
