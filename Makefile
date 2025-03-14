@@ -72,10 +72,10 @@ dojo-cli:
 	docker compose -f docker-compose.miner.yaml run --rm dojo-cli
 
 extract-dataset:
-	docker compose -f docker-compose.validator.yaml run --rm --remove-orphans extract-dataset
+	docker compose -f docker-compose.validator.yaml run --remove-orphans extract-dataset
 
 fill-score-column:
-	docker compose -f docker-compose.validator.yaml run --rm --remove-orphans fill-score-column
+	docker compose -f docker-compose.validator.yaml run --remove-orphans fill-score-column
 
 migration:
 	docker compose -f docker-compose.validator.yaml run --rm migration
