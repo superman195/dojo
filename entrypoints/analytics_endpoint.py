@@ -60,6 +60,8 @@ async def _upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
     start_time = time.time()
     logger.info("Connecting to Redis...")
     await redis.connect()
+    # await redis.redis.connect()
+    logger.info(f"Redis ping:{await redis.redis.ping()}")
     logger.info(f"Connected to Redis in {time.time() - start_time:.4f} seconds")
     start_time = time.time()
     try:
@@ -107,7 +109,7 @@ async def _upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
             )
         logger.info(f"s3 upload completed in {time.time() - start_time:.4f} seconds")
     except Exception as e:
-        logger.error(f"Error uploading to s3: {str(e)}")
+        logger.info(f"Error uploading to s3: {str(e)}")
         # Remove new tasks from redis if AWS upload is unsuccessful
         for task in new_tasks:
             val_task_id = task.validator_task_id
