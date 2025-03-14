@@ -17,22 +17,22 @@ def build_redis_url(config: RedisSettings | None = None) -> str:
         username = os.getenv("REDIS_USERNAME")
         password = os.getenv("REDIS_PASSWORD")
         if username and password:
-            return f"redis://{username}:{password}@{host}:{port}"
+            return f"rediss://{username}:{password}@{host}:{port}"
         elif password:
-            return f"redis://:{password}@{host}:{port}"
+            return f"rediss://:{password}@{host}:{port}"
         else:
-            return f"redis://{host}:{port}"
+            return f"rediss://{host}:{port}"
     else:
         host = config.REDIS_HOST
         port = config.REDIS_PORT
         username = config.REDIS_USERNAME
         password = config.REDIS_PASSWORD
         if username and password:
-            return f"redis://{username}:{password}@{host}:{port}"
+            return f"rediss://{username}:{password}@{host}:{port}"
         elif password:
-            return f"redis://:{password}@{host}:{port}"
+            return f"rediss://:{password}@{host}:{port}"
         else:
-            return f"redis://{host}:{port}"
+            return f"rediss://{host}:{port}"
 
 
 class RedisCache:
@@ -45,7 +45,8 @@ class RedisCache:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             redis_url = build_redis_url(config)
-            cls._instance.redis = aioredis.from_url(url=redis_url)
+            cls._instance.redis = aioredis.from_url(url=redis_url, ssl=True)
+
         return cls._instance
 
     def _build_key(self, prefix: str, *parts: str) -> str:
