@@ -55,7 +55,7 @@ async def lifespan(app: FastAPI):
     )
 
     # print(f"@@@ bt cfg {app.state.bt_cfg}")
-    # print(f"@@@@ api cfg {settings}")
+    print(f"@@@@ api cfg {settings}")  # remove me
     yield
 
     # Cancel the metagraph update task

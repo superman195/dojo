@@ -56,6 +56,7 @@ class RedisCache:
     async def connect(self):
         if self.redis is None:
             redis_url = build_redis_url()
+            print(f"@@@ Redis URL: {redis_url}")  # remove me
             self.redis = await aioredis.from_url(redis_url)
 
     async def put(self, key: str, value, expire_time: int = 60 * 60 * 24):
