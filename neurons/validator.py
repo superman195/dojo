@@ -702,9 +702,9 @@ class Validator:
     async def update_score_and_send_feedback(self):
         while True:
             # delete me
-            await asyncio.sleep(65)
+            await asyncio.sleep(90)
             timestamp = datetime.now(timezone.utc)
-            twelve_ago = timestamp - timedelta(hours=6)
+            twelve_ago = timestamp - timedelta(hours=4)
             self.last_anal_upload_time = await run_analytics_upload(
                 self._scores_alock,
                 twelve_ago,
