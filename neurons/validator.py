@@ -723,12 +723,6 @@ class Validator:
                     f"Updating with expire_from: {expire_from} and expire_to: {expire_to}"
                 )
 
-                await run_analytics_upload(
-                    self._scores_alock,
-                    self.last_anal_upload_time,
-                    datetime.now(timezone.utc),
-                )
-
                 # Update task results before scoring
                 await self.update_task_results(
                     expire_from=expire_from,
