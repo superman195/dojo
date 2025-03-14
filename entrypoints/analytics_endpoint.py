@@ -52,22 +52,36 @@ async def _upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
     """
     redis = state.redis
     cfg = state.api_config
+
+    if not data.tasks:
+        logger.error("No analytics data to upload")
+        return
+
+    start_time = time.time()
+    logger.info("Connecting to Redis...")
+    await redis.connect()
+    logger.info(f"Connected to Redis in {time.time() - start_time:.4f} seconds")
     start_time = time.time()
     try:
         # check if any tasks have been uploaded previously
         new_tasks: list[AnalyticsData] = []
+        prefix = "analytics:uploaded:"
+
         for task in data.tasks:
             val_task_id = task.validator_task_id
-            key = redis._build_key(redis._anal_prefix_, redis._upload_key_, val_task_id)
-            task_exists = await redis.get(key)
+            # key = redis._build_key(redis._anal_prefix_, redis._upload_key_, val_task_id)
+            key = f"{prefix}{val_task_id}"
+            logger.info(f"Checking if task {val_task_id} exists in Redis")
+            task_exists = await redis.redis.get(key)
             if task_exists:
                 # if task already exists in redis then do not upload it.
                 logger.error(f"Task {val_task_id} already exists in Redis")
                 continue
             else:
                 # upload task to cache
+                logger.info(f"Uploading task {val_task_id} to Redis")
                 ONE_DAY_SECONDS = 60 * 60 * 24  # 1 day
-                await redis.put(key, val_task_id, ONE_DAY_SECONDS)
+                await redis.redis.set(key, val_task_id, ONE_DAY_SECONDS)
                 new_tasks.append(task)
         logger.info(
             f"redis operations completed in {time.time() - start_time:.4f} seconds"
