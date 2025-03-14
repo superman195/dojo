@@ -1365,6 +1365,7 @@ class Validator:
             return task.validator_task.task_id, {}
 
         hotkey_to_scores = {}
+        # NOTE: @scoring, see here for unpacking
         try:
             updated_miner_responses = Scoring.calculate_score(
                 validator_task=task.validator_task,

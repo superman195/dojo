@@ -2,15 +2,33 @@ from bittensor.utils.btlogging import logging as logger
 
 from commons.exceptions import HFLStateNotContinuous
 from commons.orm import ORM
-from database.mappers import _parse_hfl_events
+from database.client import prisma
+from database.mappers import (
+    _parse_hfl_events,
+    map_miner_response_to_task_synapse_object,
+    map_validator_task_to_task_synapse_object,
+)
 from database.prisma.enums import HFLStatusEnum
-from database.prisma.models import HFLState, ValidatorTask
+from database.prisma.models import Completion, HFLState, ValidatorTask
 
 
-def calc_sf_score(validator_task):
+def calc_sf_score(validator_task: ValidatorTask):
+    from .scoring import Scoring
+
     # ensure completion ordering
     validator_task = ensure_miner_response_order(validator_task)
-    # TODO: score sf_task
+    miner_synapses = Scoring.calculate_score(
+        validator_task=map_validator_task_to_task_synapse_object(validator_task),
+        miner_responses=[
+            map_miner_response_to_task_synapse_object(
+                miner_response=mr, validator_task=validator_task
+            )
+            for mr in validator_task.miner_responses or []
+        ],
+    )
+    # TODO: properly unpack, see `validator._score_task`
+    hotkey_to_sf_score = {mr.miner_hotkey: mr.score for mr in miner_synapses}
+    return hotkey_to_sf_score
 
 
 async def score_hfl_tasks():
@@ -20,7 +38,7 @@ async def score_hfl_tasks():
         # NOTE: we can only determine the score for a TF_TASK after SF_TASK is
         # completed by comparing the increment/decrement in the ratings from miners
         hotkey_to_tf_score = await calc_tf_score(task)
-        hotkey_to_sf_score = await calc_sf_score(task)
+        hotkey_to_sf_score = calc_sf_score(task)
 
 
 def validate_task(task, hfl_state):
@@ -29,20 +47,28 @@ def validate_task(task, hfl_state):
     if not task.completions:
         raise Exception("Task completions not found")
 
+    sf_task_id = task.id
+    tf_task_id = task.previous_task_id
+    if not tf_task_id:
+        raise ValueError(
+            f"Previous task id should be filled for SF_TASK, task id: {sf_task_id}"
+        )
 
-async def calc_tf_score(task: ValidatorTask):
+
+async def calc_tf_score(sf_task: ValidatorTask):
     """Use a completed SF_TASK to determine the TF_TASK score"""
-    hfl_state = await ORM.get_hfl_state_by_current_task_id(task.id)
+    sf_task_id = sf_task.id
+    hfl_state = await ORM.get_hfl_state_by_current_task_id(sf_task_id)
     try:
-        validate_task(task, hfl_state)
+        validate_task(sf_task, hfl_state)
     except Exception as e:
         logger.error(f"Error validating task: {e}")
         return
 
     ### CALC CHANGE IN SCORES
-    miner_scores = await ORM.get_scores_for_completed_sf(task)
+    miner_scores = await ORM.get_scores_for_completed_sf(sf_task)
     logger.info(f"Got {miner_scores}")
-    parent_task = await ORM.get_original_or_parent_sf_task(task.id)
+    parent_task = await ORM.get_original_or_parent_sf_task(sf_task_id)
     if parent_task is None:
         raise ValueError("Parent task not found")
 
@@ -50,21 +76,19 @@ async def calc_tf_score(task: ValidatorTask):
 
     # FIXME: currently no way to link the individual SF_TASK's completion to
     # the previous task's completion
-    parent_task_scores = await _calc_avg_score_by_completion_id(
-        parent_task, completion_order
-    )
+    parent_task_scores = await _calc_avg_score_by_completion_id(parent_task)
     # NOTE: this is not for sf_scoring itself, but for comparing the increments
-    sf_task_scores = await _calc_avg_score_by_completion_id(task, completion_order)
+    sf_task_scores = await _calc_avg_score_by_completion_id(sf_task)
 
     # calculate differences per completion id
-    cid_to_scores_dt: dict[str, float] = {}
+    sf_cid_to_scores_dt: dict[str, float] = {}
 
     # TODO: select only the cid that was selected from original task / SF_1
-    completion_id = "dummy"
-    for completion_id, sf_score in sf_task_scores.items():
+    sf_cid = "dummy"
+    for sf_cid, sf_score in sf_task_scores.items():
         # positive means improvement, negative means regression
-        diff = sf_score - parent_task_scores[completion_id]
-        cid_to_scores_dt[completion_id] = float(diff)
+        diff = sf_score - parent_task_scores[sf_cid]
+        sf_cid_to_scores_dt[sf_cid] = float(diff)
 
     ### CALC CHANGE IN SCORES
 
@@ -73,28 +97,73 @@ async def calc_tf_score(task: ValidatorTask):
     # figure out the TF_task that led to SF_task
     # TODO: rely on the previous_task_id ? or the events
     # tf_task_id = get_tf_task_id_for_sf_task(hfl_state, task)
-    tf_task_id = task.previous_task_id
-    if not tf_task_id:
-        # NOTE: should be data integrity error or something
-        raise ValueError(
-            f"Previous task id should be filled for SF_TASK, task id: {task.id}"
-        )
 
+    tf_task_id = sf_task.previous_task_id
     tf_task = await ORM.get_validator_task_by_id(tf_task_id)
     # find miners that responded to the tf task
-    miner_responses = await ORM.get_miner_responses_by_task_id(tf_task_id)
     #### FINDING MINER RESPONSES TO TF
 
+    sf_cid_to_tf_completion = await get_tf_to_sf_completion_mapping(tf_task, sf_task)  # type: ignore
     #### CALCULATE TF SCORES BASED ON SF
     # TODO: score miner responses for tf_task
     hotkey_to_tf_score: dict[str, float] = {}
+    miner_responses = await ORM.get_miner_responses_by_task_id(tf_task_id)
     for response in miner_responses:
         hotkey_to_tf_score[response.hotkey] = 0.0
-    # FIXME: currently no way to link the individual SF_TASK's completion to
+
     # the previous task's completion
+    # 1. for each sf task completion, get the corresponding TF completion
+    # 2. based on the tf completion, grab the task
+    # 3. for that TF task, grab the miner's hotkey
+    # 4. assign score
+    for completion in sf_task.completions:
+        # get tf completion
+        tf_completion = sf_cid_to_tf_completion.get(completion.id)
+        if not tf_completion:
+            logger.error(f"TF completion not found for SF completion {completion.id}")
+            continue
+        miner_hotkeys = [
+            mr.hotkey
+            for mr in tf_completion.validator_task_relation.miner_responses or []
+        ]
+
+        for hotkey in miner_hotkeys:
+            hotkey_to_tf_score[hotkey] += sf_cid_to_scores_dt[completion.id]
+            logger.debug(
+                f"Hotkey: {hotkey}, got TF score: {hotkey_to_tf_score[hotkey]}"
+            )
 
     #### CALCULATE TF SCORES BASED ON SF
     return hotkey_to_tf_score
+
+
+async def get_tf_to_sf_completion_mapping(
+    tf_task: ValidatorTask, sf_task: ValidatorTask
+):
+    if (sf_completion_ids := [comp.id for comp in sf_task.completions or []]) == []:
+        logger.error("No SF completions found")
+
+    # NOTE: this is based on the initial design that each TF_TASK only has 1 output (a.k.a. completion)
+    sf_cid_to_tf_completion: dict[str, Completion] = {}
+    try:
+        completion_relation = await prisma.hflcompletionrelation.find_many(
+            where={"sf_completion_id": {"in": sf_completion_ids}}
+        )
+        tf_completions = await prisma.completion.find_many(
+            where={
+                "id": {"in": [comp.tf_completion_id for comp in completion_relation]}
+            }
+        )
+        # map sf completion id to tf completion
+        for comp in tf_completions:
+            sf_cid_to_tf_completion[comp.id] = comp
+
+        return sf_cid_to_tf_completion
+    except Exception as e:
+        logger.error(f"Error getting TF to SF completion mapping: {e}")
+        pass
+
+    return {}
 
 
 def get_tf_task_id_for_sf_task(hfl_state: HFLState, task: ValidatorTask):
@@ -117,13 +186,16 @@ def get_tf_task_id_for_sf_task(hfl_state: HFLState, task: ValidatorTask):
 
 def ensure_miner_response_order(validator_task: ValidatorTask) -> ValidatorTask:
     """Ensure that the order of miner responses matches the order of completions in the task"""
+    if not validator_task.miner_responses:
+        raise ValueError("Task must have miner responses for scoring")
+
     completion_order: dict[str, int] = {
         comp.id: idx
-        for idx, comp in enumerate(task.completions)  # type: ignore
+        for idx, comp in enumerate(validator_task.completions)  # type: ignore
     }
 
-    # For each miner response, sort completions in-place based on task.completions order
-    for miner_response in task.miner_responses:
+    # For each miner response, sort completions in-place based on validator_taskgc.completions order
+    for miner_response in validator_task.miner_responses:
         # TODO: ensure proper ordering between validator completions
         if not miner_response.scores:
             raise ValueError("Miner response must have scores for scoring")
@@ -141,9 +213,7 @@ def ensure_miner_response_order(validator_task: ValidatorTask) -> ValidatorTask:
     return validator_task
 
 
-async def _calc_avg_score_by_completion_id(
-    task: ValidatorTask, completion_order: dict[str, int]
-) -> dict[str, float]:
+async def _calc_avg_score_by_completion_id(task: ValidatorTask) -> dict[str, float]:
     if not task or not task.completions:
         raise ValueError("TF task must have completions for scoring")
     if not task.miner_responses:
