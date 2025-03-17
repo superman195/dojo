@@ -47,7 +47,7 @@ async def _get_task_data(
     all_miner_hotkeys: List[str],
     expire_from: datetime,
     expire_to: datetime,
-) -> AnalyticsPayload | None:
+) -> AnalyticsPayload:
     """
     _get_task_data() is a helper function that:
     1. queries postgres for processed ValidatorTasks in a given time window.
@@ -139,7 +139,7 @@ async def _get_task_data(
         raise
 
 
-async def _post_task_data(payload, hotkey, signature, message):
+async def _post_task_data(payload, hotkey, signature, message) -> httpx.Response | None:
     """
     _post_task_data() is a helper function that:
     1. POSTs task data to analytics API
@@ -149,6 +149,7 @@ async def _post_task_data(payload, hotkey, signature, message):
     @param hotkey: the hotkey of the validator
     @param message: a message that is signed by the validator
     @param signature: the signature generated from signing the message with the validator's hotkey.
+    @returns: httpx.Response or None if no response is received.
     """
     _http_client = httpx.AsyncClient(timeout=300)
     VALIDATOR_API_BASE_URL = os.getenv("VALIDATOR_API_BASE_URL")
@@ -169,15 +170,14 @@ async def _post_task_data(payload, hotkey, signature, message):
         )
 
         if not response:
-            raise Exception("No response from analytics API")
-
+            logger.error("_post_task_data() got no response from analytics API")
+            return None
         if response.status_code == 200:
             logger.success(f"Successfully uploaded analytics data for hotkey: {hotkey}")
             return response
         else:
             logger.error(f"_post_task_data() response error {response.status_code}")
             logger.error(traceback.format_exc())
-
             return response
     except Exception as e:
         logger.error(f"Error when _post_task_data(): {str(e)}")
@@ -187,15 +187,22 @@ async def _post_task_data(payload, hotkey, signature, message):
 
 async def run_analytics_upload(
     scores_alock: asyncio.Lock, expire_from: datetime | None, expire_to: datetime
-):
+) -> datetime | None:
     """
     run_analytics_upload()
-    triggers the collection and uploading of analytics data to analytics API.
-    Is called by the validator after the completion of the scoring process.
+    driver function called by validator that triggers:
+    1. collection of analytics data from postgres
+    2. upload of analytics data to analytics API
+
+    @param scores_alock: The async lock used by scoring. Used to ensure upload occurs only after scoring is complete.
+    @param expire_from: start of time window to query for processed tasks. Should be the last successful upload time.
+    @param expire_to: end time of time window to query for processed tasks. Should be current time.
+    @returns: datetime of last successful upload
     """
     async with scores_alock:
+        last_analytics_upload_time = expire_from
         logger.debug(f"Last analytics upload time: {expire_from}")
-        # if there is no last_analytics_upload time, get tasks from 65 minutes ago.
+        # if there is no last analytics upload time, get tasks from 65 minutes ago.
         if expire_from is None:
             expire_from = datetime.now(timezone.utc) - timedelta(minutes=65)
 
@@ -208,13 +215,16 @@ async def run_analytics_upload(
         validator_hotkey = wallet.hotkey.ss58_address
 
         async with AsyncSubtensor(config=config) as subtensor:
-            subnet_metagraph = await subtensor.metagraph(config.netuid)
+            subnet_metagraph = await subtensor.metagraph(config.netuid)  # type: ignore
             root_metagraph = await subtensor.metagraph(0)
             all_miners = await _get_all_miner_hotkeys(subnet_metagraph, root_metagraph)
 
+        # 1. collect processed tasks from db
         anal_data = await _get_task_data(
             validator_hotkey, all_miners, expire_from, expire_to
         )
+
+        # 2. upload data to analytics API
         message = f"Uploading analytics data for validator hotkey: {validator_hotkey}"
         signature = wallet.hotkey.sign(message).hex()
 
@@ -229,11 +239,14 @@ async def run_analytics_upload(
                 message=message,
             )
 
-            # if upload was successful, return latest upload time.
-            if res.status_code == 200:
+            # if upload was successful, return new upload time
+            # else return last successful upload time
+            if res and res.status_code == 200:
                 return expire_to
-            else:
-                return None
+            return last_analytics_upload_time
+        except NoProcessedTasksYet:
+            logger.info("No processed tasks to upload. Skipping analytics upload.")
+            return last_analytics_upload_time
         except Exception as e:
             logger.error(f"Error when run_analytics_upload(): {e}")
             raise

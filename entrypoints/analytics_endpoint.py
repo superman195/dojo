@@ -74,7 +74,7 @@ async def _upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
                 continue
             # cache new tasks
             else:
-                ONE_DAY_SECONDS = 60 * 60 * 24  # 1 day
+                ONE_DAY_SECONDS = 60 * 60 * 24  # cached tasks to expire after 1 day
                 await rc.redis.set(key, val_task_id, ONE_DAY_SECONDS)
                 new_tasks.append(task)
 
@@ -83,6 +83,7 @@ async def _upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
         data_to_upload = AnalyticsPayload(tasks=new_tasks)
         formatted_data = _save_to_athena_format(data_to_upload.model_dump())
 
+        # attempt upload to s3
         session = aioboto3.Session(region_name=cfg.AWS_REGION)
         async with session.resource("s3") as s3:
             bucket = await s3.Bucket(cfg.BUCKET_NAME)

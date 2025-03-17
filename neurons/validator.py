@@ -756,7 +756,7 @@ class Validator:
                 await self.update_scores(hotkey_to_scores=final_hotkey_to_score)
 
                 # upload scores to analytics API after updating.
-                # record last successful upload time. If unsuccessful, last_anal_upload_time will be None.
+                # record last successful upload time.
                 self.last_anal_upload_time = await run_analytics_upload(
                     self._scores_alock, self.last_anal_upload_time, expire_to
                 )
