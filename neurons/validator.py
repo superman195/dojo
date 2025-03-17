@@ -662,11 +662,15 @@ class Validator:
                         synthetic_task,
                         ground_truth,
                         obfuscated_model_to_model,
+                        qa_metadata,
                     ) = await self._generate_synthetic_request()
 
                     if synthetic_task:
                         await self.send_request(
-                            synthetic_task, ground_truth, obfuscated_model_to_model
+                            synthetic_task,
+                            ground_truth,
+                            obfuscated_model_to_model,
+                            qa_metadata,
                         )
 
                 if self._should_exit:
@@ -830,7 +834,9 @@ class Validator:
 
     async def _generate_synthetic_request(
         self,
-    ) -> tuple[TaskSynapseObject | None, dict[str, int] | None, ObfuscatedModelMap]:
+    ) -> tuple[
+        TaskSynapseObject | None, dict[str, int] | None, ObfuscatedModelMap, dict
+    ]:
         """
         Generate a synthetic request for code generation tasks.
 
@@ -843,7 +849,7 @@ class Validator:
             data: SyntheticQA | None = await SyntheticAPI.get_qa()
             if not data or not data.responses:
                 logger.error("Invalid or empty data returned from synthetic data API")
-                return None, None, {}
+                return None, None, {}, {}
 
             # Create criteria for each completion response
             criteria: List[CriteriaType] = [
@@ -866,7 +872,8 @@ class Validator:
                 completion_responses=data.responses,
             )
 
-            return synapse, data.ground_truth, obfuscated_model_to_model
+            metadata = data.metadata
+            return synapse, data.ground_truth, obfuscated_model_to_model, metadata
         except (
             ValueError,
             aiohttp.ClientError,
@@ -883,13 +890,14 @@ class Validator:
             logger.error(f"Unexpected error during synthetic data generation: {e}")
             logger.debug(f"Traceback: {traceback.format_exc()}")
 
-        return None, None, {}
+        return None, None, {}, {}
 
     async def send_request(
         self,
         synapse: TaskSynapseObject | None = None,
         ground_truth: dict[str, int] | None = None,
         obfuscated_model_to_model: ObfuscatedModelMap = {},
+        qa_metadata: dict | None = None,
     ):
         if not synapse:
             logger.warning("No synapse provided... skipping")
@@ -974,6 +982,7 @@ class Validator:
             validator_task=synapse,
             miner_responses=valid_miner_responses,
             ground_truth=ground_truth or {},
+            qa_metadata=qa_metadata or {},
         ):
             logger.error("Failed to save dendrite response")
             return

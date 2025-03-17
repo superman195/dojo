@@ -26,6 +26,7 @@ from dojo.protocol import (
 class Metadata(BaseModel):
     git_tag: str
     commit_hash: str
+    augment_type: str
 
 
 # ---------------------------------------------------------------------------- #
@@ -33,12 +34,13 @@ class Metadata(BaseModel):
 # ---------------------------------------------------------------------------- #
 def map_task_synapse_object_to_validator_task(
     synapse: TaskSynapseObject,
+    qa_metadata: dict | None = None,
 ) -> ValidatorTaskCreateInput | None:
     """Maps a TaskSynapseObject to ValidatorTask database model input.
 
     Args:
         synapse (TaskSynapseObject): The task synapse object to map
-
+        qa_metadata (dict | None): metadata from synthetic-API QA generation.
     Returns:
         ValidatorTaskCreateInput: The database model input
     """
@@ -56,7 +58,12 @@ def map_task_synapse_object_to_validator_task(
         if synapse.ground_truth
         else []
     )
-    metadata = Metadata(git_tag=get_latest_git_tag(), commit_hash=get_commit_hash())
+    augment_type = qa_metadata["augment_type"] if qa_metadata else ""
+    metadata = Metadata(
+        git_tag=get_latest_git_tag() or "",
+        commit_hash=get_commit_hash(),
+        augment_type=augment_type,
+    )
 
     return ValidatorTaskCreateInput(
         id=synapse.task_id,

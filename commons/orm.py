@@ -434,6 +434,7 @@ class ORM:
         validator_task: TaskSynapseObject,
         miner_responses: List[TaskSynapseObject],
         ground_truth: dict[str, int],
+        metadata: dict | None = None,
     ) -> ValidatorTask | None:
         """Saves a task, which consists of both the validator's request and the miners' responses.
 

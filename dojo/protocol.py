@@ -95,6 +95,7 @@ class SyntheticQA(BaseModel):
         description="Mapping of unique identifiers to their ground truth values",
         default_factory=dict,
     )
+    metadata: dict = Field(description="Metadata of the task", default_factory=dict)
 
     @model_validator(mode="after")
     def verify_completion_ids(self):
