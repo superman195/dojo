@@ -226,6 +226,7 @@ def map_miner_response_to_task_synapse_object(
 
     Args:
         miner_response (MinerResponse): The miner response database model to map
+        validator_task (ValidatorTask): The validator task containing completions and criteria
 
     Returns:
         TaskSynapseObject: The protocol object

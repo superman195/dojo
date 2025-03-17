@@ -92,18 +92,26 @@ def configure_logging(config: bt.config):
     """
     Configures logging based on the provided configuration.
     """
-    # Configure the global logging state from the config
-    bt.logging.set_config(config)
 
-    # Apply logging configurations based on the config
-    bt.logging.on()  # Default state: INFO level
     try:
+        # Configure global logging state
+        bt.logging.set_config(config)
+        bt.logging.on()
+
         if config.logging.trace:  # pyright: ignore[reportOptionalMemberAccess]
             bt.logging.set_trace(True)
         elif config.logging.debug:  # pyright: ignore[reportOptionalMemberAccess]
             bt.logging.set_debug(True)
-    except Exception:
-        pass
+        elif config.logging.info:  # pyright: ignore[reportOptionalMemberAccess]
+            bt.logging.set_info(True)
+        else:
+            # Default to INFO level
+            bt.logging.set_info(True)
+
+    except Exception as e:
+        print(f"Failed to configure logging: {str(e)}")
+        # Fallback to INFO level
+        bt.logging.set_info(True)
 
     # Optionally enable file logging if `record_log` and `logging_dir` are provided
     if config.record_log and config.logging_dir:

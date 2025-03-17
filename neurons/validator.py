@@ -16,7 +16,6 @@ import numpy as np
 import torch
 from bittensor.utils.btlogging import logging as logger
 from bittensor.utils.weight_utils import process_weights_for_netuid
-from tenacity import RetryError
 from torch.nn import functional as F
 from websocket import create_connection
 
@@ -24,6 +23,7 @@ import dojo
 from commons.dataset.synthetic import SyntheticAPI
 from commons.exceptions import (
     EmptyScores,
+    FatalSyntheticGenerationError,
     InvalidMinerResponse,
     NoNewExpiredTasksYet,
     SetWeightsFailed,
@@ -612,10 +612,7 @@ class Validator:
                 logger.debug(f"Sending heartbeats to {len(all_miner_uids)} miners")
 
                 axons: list[bt.AxonInfo] = [
-                    self.metagraph.axons[uid]
-                    for uid in all_miner_uids
-                    if self.metagraph.axons[uid].hotkey.casefold()
-                    != self.vali_hotkey.casefold()
+                    self.metagraph.axons[uid] for uid in all_miner_uids
                 ]
 
                 # Send heartbeats in batches
@@ -684,12 +681,14 @@ class Validator:
                 # Sync metagraph and potentially set weights.
                 await self.sync()
                 await asyncio.sleep(dojo.VALIDATOR_RUN)
-
             except KeyboardInterrupt:
                 # Handle shutdown gracefully
                 await self._cleanup()
                 return
-
+            except FatalSyntheticGenerationError:
+                # if synthetic-API is unresponsive, shut down validator.
+                await self._cleanup()
+                raise
             # In case of unforeseen errors, the validator will log the error and continue operations.
             except Exception as err:
                 logger.error(f"Error during validation: {err}")
@@ -833,7 +832,7 @@ class Validator:
     async def _cleanup(self):
         """Handle cleanup operations when shutting down"""
         self.axon.stop()
-        logger.success("Validator shutdown complete")
+        logger.success("Validator axon stopped")
 
     async def _generate_synthetic_request(
         self,
@@ -874,9 +873,7 @@ class Validator:
             )
 
             return synapse, data.ground_truth, obfuscated_model_to_model
-
         except (
-            RetryError,
             ValueError,
             aiohttp.ClientError,
             SyntheticGenerationError,
@@ -884,6 +881,10 @@ class Validator:
             logger.error(
                 f"Failed to generate synthetic request: {type(e).__name__}: {str(e)}"
             )
+        except FatalSyntheticGenerationError as e:
+            # propagate FatalSyntheticGenerationError upstream to trigger validator shutdown.
+            logger.error("QA generation failed after all retry attempts")
+            raise e
         except Exception as e:
             logger.error(f"Unexpected error during synthetic data generation: {e}")
             logger.debug(f"Traceback: {traceback.format_exc()}")
@@ -911,12 +912,7 @@ class Validator:
         start = get_epoch_time()
         sel_miner_uids = await self.get_miner_uids()
 
-        axons = [
-            axon
-            for uid in sel_miner_uids
-            if (axon := self.metagraph.axons[uid]).hotkey.casefold()
-            != self.vali_hotkey.casefold()
-        ]
+        axons = [self.metagraph.axons[uid] for uid in sel_miner_uids]
 
         if not axons:
             logger.warning("🤷 No axons to query ... skipping")
