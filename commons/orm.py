@@ -26,7 +26,6 @@ from database.prisma.errors import PrismaError
 from database.prisma.models import (
     GroundTruth,
     HFLState,
-    MinerResponse,
     MinerScore,
     ValidatorTask,
 )
@@ -815,7 +814,9 @@ class ORM:
         return None
 
     @staticmethod
-    async def get_scores_for_completed_sf(sf_task: ValidatorTask) -> list[MinerScore]:
+    async def get_miner_scores_for_completed_sf(
+        sf_task: ValidatorTask,
+    ) -> list[MinerScore]:
         # Get all related data in a single query using nested includes
         miner_responses = await prisma.minerresponse.find_many(
             where=MinerResponseWhereInput(
@@ -910,17 +911,6 @@ class ORM:
         except Exception as e:
             logger.error(f"Failed to get validator task with ID {task_id}: {e}")
         return None
-
-    @staticmethod
-    async def get_miner_responses_by_task_id(task_id: str) -> list[MinerResponse]:
-        try:
-            miner_responses = await prisma.minerresponse.find_many(
-                where={"validator_task_id": task_id}
-            )
-            return miner_responses
-        except Exception as e:
-            logger.error(f"Failed to get miner responses for task {task_id}: {e}")
-        return []
 
     @staticmethod
     async def get_task_by_id(task_id: str) -> ValidatorTask | None:
