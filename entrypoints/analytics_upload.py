@@ -22,8 +22,10 @@ from commons.objects import ObjectManager
 from commons.orm import ORM
 from commons.utils import aget_effective_stake, datetime_to_iso8601_str
 from database.client import connect_db
-from dojo import VALIDATOR_MIN_STAKE
+from dojo import ANALYTICS_UPLOAD, VALIDATOR_MIN_STAKE
 from dojo.protocol import AnalyticsData, AnalyticsPayload
+
+VALIDATOR_API_BASE_URL = os.getenv("VALIDATOR_API_BASE_URL")
 
 
 async def _get_all_miner_hotkeys(
@@ -152,9 +154,6 @@ async def _post_task_data(payload, hotkey, signature, message) -> httpx.Response
     @returns: httpx.Response or None if no response is received.
     """
     _http_client = httpx.AsyncClient(timeout=300)
-    VALIDATOR_API_BASE_URL = os.getenv("VALIDATOR_API_BASE_URL")
-    if VALIDATOR_API_BASE_URL is None:
-        raise ValueError("VALIDATOR_API_BASE_URL must be set")
     try:
         logger.debug("POST-ing analytics data to validator API")
         response = await _http_client.post(
@@ -204,7 +203,9 @@ async def run_analytics_upload(
         logger.debug(f"Last analytics upload time: {expire_from}")
         # if there is no last analytics upload time, get tasks from 65 minutes ago.
         if expire_from is None:
-            expire_from = datetime.now(timezone.utc) - timedelta(minutes=65)
+            expire_from = datetime.now(timezone.utc) - timedelta(
+                seconds=ANALYTICS_UPLOAD
+            )
 
         logger.info(
             f"Uploading analytics data for processed tasks between {expire_from} and {expire_to}"
@@ -253,31 +254,31 @@ async def run_analytics_upload(
 
 
 # # Main function for testing. Remove / Comment in prod.
-if __name__ == "__main__":
-    import asyncio
+# if __name__ == "__main__":
+#     import asyncio
 
-    async def main():
-        # # for testing
-        # from datetime import datetime, timedelta, timezone
+# async def main():
+# # for testing
+# from datetime import datetime, timedelta, timezone
 
-        # from commons.utils import datetime_as_utc
+# from commons.utils import datetime_as_utc
 
-        # from_14_days = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(days=14)
-        # # from_24_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
-        # #     hours=24
-        # # )
-        # # from_1_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(hours=1)
-        # to_now = datetime_as_utc(datetime.now(timezone.utc))
-        # res = await run_analytics_upload(asyncio.Lock(), from_14_days, to_now)
-        # print(f"Response: {res}")
+# from_14_days = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(days=14)
+# # from_24_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
+# #     hours=24
+# # )
+# # from_1_hours = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(hours=1)
+# to_now = datetime_as_utc(datetime.now(timezone.utc))
+# res = await run_analytics_upload(asyncio.Lock(), from_14_days, to_now)
+# print(f"Response: {res}")
 
-        payload = AnalyticsPayload(tasks=[])
-        hotkey = "test_hk"
-        signature = "0xtest"
-        message = "test_msg"
-        res = await _post_task_data(
-            payload=payload, hotkey=hotkey, signature=signature, message=message
-        )
-        print(f"Response: {res}")
+# payload = AnalyticsPayload(tasks=[])
+# hotkey = "test_hk"
+# signature = "0xtest"
+# message = "test_msg"
+# res = await _post_task_data(
+#     payload=payload, hotkey=hotkey, signature=signature, message=message
+# )
+# print(f"Response: {res}")
 
-    asyncio.run(main())
+# asyncio.run(main())

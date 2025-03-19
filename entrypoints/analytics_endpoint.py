@@ -20,6 +20,7 @@ from commons.utils import check_stake, verify_hotkey_in_metagraph, verify_signat
 from dojo.protocol import AnalyticsData, AnalyticsPayload
 
 analytics_router = APIRouter()
+ONE_DAY_SECONDS = 60 * 60 * 24  # cached tasks to expire after 1 day
 
 
 def _save_to_athena_format(data: dict):
@@ -74,7 +75,6 @@ async def _upload_to_s3(data: AnalyticsPayload, hotkey: str, state: State):
                 continue
             # cache new tasks
             else:
-                ONE_DAY_SECONDS = 60 * 60 * 24  # cached tasks to expire after 1 day
                 await rc.redis.set(key, val_task_id, ONE_DAY_SECONDS)
                 new_tasks.append(task)
 
@@ -195,8 +195,6 @@ async def create_analytics_data(
 
 
 if __name__ == "__main__":
-    # if "--test" in sys.argv:
-    #     asyncio.run(_test_s3_upload())
     uvicorn.run(
         "analytics_endpoint:analytics_router", host="0.0.0.0", port=8000, reload=True
     )
