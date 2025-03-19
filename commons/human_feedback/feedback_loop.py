@@ -9,7 +9,7 @@ from bittensor.utils.btlogging import logging as logger
 import dojo
 from commons.orm import ORM
 from commons.utils import datetime_as_utc, get_new_uuid, set_expire_time
-from database.prisma.models import MinerScore
+from database.prisma.models import MinerResponse, MinerScore
 from database.prisma.types import MinerScoreWhereInput
 from dojo.protocol import (
     CriteriaType,
@@ -274,11 +274,16 @@ class FeedbackLoop:
             logger.error(f"Error generating text criteria task: {e}")
             return None
 
-    async def update_text_feedback_results(self, validator: Validator) -> None:
+    async def update_text_feedback_results(
+        self, validator: Validator
+    ) -> dict[str, list[MinerResponse]]:
         """
         Updates task results for TEXT_TO_COMPLETION tasks that haven't been processed yet.
         Similar to validator.update_task_results but specifically for text feedback tasks.
         """
+        # Dictionary to store selected responses by task ID
+        selected_responses_by_task = {}
+
         try:
             logger.info("Updating text feedback task results...")
             batch_size: int = 10
@@ -303,14 +308,55 @@ class FeedbackLoop:
                 tasks = [validator._update_task_results(task) for task in task_batch]
                 miner_responses_lists = await asyncio.gather(*tasks)
 
-                all_miner_responses = []
-                for responses in miner_responses_lists:
-                    if responses:
-                        all_miner_responses.extend(responses)
+                sufficient_response_task_ids = []
+                tasks_needing_more_responses = []
 
-                # Mark tasks as processed after updating results
-                task_ids = [task.validator_task.task_id for task in task_batch]
-                await ORM.mark_validator_task_as_processed(task_ids)
+                # Check which tasks have enough responses
+                for i, responses in enumerate(miner_responses_lists):
+                    task = task_batch[i].validator_task
+                    response_count = len(responses) if responses else 0
+
+                    if response_count >= 3:
+                        logger.info(
+                            f"Task {task.task_id} has {response_count} responses, marking as processed"
+                        )
+                        sufficient_response_task_ids.append(task.task_id)
+
+                        # Select 3 random responses for this task
+                        selected_responses = random.sample(responses, 3)
+                        selected_responses_by_task[task.task_id] = selected_responses
+                        logger.info(
+                            f"Selected 3 random responses for task {task.task_id}"
+                        )
+                    else:
+                        logger.info(
+                            f"Task {task.task_id} has only {response_count} responses, sending to more miners"
+                        )
+                        tasks_needing_more_responses.append(task)
+
+                # Mark tasks with sufficient responses as processed
+                if sufficient_response_task_ids:
+                    await ORM.mark_validator_task_as_processed(
+                        sufficient_response_task_ids
+                    )
+
+                # Send tasks with insufficient responses to more miners
+                for task in tasks_needing_more_responses:
+                    # Update expiry time for the task
+                    task.expire_at = set_expire_time(int(dojo.TASK_DEADLINE / 2))
+
+                    # Send to additional miners
+                    await validator.send_request(
+                        synapse=task,
+                        ground_truth=None,
+                        obfuscated_model_to_model=None,
+                        synthetic_task=False,
+                        subset_size=7,  # Send to 7 additional miners
+                    )
+                    logger.info(f"Sent task {task.task_id} to 7 additional miners")
+
+            return selected_responses_by_task
 
         except Exception as e:
             logger.error(f"Error during text feedback task monitoring: {str(e)}")
+            return selected_responses_by_task
