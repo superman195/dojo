@@ -2,38 +2,24 @@
 redis client class to use redis using singleton pattern.
 """
 
-import os
-
 from redis import asyncio as aioredis
 from redis.asyncio.client import Redis
 
 from commons.api_settings import RedisSettings
 
 
-def build_redis_url(config: RedisSettings | None = None) -> str:
+def build_redis_url(config: RedisSettings) -> str:
     """uses redisss for ssl connection; required for production analytics API"""
-    if config is None:
-        host = os.getenv("REDIS_HOST")
-        port = int(os.getenv("REDIS_PORT", 6379))
-        username = os.getenv("REDIS_USERNAME")
-        password = os.getenv("REDIS_PASSWORD")
-        if username and password:
-            return f"rediss://{username}:{password}@{host}:{port}"
-        elif password:
-            return f"rediss://:{password}@{host}:{port}"
-        else:
-            return f"rediss://{host}:{port}"
+    host = config.REDIS_HOST
+    port = config.REDIS_PORT
+    username = config.REDIS_USERNAME
+    password = config.REDIS_PASSWORD
+    if username and password:
+        return f"rediss://{username}:{password}@{host}:{port}"
+    elif password:
+        return f"rediss://:{password}@{host}:{port}"
     else:
-        host = config.REDIS_HOST
-        port = config.REDIS_PORT
-        username = config.REDIS_USERNAME
-        password = config.REDIS_PASSWORD
-        if username and password:
-            return f"rediss://{username}:{password}@{host}:{port}"
-        elif password:
-            return f"rediss://:{password}@{host}:{port}"
-        else:
-            return f"rediss://{host}:{port}"
+        return f"rediss://{host}:{port}"
 
 
 class RedisCache:
@@ -41,12 +27,15 @@ class RedisCache:
     _anal_prefix_: str = "analytics"
     _upload_key_: str = "uploaded"
     redis: Redis
+    config: RedisSettings
+    redis_url: str
 
-    def __new__(cls, config: RedisSettings | None = None):
+    def __new__(cls, config: RedisSettings):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            redis_url = build_redis_url(config)
-            cls._instance.redis = aioredis.from_url(url=redis_url)
+            cls._instance.config = config
+            cls._instance.redis_url = build_redis_url(config)
+            cls._instance.redis = aioredis.from_url(url=cls._instance.redis_url)
 
         return cls._instance
 
@@ -57,8 +46,7 @@ class RedisCache:
 
     async def connect(self):
         if self.redis is None:
-            redis_url = build_redis_url()
-            self.redis = await aioredis.from_url(redis_url)
+            self.redis = await aioredis.from_url(self.redis_url)
 
     async def put(self, key: str, value, expire_time: int = 60 * 60 * 24):
         """
