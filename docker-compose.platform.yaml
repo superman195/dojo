@@ -110,7 +110,48 @@ services:
 
   worker-ui:
     container_name: worker-ui
-    image: ghcr.io/tensorplex-labs/dojo-ui:tensorplex-prod
+    build:
+      context: https://github.com/tensorplex-labs/dojo-ui.git
+      args:
+        NEXT_PUBLIC_BACKEND_URL: ${NEXT_PUBLIC_BACKEND_URL:-http://127.0.0.1:8080}
+        NEXT_PUBLIC_GA_TAG: ${NEXT_PUBLIC_GA_TAG:-G-DEVELOPMENT}
+      dockerfile_inline: |
+        FROM --platform=linux/amd64 node:21.7.3 AS builder
+
+        WORKDIR /app
+
+        COPY package.json package-lock.json* ./
+        RUN npm install --force
+
+        COPY . .
+
+        ARG NEXT_PUBLIC_BACKEND_URL
+        ARG NEXT_PUBLIC_GA_TAG
+        ENV NEXT_PUBLIC_BACKEND_URL=$NEXT_PUBLIC_BACKEND_URL
+        ENV NEXT_PUBLIC_GA_TAG=$NEXT_PUBLIC_GA_TAG
+
+        RUN echo "NEXT_PUBLIC_BACKEND_URL = $NEXT_PUBLIC_BACKEND_URL"
+        RUN echo "NEXT_PUBLIC_GA_TAG = $NEXT_PUBLIC_GA_TAG"
+
+        RUN npm run build
+
+        FROM --platform=linux/amd64 node:21.7.3-alpine
+
+        RUN apk add --no-cache bash
+
+        WORKDIR /app
+
+        COPY --from=builder /app/next.config.mjs ./
+        COPY --from=builder /app/public ./public
+        COPY --from=builder /app/.next ./.next
+        COPY --from=builder /app/node_modules ./node_modules
+        COPY --from=builder /app/package.json ./
+
+        ENTRYPOINT ["/app/entrypoint.sh"]
+    volumes:
+      - ./entrypoint-ui.sh:/app/entrypoint.sh
+    environment:
+      - DISABLE_CSP=${DISABLE_CSP:-true}
     ports:
       - "3000:3000"
     healthcheck:
