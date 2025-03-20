@@ -1,8 +1,5 @@
 import argparse
-import inspect
-import logging
 import os
-import site
 from functools import lru_cache
 from pathlib import Path
 
@@ -10,76 +7,16 @@ import bittensor as bt
 from bittensor.utils.btlogging import logging as logger
 from dotenv import find_dotenv, load_dotenv
 
-base_path = Path.cwd()
-
-
-def get_caller_info() -> str | None:
-    """jank ass call stack inspection to get same logging format as loguru"""
-    try:
-        stack = inspect.stack()
-        site_packages_path = site.getsitepackages()[0]
-        for i in range(len(stack) - 1, 1, -1):
-            filename = stack[i].filename
-            if os.path.basename(filename) == "loggingmachine.py":
-                # get our actual caller frame
-                prev_frame = stack[i + 1]
-                full_path = prev_frame.filename
-                # ensure `/Users/username/...` stripped
-                full_path = full_path.replace(site_packages_path, "")
-                module_path = (
-                    full_path.replace(os.getcwd() + os.sep, "")
-                    .replace(os.sep, ".")
-                    .lstrip(".")
-                )
-                module_name = module_path.rsplit(".", 1)[0]
-                function_name = prev_frame.function
-                line_no = prev_frame.lineno
-                caller_info = f"{module_name}:{function_name}:{line_no}".rjust(40)
-                return caller_info
-    except Exception:
-        return None
-
-
-class CustomFormatter(logging.Formatter):
-    def format(self, record):
-        caller_info = get_caller_info()
-        if caller_info is None:
-            # if we fail to inspect stack, default to log_format
-            # log_format = "%(filename)s.%(funcName)s:%(lineno)s - %(message)s"
-            caller_info = f"{record.filename}:{record.funcName}:{record.lineno}".rjust(
-                40
-            )
-        module_name, function_name, line_no = caller_info.split(":")
-        record.name = module_name
-        record.filename = function_name
-        record.lineno = int(line_no)
-
-        return super().format(record)
-
-
-date_format = "%Y-%m-%d %H:%M:%S"
-custom_formatter = CustomFormatter(datefmt=date_format)
-
-
-def apply_custom_logging_format():
-    # Retrieve the existing Bittensor logger
-    bittensor_logger = logging.getLogger(
-        "bittensor"
-    )  # Ensure this matches the logger name you are using
-    # bittensor_logger.setLevel(logging.INFO)  # Set the logging level to INFO
-
-    # Apply the custom formatter to each handler
-    for handler in bittensor_logger.handlers:
-        handler.setFormatter(custom_formatter)
+from dojo.utils.logging import apply_custom_logging_format
 
 
 def check_config(config: bt.config):
     """Checks/validates the config namespace object."""
     # logger.check_config(config)
 
-    log_dir = str(base_path / "logs")
+    log_dir = str(Path.cwd() / "logs")
     full_path = os.path.expanduser(
-        f"{log_dir}/{config.wallet.name}/{config.wallet.hotkey}/netuid{config.netuid}/{config.neuron.name}"
+        f"{log_dir}/{config.wallet.name}/{config.wallet.hotkey}/netuid{config.netuid}/{config.neuron.type}"
     )
     config.neuron.full_path = os.path.expanduser(full_path)
     if not os.path.exists(config.neuron.full_path):
@@ -124,17 +61,16 @@ def configure_logging(config: bt.config):
     apply_custom_logging_format()
 
 
-def add_args(parser):
+def add_args(parser: argparse.ArgumentParser):
     """
     Adds relevant arguments to the parser for operation.
     """
     # Netuid Arg: The netuid of the subnet to connect to.
     parser.add_argument("--netuid", type=int, help="Subnet netuid", default=52)
 
-    neuron_types = ["miner", "validator"]
     parser.add_argument(
         "--neuron.type",
-        choices=neuron_types,
+        choices=["miner", "validator"],
         type=str,
         help="Whether running a miner or validator",
     )
@@ -142,13 +78,6 @@ def add_args(parser):
     neuron_type = None
     if known_args := vars(args):
         neuron_type = known_args["neuron.type"]
-
-    parser.add_argument(
-        "--neuron.name",
-        type=str,
-        help="Trials for this neuron go in neuron.root / (wallet_cold - wallet_hot) / neuron.name. ",
-        default=neuron_type,
-    )
 
     # device = get_device()
     parser.add_argument(
