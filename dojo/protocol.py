@@ -233,3 +233,25 @@ class TaskResultRequest(bt.Synapse):
     task_results: list[TaskResult] = Field(
         description="List of TaskResult objects", default=[]
     )
+
+
+class AnalyticsData(BaseModel):
+    """
+    defines the structure for analytics data that will be sent by validators to the analytics endpoint.
+    """
+
+    validator_task_id: str
+    validator_hotkey: str
+    prompt: str
+    completions: List[dict]
+    ground_truths: List[dict]
+    scored_hotkeys: List[str]
+    absent_hotkeys: List[str]
+    miner_responses: List[dict]  # contains responses from all miners.
+    created_at: str
+    updated_at: str
+    metadata: dict | None
+
+
+class AnalyticsPayload(BaseModel):
+    tasks: List[AnalyticsData]

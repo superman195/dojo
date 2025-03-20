@@ -1,3 +1,11 @@
+class NoProcessedTasksYet(Exception):
+    """Exception raised when no processed tasks are found for uploading to analytics API."""
+
+    def __init__(self, message):
+        self.message = message
+        super().__init__(self.message)
+
+
 class NoNewExpiredTasksYet(Exception):
     """Exception raised when no expired tasks are found for processing."""
 

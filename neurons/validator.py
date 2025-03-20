@@ -59,6 +59,7 @@ from dojo.protocol import (
 )
 from dojo.utils.config import get_config
 from dojo.utils.uids import extract_miner_uids, is_miner
+from entrypoints.analytics_upload import run_analytics_upload
 
 ObfuscatedModelMap: TypeAlias = Dict[str, str]
 
@@ -112,7 +113,7 @@ class Validator:
             f"Running neuron on subnet: {self.config.netuid} with uid {self.uid}"
         )
         self.step = 0
-
+        self.last_anal_upload_time: datetime | None = None
         # Dendrite lets us send messages to other nodes (axons) in the network.
         self.dendrite = bt.dendrite(wallet=self.wallet)
         logger.info(f"Dendrite: {self.dendrite}")
@@ -754,6 +755,11 @@ class Validator:
                 )
                 await self.update_scores(hotkey_to_scores=final_hotkey_to_score)
 
+                # upload scores to analytics API after updating.
+                # record last successful upload time.
+                self.last_anal_upload_time = await run_analytics_upload(
+                    self._scores_alock, self.last_anal_upload_time, expire_to
+                )
             except Exception:
                 traceback.print_exc()
                 pass
