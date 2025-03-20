@@ -7,7 +7,9 @@ import bittensor as bt
 from bittensor.utils.btlogging import logging as logger
 from dotenv import find_dotenv, load_dotenv
 
-from dojo.utils.logging import apply_custom_logging_format
+from dojo.utils.logging.logging import apply_custom_logging_format
+
+from .typed_config import Settings
 
 
 def check_config(config: bt.config):
@@ -159,22 +161,31 @@ def add_args(parser: argparse.ArgumentParser):
         pass
 
 
+import sys
+
+from pydantic_settings import CliApp
+
+
 @lru_cache(maxsize=1)
-def get_config():
+def get_config() -> Settings:
     """Returns the configuration object specific to this miner or validator after adding relevant arguments."""
-    parser = argparse.ArgumentParser()
-    bt.wallet.add_args(parser)
-    bt.subtensor.add_args(parser)
-    bt.axon.add_args(parser)
+    cli_args = sys.argv[1:]  # grab all args except for the python script name itself
+    settings: Settings = CliApp.run(Settings, cli_args=cli_args)
+    # TODO: remove all configs and just define it in ours
+    # bt.wallet.add_args(parser)
+    # bt.subtensor.add_args(parser)
+    # bt.axon.add_args(parser)
     add_args(parser)
 
     # Add logging arguments
     bt.logging.add_args(parser)
 
     # Check and validate config
-    _config = bt.config(parser)
+    _config: bt.Config = bt.config(parser)
     check_config(_config)
     configure_logging(_config)  # Configure logging using bt.logging
+
+    # NOTE: convert a config object into our Settings object for typings
 
     return _config
 
@@ -188,3 +199,7 @@ def source_dotenv():
         return
 
     load_dotenv()
+
+
+# NOTE: testing it out
+get_config()
