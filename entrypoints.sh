@@ -2,7 +2,7 @@
 
 set -e
 
-git fetch --tags -q
+git fetch --tags
 
 # run bash
 if [ "$1" = 'btcli' ]; then
