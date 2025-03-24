@@ -96,8 +96,8 @@ if [ "$1" = 'validator-api-service' ]; then
     echo "AWS_REGION: ${AWS_REGION}"
     echo "REDIS_HOST: ${REDIS_HOST}"
     echo "REDIS_PORT: ${REDIS_PORT}"
-    echo "REDIS_USERNAME: ${REDIS_USERNAME}"
-    echo "REDIS_PASSWORD: ${REDIS_PASSWORD}"
+    # echo "REDIS_USERNAME: ${REDIS_USERNAME}"
+    # echo "REDIS_PASSWORD: ${REDIS_PASSWORD}"
     echo "MAX_CHUNK_SIZE_MB: ${MAX_CHUNK_SIZE_MB}"
     python entrypoints/validator_api_service.py \
     --netuid 52 \
