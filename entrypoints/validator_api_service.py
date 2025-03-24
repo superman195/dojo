@@ -38,11 +38,13 @@ bt.logging.set_debug(True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger.info(f"@@@ cfg {cfg}")
+    logger.info(f"@@@ settings {settings}")
+
     app.state.bt_cfg = cfg
     app.state.api_config = settings.aws
     app.state.redis = RedisCache(settings.redis)
     app.state.subtensor = bt.subtensor(config=app.state.bt_cfg)
-
     # Initialize metagraph once during startup
     logger.info("Initializing metagraph...")
     app.state.metagraph = app.state.subtensor.metagraph(app.state.bt_cfg.netuid)  # type: ignore
