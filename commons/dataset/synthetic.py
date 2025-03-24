@@ -11,7 +11,10 @@ from tenacity import (
     wait_exponential,
 )
 
-from commons.exceptions import SyntheticGenerationError
+from commons.exceptions import (
+    FatalSyntheticGenerationError,
+    SyntheticGenerationError,
+)
 from dojo.protocol import SyntheticQA
 
 SYNTHETIC_API_BASE_URL = os.getenv("SYNTHETIC_API_URL")
@@ -66,6 +69,7 @@ class SyntheticAPI:
         logger.debug(f"Generating synthetic QA from {path}.")
 
         MAX_RETRIES = 6
+
         try:
             async for attempt in AsyncRetrying(
                 stop=stop_after_attempt(MAX_RETRIES),
@@ -98,7 +102,9 @@ class SyntheticAPI:
                 f"Failed to generate synthetic QA after {MAX_RETRIES} retries."
             )
             traceback.print_exc()
-            raise
+            raise FatalSyntheticGenerationError(
+                "QA generation failed after all retry attempts"
+            )
 
         except Exception:
             raise
