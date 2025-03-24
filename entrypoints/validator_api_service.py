@@ -38,9 +38,6 @@ bt.logging.set_debug(True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info(f"@@@ cfg {cfg}")
-    logger.info(f"@@@ settings {settings}")
-
     app.state.bt_cfg = cfg
     app.state.api_config = settings.aws
     app.state.redis = RedisCache(settings.redis)
