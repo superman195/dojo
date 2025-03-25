@@ -32,10 +32,16 @@ class Miner(aobject):
         logger.info(self.config)
 
         logger.info("Setting up bittensor objects....")
-        self.wallet = bittensor.wallet(config=self.config)
+        self.wallet = bittensor.wallet(
+            name=self.config.wallet.coldkey,
+            hotkey=self.config.wallet.hotkey,
+            path=self.config.wallet.path,
+        )
         logger.info(f"Wallet: {self.wallet}")
         # The axon handles request processing, allowing validators to send this miner requests.
-        self.axon = bittensor.axon(wallet=self.wallet, port=self.config.axon.port)
+        self.axon: bittensor.axon = bittensor.axon(
+            wallet=self.wallet, port=self.config.axon.port
+        )
         logger.info(f"Axon: {self.axon}")
 
         await self.init_metagraphs()
@@ -43,7 +49,7 @@ class Miner(aobject):
         # Each miner gets a unique identity (UID) in the network for differentiation.
         self.uid = self.subnet_metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
         logger.info(
-            f"Running neuron on subnet: {self.config.netuid} with uid {self.uid}"
+            f"Running neuron on subnet: {self.config.chain.netuid} with uid {self.uid}"
         )
 
         # Attach determiners which functions are called when servicing a request.
@@ -78,15 +84,17 @@ class Miner(aobject):
 
     async def init_metagraphs(self):
         logger.info("Performing async init for miner")
-        async with bittensor.AsyncSubtensor(config=self.config) as subtensor:
+        async with bittensor.AsyncSubtensor(
+            network=self.config.chain.subtensor_network
+        ) as subtensor:
             self.block = await subtensor.get_current_block()
             # The metagraph holds the state of the network, letting us know about other validators and miners.
             self.subnet_metagraph = await subtensor.metagraph(
-                self.config.netuid,  # type: ignore
+                self.config.chain.netuid,  # type: ignore
                 block=self.block,
             )
             self.root_metagraph = await subtensor.metagraph(0, block=self.block)
-            self.subtensor = subtensor
+            self.subtensor: bittensor.AsyncSubtensor = subtensor
             # Check if the miner is registered on the Bittensor network before proceeding further.
             await self.check_registered()
             logger.info(f"Subtensor initialized, {self.subtensor}")
@@ -122,7 +130,9 @@ class Miner(aobject):
 
         # Serve passes the axon information to the network + netuid we are hosting on.
         # This will auto-update if the axon port of external ip have changed.
-        logger.info(f"Serving miner axon {self.axon} with netuid: {self.config.netuid}")
+        logger.info(
+            f"Serving miner axon {self.axon} with netuid: {self.config.chain.netuid}"
+        )
         serve_success = await serve_axon(self.subtensor, self.axon, self.config)
         if serve_success:
             logger.success("Successfully served axon for miner!")
@@ -433,12 +443,12 @@ class Miner(aobject):
             subtensor = self.subtensor
 
         if not await subtensor.is_hotkey_registered(
-            netuid=self.config.netuid,
+            netuid=self.config.chain.netuid,
             hotkey_ss58=self.wallet.hotkey.ss58_address,
             block=self.block,
         ):
             logger.error(
-                f"Wallet: {self.wallet} is not registered on netuid {self.config.netuid}."
+                f"Wallet: {self.wallet} is not registered on netuid {self.config.chain.netuid}."
                 f" Please register the hotkey using `btcli s register` before trying again"
             )
             self._cleanup()

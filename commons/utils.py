@@ -20,6 +20,7 @@ from Crypto.Hash import keccak
 from tenacity import RetryError, Retrying, stop_after_attempt, wait_exponential_jitter
 
 from commons.objects import ObjectManager
+from dojo.settings import Settings
 
 ROOT_WEIGHT = 0.18
 ROOT_NETUID = 0
@@ -194,7 +195,7 @@ def log_retry_info(retry_state):
 async def serve_axon(
     subtensor: bt.AsyncSubtensor,
     axon: bt.axon,
-    config: bt.config,
+    config: Settings,
     max_attempts: int = 10,
 ) -> bool:
     """A wrapper around the underlying self.axon.serve(...) call with retries"""
@@ -206,7 +207,7 @@ async def serve_axon(
         ):
             with attempt:
                 serve_success = await subtensor.serve_axon(
-                    netuid=config.netuid, axon=axon
+                    netuid=config.chain.netuid, axon=axon
                 )
                 if serve_success:
                     return True

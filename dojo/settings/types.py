@@ -60,7 +60,7 @@ class ChainSettings(BaseModel):
 class WalletSettings(BaseModel):
     coldkey: str = Field(default=os.getenv("WALLET_COLDKEY"))
     hotkey: str = Field(default=os.getenv("WALLET_HOTKEY"))
-    path: str = Field(default=os.getenv("BITTENSOR_DIR"))
+    path: str = Field(default=os.getenv("BITTENSOR_DIR", "~/.bittensor"))
 
 
 class LoggingSettings(BaseModel):
