@@ -36,13 +36,13 @@ if [ "$1" = 'miner' ]; then
 
     python main_miner.py \
     --netuid ${NETUID} \
-    --subtensor.network ${SUBTENSOR_NETWORK} \
-    --subtensor.chain_endpoint ${SUBTENSOR_ENDPOINT} \
+    --chain.subtensor_network ${SUBTENSOR_NETWORK} \
+    --chain.subtensor_endpoint ${SUBTENSOR_ENDPOINT} \
     --logging.info \
-    --wallet.name ${WALLET_COLDKEY} \
+    --wallet.coldkey ${WALLET_COLDKEY} \
     --wallet.hotkey ${WALLET_HOTKEY} \
     --axon.port ${AXON_PORT} \
-    --neuron.type miner \
+    --neuron_type miner \
     ${EXTRA_ARGS}
 fi
 
@@ -66,12 +66,12 @@ if [ "$1" = 'validator' ]; then
 
     python main_validator.py \
     --netuid ${NETUID} \
-    --subtensor.network ${SUBTENSOR_NETWORK} \
-    --subtensor.chain_endpoint ${SUBTENSOR_ENDPOINT} \
+    --chain.subtensor_network ${SUBTENSOR_NETWORK} \
+    --chain.subtensor_endpoint ${SUBTENSOR_ENDPOINT} \
     --logging.debug \
-    --wallet.name ${WALLET_COLDKEY} \
+    --wallet. ${WALLET_COLDKEY} \
     --wallet.hotkey ${WALLET_HOTKEY} \
-    --neuron.type validator \
+    --neuron_type validator \
     ${EXTRA_ARGS}
 fi
 
@@ -83,7 +83,7 @@ if [ "$1" = 'extract-dataset' ]; then
     echo "WALLET_COLDKEY: ${WALLET_COLDKEY}"
     echo "WALLET_HOTKEY: ${WALLET_HOTKEY}"
     python scripts/extract_dataset.py \
-    --wallet.name ${WALLET_COLDKEY} \
+    --wallet.coldkey ${WALLET_COLDKEY} \
     --wallet.hotkey ${WALLET_HOTKEY}
 fi
 
@@ -101,8 +101,8 @@ if [ "$1" = 'validator-api-service' ]; then
     echo "MAX_CHUNK_SIZE_MB: ${MAX_CHUNK_SIZE_MB}"
     python entrypoints/validator_api_service.py \
     --netuid 52 \
-    --subtensor.network ${SUBTENSOR_NETWORK} \
-    --subtensor.chain_endpoint ${SUBTENSOR_ENDPOINT}
+    --chain.subtensor_network ${SUBTENSOR_NETWORK} \
+    --chain.subtensor_endpoint ${SUBTENSOR_ENDPOINT}
 fi
 
 
@@ -115,7 +115,7 @@ if [ "$1" = 'migration' ]; then
     prisma migrate deploy
 
     echo "Starting migration..."
-    python migration.py --subtensor.network finney
+    python migration.py --chain.subtensor_network finney
 fi
 
 if [ "$1" = 'validate-migration' ]; then

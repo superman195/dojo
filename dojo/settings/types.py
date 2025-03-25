@@ -92,6 +92,8 @@ class Settings(BaseModel):
     chain: ChainSettings = ChainSettings()
     wallet: WalletSettings = WalletSettings()
     logging: LoggingSettings = LoggingSettings()
+    simulation: SimulationSettings = SimulationSettings()
+    test: TestSettings = TestSettings()
 
     env_file: str = Field(
         default=".env", description="Path to the environment file to use."

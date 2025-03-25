@@ -3,6 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import bittensor as bt
+from bittensor.utils.btlogging import logging as logger
 from pydantic_settings import CliApp
 
 from dojo.logging import apply_custom_logging_format
@@ -10,9 +11,27 @@ from dojo.logging import apply_custom_logging_format
 from .types import Settings
 
 
+@lru_cache
+def get_config() -> Settings:
+    """Returns the configuration object specific to this miner or validator after adding relevant arguments."""
+    cli_args = sys.argv[1:]  # grab all args except for the python script name itself
+    settings: Settings = CliApp.run(Settings, cli_args=cli_args)
+    validate_config(settings)
+    configure_logging(settings)
+    return settings
+
+
 def validate_config(settings: Settings) -> bool:
     """Validates the settings object."""
-    # TODO: add more validation here
+    if settings.simulation.enabled or settings.simulation.bad_miner:
+        logger.warning(
+            f"You have simulation settings enabled: {settings.simulation.model_dump()}!\nPlease ensure that you are NOT running this in a production environment."
+        )
+
+    if settings.test.ignore_min_stake or settings.test.fast_mode:
+        logger.warning(
+            f"You have simulation settings enabled: {settings.test.model_dump()}!\nPlease ensure that you are NOT running this in a production environment."
+        )
     return True
 
 
@@ -154,13 +173,3 @@ def configure_logging(settings: Settings):
 #     elif neuron_type == "miner":
 #         pass
 #
-
-
-@lru_cache(maxsize=1)
-def get_config() -> Settings:
-    """Returns the configuration object specific to this miner or validator after adding relevant arguments."""
-    cli_args = sys.argv[1:]  # grab all args except for the python script name itself
-    settings: Settings = CliApp.run(Settings, cli_args=cli_args)
-    validate_config(settings)
-    configure_logging(settings)
-    return settings
