@@ -1,9 +1,10 @@
 import os
 import subprocess
+import sys
 
 from git import Repo
 
-from dojo.utils.config import get_config, source_dotenv
+from dojo.utils import source_dotenv
 
 source_dotenv()
 
@@ -63,7 +64,12 @@ DOJO_TASK_MONITORING = 300
 ANALYTICS_UPLOAD = 65 * 60
 assert VALIDATOR_UPDATE_SCORE < TASK_DEADLINE
 
-if get_config().fast_mode:
+# NOTE: @dev this is done to decouple the parsing CLI args from other parts of code
+if (
+    os.getenv("FAST_MODE", None)
+    or "--fast_mode" in sys.argv
+    or "--test.fast-mode" in sys.argv
+):
     print("Running in fast mode for testing purposes...")
     VALIDATOR_MIN_STAKE = int(os.getenv("VALIDATOR_MIN_STAKE", "5000"))
     TASK_DEADLINE = 180

@@ -25,17 +25,17 @@ if [ "$1" = 'miner' ]; then
 
     EXTRA_ARGS=""
     if [ "${SIMULATION}" = "true" ]; then
-        EXTRA_ARGS="${EXTRA_ARGS} --simulation"
+        EXTRA_ARGS="${EXTRA_ARGS} --simulation.enabled"
     fi
     if [ "${FAST_MODE}" = "true" ]; then
-        EXTRA_ARGS="${EXTRA_ARGS} --fast_mode"
+        EXTRA_ARGS="${EXTRA_ARGS} --test.fast-mode"
     fi
     if [ "${SIMULATION_BAD_MINER}" = "true" ]; then
-        EXTRA_ARGS="${EXTRA_ARGS} --simulation_bad_miner"
+        EXTRA_ARGS="${EXTRA_ARGS} --simulation.bad-miner"
     fi
 
     python main_miner.py \
-    --netuid ${NETUID} \
+    --chain.netuid ${NETUID} \
     --chain.subtensor_network ${SUBTENSOR_NETWORK} \
     --chain.subtensor_endpoint ${SUBTENSOR_ENDPOINT} \
     --logging.info \
@@ -65,7 +65,7 @@ if [ "$1" = 'validator' ]; then
     fi
 
     python main_validator.py \
-    --netuid ${NETUID} \
+    --chain.netuid ${NETUID} \
     --chain.subtensor_network ${SUBTENSOR_NETWORK} \
     --chain.subtensor_endpoint ${SUBTENSOR_ENDPOINT} \
     --logging.debug \
@@ -100,7 +100,7 @@ if [ "$1" = 'validator-api-service' ]; then
     echo "REDIS_PASSWORD: ${REDIS_PASSWORD}"
     echo "MAX_CHUNK_SIZE_MB: ${MAX_CHUNK_SIZE_MB}"
     python entrypoints/validator_api_service.py \
-    --netuid 52 \
+    --chain.netuid 52 \
     --chain.subtensor_network ${SUBTENSOR_NETWORK} \
     --chain.subtensor_endpoint ${SUBTENSOR_ENDPOINT}
 fi

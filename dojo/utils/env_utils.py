@@ -1,15 +1,17 @@
 from bittensor.utils.btlogging import logging as logger
 from dotenv import find_dotenv, load_dotenv
 
-from dojo.settings import get_config
 
+def source_dotenv(env_file=None):
+    """
+    Source env file if provided
 
-def source_dotenv():
-    """Source env file if provided"""
-    config = get_config()
-    if config.env_file:
-        load_dotenv(find_dotenv(config.env_file), override=True)
-        logger.info(f"Sourcing env vars from {config.env_file}")
+    Args:
+        env_file: Optional path to env file. If None, will try to use .env
+    """
+    if env_file:
+        load_dotenv(find_dotenv(env_file), override=True)
+        logger.info(f"Sourcing env vars from {env_file}")
         return
 
     load_dotenv()

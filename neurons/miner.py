@@ -20,7 +20,6 @@ from dojo.protocol import (
     TaskResultRequest,
     TaskSynapseObject,
 )
-from dojo.utils.config import get_config
 
 
 class Miner(aobject):
@@ -79,12 +78,11 @@ class Miner(aobject):
 
     async def init_metagraphs(self):
         logger.info("Performing async init for miner")
-        config = ObjectManager.get_config()
-        async with bittensor.AsyncSubtensor(config=config) as subtensor:
+        async with bittensor.AsyncSubtensor(config=self.config) as subtensor:
             self.block = await subtensor.get_current_block()
             # The metagraph holds the state of the network, letting us know about other validators and miners.
             self.subnet_metagraph = await subtensor.metagraph(
-                config.netuid,  # type: ignore
+                self.config.netuid,  # type: ignore
                 block=self.block,
             )
             self.root_metagraph = await subtensor.metagraph(0, block=self.block)
@@ -364,7 +362,7 @@ class Miner(aobject):
 
         logger.debug(f"Got {request_tag} request from {caller_hotkey}")
 
-        if get_config().ignore_min_stake:
+        if self.config.test.ignore_min_stake:
             message = (
                 f"Ignoring min stake required: {VALIDATOR_MIN_STAKE} for {caller_hotkey}, "
                 "YOU SHOULD NOT SEE THIS when you are running a miner on mainnet"

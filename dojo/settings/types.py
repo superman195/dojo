@@ -2,6 +2,12 @@ import os
 from typing import Literal
 
 from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings
+
+from dojo.utils.env_utils import source_dotenv
+
+# NOTE: this line is required otherwise environment variables cannot be found
+source_dotenv()
 
 
 # NOTE: we use this instead of the Field(..., env=...) due to some errors in resolving
@@ -84,7 +90,9 @@ class TestSettings(BaseModel):
     )
 
 
-class Settings(BaseModel):
+# NOTE: disable instantiation from JSON
+# https://docs.pydantic.dev/latest/concepts/pydantic_settings/#avoid-adding-json-cli-options
+class Settings(BaseSettings, cli_avoid_json=True):
     axon: AxonSettings = AxonSettings()
     uvicorn: UvicornSettings = UvicornSettings()
     # redis: RedisSettings = RedisSettings()
@@ -98,7 +106,27 @@ class Settings(BaseModel):
     env_file: str = Field(
         default=".env", description="Path to the environment file to use."
     )
-    neuron_type: Literal["miner", "validator"]
+
+    # NOTE: Temporary default to allow help display
+    neuron_type: Literal["miner", "validator"] = Field(
+        default="validator",
+        description="Specify whether running as a miner or validator",
+    )
+
+    def model_post_init(self, __context):
+        # Check if we're just showing help (allow default value)
+        import sys
+
+        if len(sys.argv) == 1 or "--help" in sys.argv or "-h" in sys.argv:
+            return
+
+        # for actual runs, ensure neuron_type was explicitly provided
+        if self.neuron_type == "validator" and "--neuron-type" not in " ".join(
+            sys.argv
+        ):
+            raise ValueError(
+                "--neuron-type is required. Please specify 'miner' or 'validator'"
+            )
 
     class Config:
         extra: str = "forbid"

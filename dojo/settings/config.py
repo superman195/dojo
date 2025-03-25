@@ -1,5 +1,4 @@
 import sys
-from functools import lru_cache
 from pathlib import Path
 
 import bittensor as bt
@@ -7,22 +6,62 @@ from bittensor.utils.btlogging import logging as logger
 from pydantic_settings import CliApp
 
 from dojo.logging import apply_custom_logging_format
+from dojo.settings.types import Settings
 
-from .types import Settings
+# local settings so that not all placed in code will be forced to parse CLI args
+settings: Settings | None = None
 
 
-@lru_cache
+def parse_cli_config(cli_args: list[str] | None = None) -> Settings:
+    from dojo.utils import source_dotenv
+
+    source_dotenv()
+
+    if cli_args is None:
+        # grab all args except for the python script name itself
+        cli_args: list[str] = sys.argv[1:]
+
+    parsed_settings: Settings = CliApp.run(Settings, cli_args=cli_args)
+    validate_config(parsed_settings)
+    configure_logging(parsed_settings)
+
+    global settings
+    settings = parsed_settings
+
+    return parsed_settings
+
+
 def get_config() -> Settings:
-    """Returns the configuration object specific to this miner or validator after adding relevant arguments."""
-    cli_args = sys.argv[1:]  # grab all args except for the python script name itself
-    settings: Settings = CliApp.run(Settings, cli_args=cli_args)
-    validate_config(settings)
-    configure_logging(settings)
+    """
+    Retrieve the current configuration settings.
+    The `parse_cli_config()` function must be called first to set the settings.
+
+    Returns:
+        Settings: The current configuration settings.
+
+    Raises:
+        ValueError: If the settings have not been parsed yet.
+    """
+    if settings is None:
+        raise ValueError(
+            "Settings have not been parsed yet. Please call parse_cli_config() first."
+        )
     return settings
 
 
 def validate_config(settings: Settings) -> bool:
-    """Validates the settings object."""
+    """
+    Validates the settings object.
+
+    Args:
+        settings (Settings): The settings object to validate.
+
+    Returns:
+        bool: True if the settings are valid, False otherwise.
+
+    Raises:
+        Warning: If simulation settings are enabled and the environment is not production.
+    """
     if settings.simulation.enabled or settings.simulation.bad_miner:
         logger.warning(
             f"You have simulation settings enabled: {settings.simulation.model_dump()}!\nPlease ensure that you are NOT running this in a production environment."

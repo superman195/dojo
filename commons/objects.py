@@ -1,4 +1,4 @@
-from dojo.utils.config import get_config
+from dojo.settings import get_config, parse_cli_config
 
 
 class ObjectManager:
@@ -38,6 +38,7 @@ class ObjectManager:
 
     @classmethod
     def get_config(cls):
+        parse_cli_config()
         if cls._config is None:
             cls._config = get_config()
         return cls._config

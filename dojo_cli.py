@@ -9,7 +9,8 @@ from prompt_toolkit.completion import FuzzyCompleter, WordCompleter
 from rich.console import Console
 
 from dojo import get_dojo_api_base_url
-from dojo.settings import get_config, source_dotenv
+from dojo.settings import get_config
+from dojo.utils import source_dotenv
 
 get_config()
 source_dotenv()

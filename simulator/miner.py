@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 import redis
 from bittensor.utils.btlogging import logging as logger
 
+from commons.objects import ObjectManager
 from commons.utils import get_new_uuid
 from dojo.protocol import FeedbackRequest, Result, TaskResult, TaskResultRequest
-from dojo.utils.config import get_config
 from neurons.miner import Miner
 
 
@@ -27,7 +27,7 @@ class MinerSim(Miner):
 
             self._configure_simulation()
 
-            self.is_bad_miner = get_config().simulation_bad_miner
+            self.is_bad_miner = ObjectManager.get_config().simulation_bad_miner
             logger.info(f"Miner role set to: {'bad' if self.is_bad_miner else 'good'}")
 
             logger.info("Starting Miner Simulator")

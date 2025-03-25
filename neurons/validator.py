@@ -57,7 +57,6 @@ from dojo.protocol import (
     TaskSynapseObject,
     TaskTypeEnum,
 )
-from dojo.utils.config import get_config
 from dojo.utils.uids import extract_miner_uids, is_miner
 from entrypoints.analytics_upload import run_analytics_upload
 
@@ -1069,7 +1068,7 @@ class Validator:
             for uid, hotkey in enumerate(self.metagraph.hotkeys)
             if not is_miner(self.metagraph, uid)
         ]
-        if get_config().ignore_min_stake:
+        if self.config.ignore_min_stake:
             validator_hotkeys.append(self.vali_hotkey)
         return validator_hotkeys
 
