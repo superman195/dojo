@@ -855,6 +855,37 @@ class ORM:
             logger.error(f"Error getting SF tasks by status {status}: {e}")
             yield [], False
 
+    @staticmethod
+    async def create_hfl_completion_relation(
+        completion_id_pairs: List[tuple[str, str]],
+    ) -> bool:
+        """Create HFLCompletionRelation records connecting TF completions to SF completions.
+
+        Args:
+            completion_id_pairs: List of tuples with (tf_completion_id, sf_completion_id) pairs
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Create a relation for each (tf_id, sf_id) pair
+            async with prisma.tx() as tx:
+                for tf_id, sf_id in completion_id_pairs:
+                    await tx.hflcompletionrelation.create(
+                        data={
+                            "tf_completion_id": tf_id,
+                            "sf_completion_id": sf_id,
+                        }
+                    )
+
+            logger.success(
+                f"Created {len(completion_id_pairs)} HFLCompletionRelation records"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to create HFLCompletionRelation records: {e}")
+            return False
+
 
 # ---------------------------------------------------------------------------- #
 #                          Test custom ORM functions                           #
