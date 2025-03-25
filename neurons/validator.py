@@ -698,7 +698,7 @@ class Validator:
         # Cleanup on exit
         await self._cleanup()
 
-    async def update_tasks_before_scoring(self):
+    async def update_tasks_polling(self):
         """
         Periodically updates task results for expired tasks every 15 minutes.
         Decoupled from scoring function to allow more frequent updates.
@@ -723,7 +723,7 @@ class Validator:
 
                 logger.success("✓ Task results updated successfully")
             except Exception:
-                logger.error("Error in update_task_results_periodic")
+                logger.error("Error in updating task results")
                 traceback.print_exc()
             finally:
                 gc.collect()
