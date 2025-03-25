@@ -82,10 +82,13 @@ def add_args(parser: argparse.ArgumentParser):
         neuron_type = known_args["neuron.type"]
 
     # device = get_device()
+
+    # NOTE: unused
     parser.add_argument(
         "--neuron.device", type=str, help="Device to run on.", default="cpu"
     )
 
+    # NOTE: unused
     parser.add_argument(
         "--api.port",
         type=int,
@@ -105,6 +108,7 @@ def add_args(parser: argparse.ArgumentParser):
         help="Whether to always include self in monitoring queries, mainly for testing",
     )
 
+    # NOTE: unused
     parser.add_argument(
         "--service",
         choices=["miner-decentralised", "miner-centralised", "validator"],
@@ -143,6 +147,7 @@ def add_args(parser: argparse.ArgumentParser):
     )
 
     if neuron_type == "validator":
+        # NOTE: unused
         parser.add_argument(
             "--neuron.sample_size",
             type=int,
@@ -171,23 +176,11 @@ def get_config() -> Settings:
     """Returns the configuration object specific to this miner or validator after adding relevant arguments."""
     cli_args = sys.argv[1:]  # grab all args except for the python script name itself
     settings: Settings = CliApp.run(Settings, cli_args=cli_args)
-    # TODO: remove all configs and just define it in ours
-    # bt.wallet.add_args(parser)
-    # bt.subtensor.add_args(parser)
-    # bt.axon.add_args(parser)
-    add_args(parser)
 
-    # Add logging arguments
-    bt.logging.add_args(parser)
-
-    # Check and validate config
-    _config: bt.Config = bt.config(parser)
     check_config(_config)
-    configure_logging(_config)  # Configure logging using bt.logging
+    configure_logging(_config)
 
-    # NOTE: convert a config object into our Settings object for typings
-
-    return _config
+    return settings
 
 
 def source_dotenv():
