@@ -698,11 +698,13 @@ class Validator:
         # Cleanup on exit
         await self._cleanup()
 
-    async def update_score_and_send_feedback(self):
+    async def update_tasks_polling(self):
+        """
+        Periodically updates task results for expired tasks every 15 minutes.
+        Decoupled from scoring function to allow more frequent updates.
+        """
         while True:
-            await asyncio.sleep(dojo.VALIDATOR_UPDATE_SCORE)
-            # for each hotkey, a list of scores from all tasks being scored
-            hotkey_to_all_scores = defaultdict(list)
+            await asyncio.sleep(dojo.VALIDATOR_UPDATE_TASK)  # 15 minutes
             try:
                 # Grab tasks that were expired TASK_DEADLINE duration ago
                 expire_from = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
@@ -710,7 +712,7 @@ class Validator:
                 )
                 expire_to = datetime_as_utc(datetime.now(timezone.utc))
                 logger.debug(
-                    f"Updating with expire_from: {expire_from} and expire_to: {expire_to}"
+                    f"Updating task results with expire_from: {expire_from} and expire_to: {expire_to}"
                 )
 
                 # Update task results before scoring
@@ -718,6 +720,31 @@ class Validator:
                     expire_from=expire_from,
                     expire_to=expire_to,
                 )
+
+                logger.success("✓ Task results updated successfully")
+            except Exception:
+                logger.error("Error in updating task results")
+                traceback.print_exc()
+            finally:
+                gc.collect()
+
+    async def score_and_send_feedback(self):
+        """
+        Periodically scores tasks and sends feedback every hour.
+        Uses a buffer period to ensure tasks have had sufficient update cycles.
+        """
+        while True:
+            await asyncio.sleep(dojo.VALIDATOR_UPDATE_SCORE)  # 60 minutes
+            # for each hotkey, a list of scores from all tasks being scored
+            hotkey_to_all_scores = defaultdict(list)
+            try:
+                # Get tasks that expired between 2 hours ago and 30 minutes ago
+                # This creates a 30-minute buffer to ensure tasks have been updated sufficiently
+                now = datetime_as_utc(datetime.now(timezone.utc))
+                expire_from = now - timedelta(hours=2)
+                expire_to = now - timedelta(
+                    minutes=dojo.BUFFER_PERIOD
+                )  # 30-minute buffer
 
                 logger.info("📝 performing scoring ...")
                 processed_request_ids = []
@@ -761,8 +788,8 @@ class Validator:
                     self._scores_alock, self.last_anal_upload_time, expire_to
                 )
             except Exception:
+                logger.error("Error in score_and_send_feedback")
                 traceback.print_exc()
-                pass
             finally:
                 gc.collect()
 
