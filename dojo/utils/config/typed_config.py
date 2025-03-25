@@ -1,4 +1,5 @@
 import os
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -43,10 +44,19 @@ class ChainSettings(BaseModel):
 class WalletSettings(BaseModel):
     coldkey: str = Field(default=os.getenv("WALLET_COLDKEY"))
     hotkey: str = Field(default=os.getenv("WALLET_HOTKEY"))
+    path: str = Field(default=os.getenv("BITTENSOR_DIR"))
 
 
-class TorchSettings(BaseModel):
-    device: str = Field(default="cpu")
+class LoggingSettings(BaseModel):
+    trace: bool = Field(default=False)
+    debug: bool = Field(default=False)
+    info: bool = Field(default=False)
+    warning: bool = Field(default=False)
+
+
+class SimulationSettings(BaseModel):
+    enabled: bool = Field(default=False)
+    bad_miner: bool = Field(default=False)
 
 
 class Settings(BaseModel):
@@ -54,7 +64,6 @@ class Settings(BaseModel):
     uvicorn: UvicornSettings = UvicornSettings()
     # redis: RedisSettings = RedisSettings()
     score: ScoreSettings = ScoreSettings()
-    torch: TorchSettings = TorchSettings()
     chain: ChainSettings = ChainSettings()
     wallet: WalletSettings = WalletSettings()
 
@@ -65,7 +74,8 @@ class Settings(BaseModel):
         default=False,
         description="Whether to always include self in monitoring queries, mainly for testing",
     )
+    neuron_type: Literal["miner", "validator"]
 
     class Config:
-        extra = "forbid"
-        case_sensitive = True
+        extra: str = "forbid"
+        case_sensitive: bool = True
