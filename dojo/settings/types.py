@@ -19,9 +19,14 @@ class AxonSettings(BaseModel):
 
 class ScoreSettings(BaseModel):
     # EMA Alpha to calculate scores for synthetic tasks
-    synthetic_ema_alpha: float = Field(default=0.3)
+    synthetic_ema_alpha: float = Field(
+        default=0.3, description="EMA Alpha to calculate scores for synthetic tasks"
+    )
     # EMA Alpha to calculate scores for both SF_TASK and TF_TASK
-    hfl_ema_alpha: float = Field(default=0.3)
+    hfl_ema_alpha: float = Field(
+        default=0.3,
+        description="EMA Alpha to calculate scores for both SF_TASK and TF_TASK",
+    )
 
 
 class UvicornSettings(BaseModel):
@@ -32,8 +37,13 @@ class UvicornSettings(BaseModel):
 
 
 class ChainSettings(BaseModel):
-    netuid: int = Field(default=52)
-    epoch_length: int = Field(default=100)
+    netuid: int = Field(
+        default=52, description="Subnet netuid on the Bittensor network"
+    )
+    epoch_length: int = Field(
+        default=100,
+        description="Length of an epoch in blocks, used by validators to determine how often to set weights",
+    )
     subtensor_network: str = Field(
         default="wss://entrypoint-finney.opentensor.ai:443",
         examples=["ws://mainnet-lite:9944", "ws://testnet-lite:9944"],
@@ -55,8 +65,23 @@ class LoggingSettings(BaseModel):
 
 
 class SimulationSettings(BaseModel):
-    enabled: bool = Field(default=False)
-    bad_miner: bool = Field(default=False)
+    enabled: bool = Field(
+        default=False, description="Whether to run the validator in simulation mode."
+    )
+    bad_miner: bool = Field(
+        default=False, description="Set miner simulation to a bad one."
+    )
+
+
+class TestSettings(BaseModel):
+    ignore_min_stake: bool = Field(
+        default=False,
+        description="Whether to always include self in monitoring queries, mainly for testing",
+    )
+    fast_mode: bool = Field(
+        default=False,
+        description="Whether to run in fast mode, for developers to test locally.",
+    )
 
 
 class Settings(BaseModel):
@@ -69,10 +94,6 @@ class Settings(BaseModel):
 
     env_file: str = Field(
         default=".env", description="Path to the environment file to use."
-    )
-    ignore_min_stake: bool = Field(
-        default=False,
-        description="Whether to always include self in monitoring queries, mainly for testing",
     )
     neuron_type: Literal["miner", "validator"]
 
