@@ -91,6 +91,7 @@ class Settings(BaseModel):
     score: ScoreSettings = ScoreSettings()
     chain: ChainSettings = ChainSettings()
     wallet: WalletSettings = WalletSettings()
+    logging: LoggingSettings = LoggingSettings()
 
     env_file: str = Field(
         default=".env", description="Path to the environment file to use."

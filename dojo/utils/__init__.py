@@ -1,4 +1,3 @@
-from .config.config import get_config as get_config
-from .config.typed_config import Settings
+from .env_utils import source_dotenv
 
-__all__ = ["get_config", "Settings"]
+__all__ = ["source_dotenv"]

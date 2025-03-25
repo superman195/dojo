@@ -27,7 +27,7 @@ from commons.utils import (
     verify_hotkey_in_metagraph,
     verify_signature,
 )
-from dojo.utils.config import source_dotenv
+from dojo.utils import source_dotenv
 from entrypoints.analytics_endpoint import analytics_router
 
 source_dotenv()

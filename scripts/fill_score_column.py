@@ -25,7 +25,7 @@ from database.prisma.types import (
     ValidatorTaskWhereInput,
 )
 from dojo.protocol import Scores
-from dojo.utils.config import source_dotenv
+from dojo.utils import source_dotenv
 
 logger.remove()  # Remove default handlers
 logger.add(

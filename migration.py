@@ -15,7 +15,7 @@ from database.client import connect_db, disconnect_db, prisma
 from database.prisma import Json
 from database.prisma.enums import CriteriaTypeEnum
 from dojo.protocol import TaskTypeEnum
-from dojo.utils.config import source_dotenv
+from dojo.utils import source_dotenv
 
 source_dotenv()
 

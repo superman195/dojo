@@ -12,7 +12,7 @@ from commons.dataset.synthetic import SyntheticAPI
 from commons.exceptions import FatalSyntheticGenerationError
 from commons.objects import ObjectManager
 from database.client import connect_db, disconnect_db
-from dojo.utils.config import source_dotenv
+from dojo.utils import source_dotenv
 
 source_dotenv()
 

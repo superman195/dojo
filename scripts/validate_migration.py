@@ -3,7 +3,7 @@ import json
 from datetime import datetime
 
 from database.client import connect_db, disconnect_db, prisma
-from dojo.utils.config import source_dotenv
+from dojo.utils import source_dotenv
 
 source_dotenv()
 
