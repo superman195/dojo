@@ -21,7 +21,7 @@ from database.mappers import (
     map_validator_task_to_task_synapse_object,
 )
 from database.prisma import Json
-from database.prisma.enums import HFLStatusEnum, TaskTypeEnum
+from database.prisma.enums import HFLStatusEnum
 from database.prisma.errors import PrismaError
 from database.prisma.models import GroundTruth, ValidatorTask
 from database.prisma.types import (
@@ -39,6 +39,7 @@ from dojo.protocol import (
     Scores,
     TaskResult,
     TaskSynapseObject,
+    TaskTypeEnum,
 )
 
 
