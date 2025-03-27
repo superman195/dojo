@@ -1128,6 +1128,7 @@ class Validator:
         """
         Returns a list of updated miner responses
         """
+        logger.info(f"Updating task results for task id: {task.validator_task.task_id}")
         task_id: str = task.validator_task.task_id
         obfuscated_to_real_model_id: Dict[str, str] = await ORM.get_real_model_ids(
             task_id
@@ -1142,7 +1143,21 @@ class Validator:
         for i in range(0, len(task.miner_responses), batch_size):
             batch = task.miner_responses[i : i + batch_size]
 
+            # Get the miner UIDs and create identifier tuples for logging
+            miner_uids = []
+
+            for miner_response in batch:
+                hotkey = miner_response.miner_hotkey
+                hotkey_short = hotkey[:6] if hotkey else "None"
+
+                try:
+                    uid = self.metagraph.hotkeys.index(hotkey) if hotkey else None
+                    miner_uids.append((hotkey_short, uid))
+                except ValueError:
+                    miner_uids.append((hotkey_short, None))
+
             logger.debug(f"Processing batch {i // batch_size + 1} of {num_batches}")
+            logger.info(f"Preparing requests to miners: {miner_uids}")
 
             tasks = [
                 self._update_miner_response(miner_response, obfuscated_to_real_model_id)
@@ -1161,9 +1176,39 @@ class Validator:
                 elif isinstance(result, Exception):
                     logger.error(f"Unexpected error: {result}")
 
-        logger.success(
-            f"Completed processing {len(updated_miner_responses)} miner responses in {num_batches} batches"
-        )
+            # After processing all results, determine successful and failed miners
+            successful_identifiers = []
+            failed_identifiers = []
+
+            # Get the hotkeys of successful miners from updated_miner_responses
+            successful_hotkeys = {
+                miner_response.miner_hotkey
+                for miner_response in updated_miner_responses
+                if miner_response.miner_hotkey
+            }
+
+            # Classify each miner as successful or failed
+            for idx, miner_response in enumerate(batch):
+                hotkey = miner_response.miner_hotkey
+                if not hotkey:
+                    continue
+
+                identifier = miner_uids[idx]
+                if hotkey in successful_hotkeys:
+                    successful_identifiers.append(identifier)
+                else:
+                    failed_identifiers.append(identifier)
+
+            # Log successful and failed miners
+            logger.debug(f"Successful responses from miners: {successful_identifiers}")
+            if failed_identifiers:
+                logger.warning(
+                    f"Failed to get responses from miners: {failed_identifiers}"
+                )
+
+            logger.success(
+                f"Completed processing {len(updated_miner_responses)} miner responses in {num_batches} batches"
+            )
         return updated_miner_responses
 
     async def _update_miner_response(
