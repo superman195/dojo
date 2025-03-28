@@ -67,7 +67,10 @@ class ORM:
                 "completions": {
                     "include": {"criterion": {"include": {"scores": True}}}
                 },
-                "miner_responses": {"include": {"scores": True}},
+                "miner_responses": {
+                    "include": {"scores": True},
+                    "where": {"task_result": {"equals": Json("{}")}},
+                },
                 "ground_truth": True,
             }
         )
@@ -111,6 +114,12 @@ class ORM:
                 take=batch_size,
             ),
         )
+        # TODO: remove after testing
+        # Check if first batch exists and has miner responses before logging
+        if first_batch and first_batch[0] and first_batch[0].miner_responses:
+            logger.debug(
+                f"First batch: {[miner_response.task_result for miner_response in first_batch[0].miner_responses]}"
+            )
 
         logger.debug(f"Count of unprocessed validator tasks: {task_count_unprocessed}")
 
@@ -126,6 +135,8 @@ class ORM:
                     [
                         map_miner_response_to_task_synapse_object(miner_response, task)
                         for miner_response in task.miner_responses
+                        if miner_response.task_result is None
+                        or miner_response.task_result == "{}"
                     ]
                     if task.miner_responses
                     else []

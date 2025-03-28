@@ -1128,7 +1128,9 @@ class Validator:
         """
         Returns a list of updated miner responses
         """
-        logger.info(f"Updating task results for task id: {task.validator_task.task_id}")
+        # logger.info(
+        #     f"Updating task results for task id: {task.validator_task.dojo_task_id}"
+        # )
         task_id: str = task.validator_task.task_id
         obfuscated_to_real_model_id: Dict[str, str] = await ORM.get_real_model_ids(
             task_id
@@ -1141,11 +1143,10 @@ class Validator:
         num_batches = math.ceil(len(task.miner_responses) / batch_size)
 
         for i in range(0, len(task.miner_responses), batch_size):
-            batch = task.miner_responses[i : i + batch_size]
+            batch: List[TaskSynapseObject] = task.miner_responses[i : i + batch_size]
 
             # Get the miner UIDs and create identifier tuples for logging
             miner_uids = []
-
             for miner_response in batch:
                 hotkey = miner_response.miner_hotkey
                 hotkey_short = hotkey[:6] if hotkey else "None"
@@ -1156,8 +1157,11 @@ class Validator:
                 except ValueError:
                     miner_uids.append((hotkey_short, None))
 
-            logger.debug(f"Processing batch {i // batch_size + 1} of {num_batches}")
-            logger.info(f"Preparing requests to miners: {miner_uids}")
+            logger.debug(
+                f"Processing miner responses batch {i // batch_size + 1} of {num_batches} for validator task request: {task.validator_task.task_id} "
+                f"to miners: {miner_uids}"
+            )
+            # logger.info(f"Preparing requests to miners: {miner_uids}")
 
             tasks = [
                 self._update_miner_response(miner_response, obfuscated_to_real_model_id)
@@ -1167,7 +1171,7 @@ class Validator:
 
             for result in results:
                 if result is None:
-                    logger.info("Result is None, skipping")
+                    # logger.info("Result is None, skipping")
                     pass
                 elif isinstance(result, TaskSynapseObject):
                     updated_miner_responses.append(result)
@@ -1241,7 +1245,7 @@ class Validator:
         )
 
         if not task_results:
-            logger.debug("No task results from miner, skipping")
+            # logger.debug("No task results from miner, skipping")
             return None
 
         # Update the task results in the database
