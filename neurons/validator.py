@@ -237,7 +237,7 @@ class Validator:
         ) = process_weights_for_netuid(  # type: ignore
             uids=uids.numpy(),
             weights=safe_normalized_weights.numpy(),
-            netuid=self.config.netuid,  # type: ignore
+            netuid=self.config.chain.netuid,
             subtensor=self.subtensor,
             metagraph=self.metagraph,
         )
@@ -294,6 +294,7 @@ class Validator:
         max_attempts = 5
         attempt = 0
         result = False
+        message = ""
         while attempt < max_attempts and not result:
             try:
                 logger.debug(
@@ -310,7 +311,7 @@ class Validator:
 
                 result, message = self.subtensor.set_weights(
                     wallet=self.wallet,
-                    netuid=self.config.netuid,  # type: ignore
+                    netuid=self.config.chain.netuid,  # type: ignore
                     uids=uids.tolist(),
                     weights=weights.tolist(),
                     wait_for_finalization=False,
@@ -410,7 +411,7 @@ class Validator:
         logger.debug(f"Rewards: {rewards}")
         # Update scores with rewards produced by this step.
         # shape: [ metagraph.n ]
-        alpha: float = self.config.neuron.moving_average_alpha
+        alpha = self.config.score.synthetic_ema_alpha
         # don't acquire lock here because we're already acquiring it in the CALLER
         async with self._scores_alock:
             _terminal_plot(
@@ -502,7 +503,7 @@ class Validator:
         """
         return (
             self.block - self.metagraph.last_update[self.uid]
-        ) > self.config.neuron.epoch_length
+        ) > self.config.chain.epoch_length
 
     def should_set_weights(self) -> bool:
         # Don't set weights on initialization.
@@ -512,7 +513,7 @@ class Validator:
         # Define appropriate logic for when set weights.
         return (
             self.block - self.metagraph.last_update[self.uid]
-        ) > self.config.neuron.epoch_length
+        ) > self.config.chain.epoch_length
 
     async def sync(self):
         has_connection = await self._ensure_subtensor_connection()
@@ -548,7 +549,7 @@ class Validator:
             if hasattr(self.subtensor.substrate, "websocket"):
                 self.subtensor.substrate.websocket.close()
 
-            self.subtensor = bt.subtensor(self.subtensor.config)
+            self.subtensor = bt.subtensor(self.config.chain.subtensor_network)
             await asyncio.sleep(1)
             return True
         except Exception as e:
@@ -856,12 +857,12 @@ class Validator:
         """
         try:
             is_registered = self.subtensor.is_hotkey_registered(
-                netuid=self.config.netuid,
+                netuid=self.config.chain.netuid,
                 hotkey_ss58=self.vali_hotkey,
             )
             if not is_registered:
                 raise ValueError(
-                    f"Wallet: {self.wallet} is not registered on netuid {self.config.netuid}. "
+                    f"Wallet: {self.wallet} is not registered on netuid {self.config.chain.netuid}. "
                     f"Please register the hotkey using `btcli s register` before trying again"
                 )
             return True

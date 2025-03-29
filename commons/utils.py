@@ -62,8 +62,9 @@ def get_effective_stake(hotkey: str, subtensor: bt.subtensor) -> float:
             subnet_metagraph.hotkeys.index(hotkey)
         ]
     except (ValueError, IndexError):
+        netuid = ObjectManager.get_config().chain.netuid
         logger.trace(
-            f"Hotkey {hotkey} not found in subnet metagraph for netuid: {subnet_metagraph.netuid}, defaulting to 0 alpha_stake"
+            f"Hotkey {hotkey} not found in subnet metagraph for netuid: {netuid}, defaulting to 0 alpha_stake"
         )
 
     effective_stake = (root_stake * ROOT_WEIGHT) + alpha_stake

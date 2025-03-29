@@ -39,7 +39,6 @@ def _check_fatal_errors(task: asyncio.Task):
 async def _shutdown_validator():
     logger.info("Performing shutdown tasks...")
     validator._should_exit = True
-    validator.executor.shutdown(wait=True)
     validator.subtensor.substrate.close()
     await validator.save_state()
     await SyntheticAPI.close_session()
