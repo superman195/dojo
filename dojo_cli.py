@@ -1,6 +1,5 @@
-import argparse
 from pathlib import Path
-from typing import Callable, Dict
+from typing import Callable
 
 import bittensor
 import requests
@@ -9,7 +8,7 @@ from prompt_toolkit.completion import FuzzyCompleter, WordCompleter
 from rich.console import Console
 
 from dojo import get_dojo_api_base_url
-from dojo.settings import get_config
+from dojo.settings import get_config, parse_cli_config
 from dojo.utils import source_dotenv
 
 get_config()
@@ -202,7 +201,7 @@ api_key_actions = {
     "delete": api_key_delete,
 }
 
-nested_actions: Dict[str, Callable] = {
+nested_actions: dict[str, Callable | dict[str, Callable]] = {
     "authenticate": get_session_cookies,
     "api_key": api_key_actions,
     "subscription_key": subscription_key_actions,
@@ -232,10 +231,9 @@ def flatten_nested_dict(d, parent_key="", sep=" "):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Bittensor Wallet CLI")
-    bittensor.wallet.add_args(parser)
-    config = bittensor.config(parser)
-    info(f"Using bittensor config:\n{config}")
+    parse_cli_config()
+    config = get_config()
+    info(f"Using Dojo CLI config: {config.model_dump()}")
 
     is_wallet_valid = False
     is_wallet_path_decided = False
@@ -267,6 +265,7 @@ def main():
         info(
             "Please specify the wallet coldkey name and hotkey name to perform key management."
         )
+        coldkey_path = Path(config.wallet.path)  # set a default path first
         if not is_coldkey_valid:
             # config.wallet.name = input("Enter the wallet coldkey name: ").strip()
             coldkeys = [
@@ -275,12 +274,12 @@ def main():
                 if f.is_dir()
             ]
             coldkey_completer = WordCompleter(coldkeys, ignore_case=True)
-            config.wallet.name = prompt(
+            config.wallet.coldkey = prompt(
                 "Enter the wallet coldkey name: ",
                 completer=coldkey_completer,
                 swap_light_and_dark_colors=False,
             ).strip()
-            coldkey_path = Path(config.wallet.path).expanduser() / config.wallet.name
+            coldkey_path = Path(config.wallet.path).expanduser() / config.wallet.coldkey
             if not coldkey_path.exists():
                 error(f"Coldkey path is invalid {coldkey_path}")
                 continue
@@ -315,7 +314,8 @@ def main():
     state = State(config)
     # method_completer = NestedCompleter.from_nested_dict(nested_dict_none(actions))
     flattened_actions = flatten_nested_dict(nested_actions)
-    method_completer = WordCompleter(words=flattened_actions.keys(), ignore_case=True)
+    completion_words: list[str] = list(flattened_actions.keys())
+    method_completer = WordCompleter(words=completion_words, ignore_case=True)
     session = PromptSession(
         completer=method_completer, swap_light_and_dark_colors=False
     )
