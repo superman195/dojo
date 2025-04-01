@@ -14,7 +14,7 @@ from neurons.miner import Miner
 
 
 class MinerSim(Miner):
-    def __init__(self):
+    async def __init__(self):
         super().__init__()
         try:
             # Initialize Redis connection
