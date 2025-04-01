@@ -31,7 +31,7 @@ class Miner(aobject):
 
     async def __init__(self):
         self.config = ObjectManager.get_config()
-        logger.info(self.config)
+        logger.info(self.config.model_dump_json())
 
         logger.info("Setting up bittensor objects....")
         self.wallet = bittensor.wallet(
@@ -344,11 +344,6 @@ class Miner(aobject):
             synapse, "scoring result", "Valid scoring result request from validator"
         )
 
-    def extract_synapse_info(self, synapse: bittensor.Synapse) -> str:
-        caller_hotkey = synapse.dendrite.hotkey
-        ip_addr = synapse.dendrite.ip or "Unknown IP"
-        return f"Hotkey: {caller_hotkey}, IP: {ip_addr}"
-
     async def _blacklist_function(
         self, synapse, request_tag: str, valid_msg: str
     ) -> Tuple[bool, str]:
@@ -410,7 +405,11 @@ class Miner(aobject):
         current_timestamp = datetime.fromtimestamp(get_epoch_time())
         dt = current_timestamp - datetime.fromtimestamp(synapse.epoch_timestamp)
         priority = float(dt.total_seconds())
-        logger.debug(f"Prioritizing {synapse.dendrite.hotkey} with value: {priority}")
+        if synapse.dendrite:
+            logger.debug(
+                f"Prioritizing {synapse.dendrite.hotkey} with value: {priority}"
+            )
+
         return priority
 
     async def resync_metagraph(self):
