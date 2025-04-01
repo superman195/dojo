@@ -313,7 +313,9 @@ class ORM:
             - List of indices for any failed batches
         """
         if not len(miner_responses):
-            logger.debug("Updating completion responses: nothing to update, skipping.")
+            logger.warning(
+                "Attempting to update miner responses: nothing to update, skipping."
+            )
             return True, []
 
         # Returns ceiling of the division to get number of batches to process
@@ -477,7 +479,7 @@ class ORM:
                         )
                         valid_miner_data.append(miner_data)
                     except InvalidMinerResponse as e:
-                        miner_hotkey = getattr(miner_response, "miner_hotkey", "??")
+                        miner_hotkey = miner_response.miner_hotkey
                         logger.debug(
                             f"Miner response from hotkey: {miner_hotkey} is invalid: {e}"
                         )

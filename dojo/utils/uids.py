@@ -5,9 +5,12 @@ from collections import defaultdict
 from typing import List
 
 import bittensor as bt
+from bittensor.utils.btlogging import logging as logger
 
+from commons.exceptions import FatalSubtensorConnectionError
 from commons.objects import ObjectManager
 from commons.utils import aget_effective_stake, get_effective_stake, keccak256_hash
+from dojo.chain import get_async_subtensor
 
 
 def is_uid_available(metagraph: bt.metagraph, uid: int) -> bool:
@@ -29,10 +32,17 @@ def is_miner(metagraph: bt.metagraph, uid: int) -> bool:
 
 async def extract_miner_uids() -> List[int]:
     config = ObjectManager.get_config()
-    async with bt.AsyncSubtensor(config=config) as subtensor:
-        block = await subtensor.get_current_block()
-        subnet_metagraph = await subtensor.metagraph(config.netuid, block=block)
-        root_metagraph = await subtensor.metagraph(0, block=block)
+    subtensor = await get_async_subtensor()
+    if not subtensor:
+        message = (
+            "Failed to connect to async subtensor during attempt to extract miner uids"
+        )
+        logger.error(message)
+        raise FatalSubtensorConnectionError(message)
+
+    block = await subtensor.get_current_block()
+    subnet_metagraph = await subtensor.metagraph(config.netuid, block=block)
+    root_metagraph = await subtensor.metagraph(0, block=block)
 
     from dojo import VALIDATOR_MIN_STAKE
 

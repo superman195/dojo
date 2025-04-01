@@ -17,7 +17,6 @@ import torch
 from bittensor.utils.btlogging import logging as logger
 from bittensor.utils.weight_utils import process_weights_for_netuid
 from torch.nn import functional as F
-from websocket import create_connection
 
 import dojo
 from commons.dataset.synthetic import SyntheticAPI
@@ -43,6 +42,7 @@ from commons.utils import (
     set_expire_time,
 )
 from dojo import get_latest_git_tag, get_latest_remote_tag, get_spec_version
+from dojo.chain import parse_block_headers
 from dojo.protocol import (
     CompletionResponse,
     CriteriaType,
@@ -140,9 +140,7 @@ class Validator:
         if not axons:
             logger.warning("No axons to send consensus to... skipping")
         else:
-            logger.debug(
-                f"Sending back scores to miners for task id: {synapse.task_id}"
-            )
+            logger.info(f"Sending back scores to miners for task id: {synapse.task_id}")
 
         await self.dendrite.forward(
             axons=axons, synapse=synapse, deserialize=False, timeout=30
@@ -232,16 +230,16 @@ class Validator:
         if isinstance(final_uids, np.ndarray):
             final_uids = torch.from_numpy(final_uids).to("cpu")
 
-        logger.debug(f"weights:\n{safe_normalized_weights}")
-        logger.debug(f"uids:\n{uids}")
+        logger.info(f"weights:\n{safe_normalized_weights}")
+        logger.info(f"uids:\n{uids}")
 
         _terminal_plot(
             f"pre-processed weights, block: {self.block}",
             safe_normalized_weights.numpy(),
         )
 
-        logger.debug(f"final weights:\n{final_weights}")
-        logger.debug(f"final uids:\n{final_uids}")
+        logger.info(f"final weights:\n{final_weights}")
+        logger.info(f"final uids:\n{final_uids}")
 
         _terminal_plot(
             f"final weights, block: {self.block}",
@@ -280,8 +278,9 @@ class Validator:
         attempt = 0
         result = False
         while attempt < max_attempts and not result:
+            message: str = ""
             try:
-                logger.debug(
+                logger.info(
                     f"Set weights attempt {attempt + 1}/{max_attempts} at block: {self.block},time: {time.time()}"
                 )
 
@@ -382,7 +381,7 @@ class Validator:
                 logger.warning("Old hotkey found from previous metagraph")
                 continue
 
-            logger.debug(f"Score for hotkey {key} is {value}")
+            logger.info(f"Score for hotkey {key} is {value}")
             rewards[uid] = value
 
             # self.scores is a tensor already based on uids
@@ -392,7 +391,7 @@ class Validator:
             if uid < len(self.scores):
                 existing_scores[uid] = self.scores[uid]
 
-        logger.debug(f"Rewards: {rewards}")
+        logger.info(f"Rewards: {rewards}")
         # Update scores with rewards produced by this step.
         # shape: [ metagraph.n ]
         alpha: float = self.config.neuron.moving_average_alpha
@@ -410,7 +409,7 @@ class Validator:
             _terminal_plot(
                 f"scores after update, block: {self.block}", self.scores.numpy()
             )
-        logger.debug(f"Updated scores: {self.scores}")
+        logger.info(f"Updated scores: {self.scores}")
 
     async def save_state(
         self,
@@ -426,7 +425,7 @@ class Validator:
             await ScoreStorage.save(self.scores)
             logger.success(f"📦 Saved validator state with scores: {self.scores}")
         except EmptyScores as e:
-            logger.debug(f"No need to to save validator state: {e}")
+            logger.info(f"No need to to save validator state: {e}")
         except Exception as e:
             logger.error(f"Failed to save validator state: {e}")
 
@@ -533,7 +532,10 @@ class Validator:
             if hasattr(self.subtensor.substrate, "websocket"):
                 self.subtensor.substrate.websocket.close()
 
-            self.subtensor = bt.subtensor(self.subtensor.config)
+            if hasattr(self.subtensor.substrate, "ws"):
+                self.subtensor.substrate.ws.close()
+
+            self.subtensor = bt.subtensor(config=self.subtensor.config)
             await asyncio.sleep(1)
             return True
         except Exception as e:
@@ -552,42 +554,6 @@ class Validator:
             except Exception as e:
                 logger.error(f"Unexpected error checking connection: {e}")
                 return False
-
-    async def _ensure_subtensor_ws_connected(
-        self, max_attempts: int = 5, sleep: int = 3
-    ):
-        if not self.subtensor.substrate.websocket:
-            logger.warning("Substrate websocket not initialized, skipping connection")
-            return False
-
-        attempts = 0
-        while (
-            not self.subtensor.substrate.websocket.connected and attempts < max_attempts
-        ):
-            try:
-                self.subtensor.substrate.websocket = create_connection(
-                    url=self.subtensor.substrate.url,  # type: ignore
-                    timeout=10,
-                    **self.subtensor.substrate.ws_options,
-                )
-                if self.subtensor.substrate.websocket.connected:
-                    logger.debug(
-                        f"Successfully connected to substrate websocket on attempt {attempts}"
-                    )
-                    return True
-                else:
-                    await asyncio.sleep(sleep)
-            finally:
-                attempts += 1
-
-        if not self.subtensor.substrate.websocket.connected:
-            logger.error(
-                "Failed to connect to substrate websocket after maximum attempts"
-            )
-            return False
-
-        logger.debug("Substrate websocket is already connected")
-        return True
 
     # ---------------------------------------------------------------------------- #
     #                         VALIDATOR CORE FUNCTIONS                             #
@@ -609,7 +575,7 @@ class Validator:
             await asyncio.sleep(dojo.VALIDATOR_HEARTBEAT)
             try:
                 all_miner_uids = await extract_miner_uids()
-                logger.debug(f"Sending heartbeats to {len(all_miner_uids)} miners")
+                logger.info(f"Sending heartbeats to {len(all_miner_uids)} miners")
 
                 axons: list[bt.AxonInfo] = [
                     self.metagraph.axons[uid] for uid in all_miner_uids
@@ -638,7 +604,7 @@ class Validator:
                 async with self._uids_alock:
                     self._active_miner_uids = active_uids
 
-                logger.debug(
+                logger.info(
                     f"⬇️ Heartbeats acknowledged by active miners: {sorted(active_uids)}"
                 )
             except Exception as e:
@@ -671,7 +637,7 @@ class Validator:
                         )
 
                 if self._should_exit:
-                    logger.debug("Validator should stop...")
+                    logger.info("Validator should stop...")
                     break
 
                 # Clear history after successful operations and to avoid memory leak
@@ -711,8 +677,8 @@ class Validator:
                     hours=2
                 )
                 expire_to = datetime_as_utc(datetime.now(timezone.utc))
-                logger.debug(
-                    f"Updating task results with expire_from: {expire_from} and expire_to: {expire_to}"
+                logger.info(
+                    f"Updating with expire_from: {expire_from} and expire_to: {expire_to}"
                 )
 
                 # Update task results before scoring
@@ -777,7 +743,7 @@ class Validator:
                     for hotkey, scores in hotkey_to_all_scores.items()
                     if scores
                 }
-                logger.debug(
+                logger.info(
                     f"📝 Got hotkey to score across all tasks between expire_at from:{expire_from} and expire_at to:{expire_to}: {final_hotkey_to_score}"
                 )
                 await self.update_scores(hotkey_to_scores=final_hotkey_to_score)
@@ -1002,7 +968,7 @@ class Validator:
         synapse.ground_truth = ground_truth
         synapse.dendrite.hotkey = self.vali_hotkey
 
-        logger.debug("Attempting to saving dendrite response")
+        logger.info("Attempting to saving dendrite response")
         if not await ORM.save_task(
             validator_task=synapse,
             miner_responses=valid_miner_responses,
@@ -1142,7 +1108,7 @@ class Validator:
         for i in range(0, len(task.miner_responses), batch_size):
             batch = task.miner_responses[i : i + batch_size]
 
-            logger.debug(f"Processing batch {i // batch_size + 1} of {num_batches}")
+            logger.info(f"Processing batch {i // batch_size + 1} of {num_batches}")
 
             tasks = [
                 self._update_miner_response(miner_response, obfuscated_to_real_model_id)
@@ -1151,10 +1117,7 @@ class Validator:
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for result in results:
-                if result is None:
-                    logger.info("Result is None, skipping")
-                    pass
-                elif isinstance(result, TaskSynapseObject):
+                if isinstance(result, TaskSynapseObject):
                     updated_miner_responses.append(result)
                 elif isinstance(result, InvalidMinerResponse):
                     logger.error(f"Invalid miner response: {result}")
@@ -1196,7 +1159,9 @@ class Validator:
         )
 
         if not task_results:
-            logger.debug("No task results from miner, skipping")
+            logger.info(
+                f"No task results from miner: {miner_response.axon.hotkey} for validator task id: {miner_response.task_id}, platform task id: {miner_response.dojo_task_id}, skipping"
+            )
             return None
 
         # Update the task results in the database
@@ -1218,7 +1183,7 @@ class Validator:
 
         # Check for completion responses
         if not miner_response.completion_responses:
-            logger.debug("No completion responses, skipping")
+            logger.info("No completion responses, skipping")
             return None
 
         for completion in miner_response.completion_responses:
@@ -1261,7 +1226,7 @@ class Validator:
             )
 
             if not responses or not responses[0]:
-                logger.debug(
+                logger.info(
                     f"No results from miner {miner_hotkey} for task {dojo_task_id}"
                 )
                 return []
@@ -1414,7 +1379,7 @@ class Validator:
             )
             return task.validator_task.task_id, {}
 
-        logger.debug(
+        logger.info(
             f"📝 Received {len(task.miner_responses)} responses from miners. "
             f"Processed {len(hotkey_to_completion_responses.keys())} responses for scoring."
         )
@@ -1453,6 +1418,7 @@ class Validator:
         return hotkey_to_dojo_task_scores_and_gt
 
     async def block_headers_callback(self, block: dict):
-        logger.trace(f"Received block headers{block}")
-        block_number = int(block.get("header", {}).get("number"))
+        logger.trace(f"Received block headers {block}")
+        block_header = parse_block_headers(block)
+        block_number = block_header.number.to_int()
         self._last_block = block_number
