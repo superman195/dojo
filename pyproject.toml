@@ -58,7 +58,8 @@ dependencies = [
   "websocket-client==1.8.0",
   "aioboto3==13.4.0",
   "aiofiles==24.1.0",
-  "python-multipart==0.0.20"
+  "python-multipart==0.0.20",
+  "async-lru==2.0.5"
 ]
 
 [project.optional-dependencies]
@@ -80,7 +81,8 @@ name = "cz_conventional_commits"
 exclude = ["**/__pycache__", "database/prisma", "wandb", ".nox"]
 reportRedeclaration = "none"
 reportDeprecated = true
-reportUnusedCallResult = 'none'
+reportUnusedCallResult = false
+typeCheckingMode = "basic"
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.

@@ -68,7 +68,7 @@ if [ "$1" = 'validator' ]; then
     --chain.netuid ${NETUID} \
     --chain.subtensor_network ${SUBTENSOR_NETWORK} \
     --chain.subtensor_endpoint ${SUBTENSOR_ENDPOINT} \
-    --logging.debug \
+    --logging.info \
     --wallet. ${WALLET_COLDKEY} \
     --wallet.hotkey ${WALLET_HOTKEY} \
     --neuron_type validator \
