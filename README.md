@@ -179,7 +179,7 @@ echo $0
 fnm --version
 
 # get npm & node, and verify npm installation
-fnm install lst/iron && npm --version
+fnm install lts/iron && npm --version
 
 # install pm2 and verify installation
 npm install -g pm2 && pm2 --version
