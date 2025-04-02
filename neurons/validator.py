@@ -616,6 +616,9 @@ class Validator:
         # This loop maintains the validator's operations until intentionally stopped.
         while True:
             try:
+                # Always clear the synapse history to avoid memory leak not just on success
+                self.dendrite.synapse_history.clear()
+
                 # Check if there are any active miners. If no active miners, skip the request generation.
                 if not self._active_miner_uids:
                     logger.info(
@@ -640,8 +643,6 @@ class Validator:
                     logger.info("Validator should stop...")
                     break
 
-                # Clear history after successful operations and to avoid memory leak
-                self.dendrite.synapse_history.clear()
                 self.step += 1
 
                 # Sync metagraph and potentially set weights.
@@ -653,6 +654,7 @@ class Validator:
                 return
             except FatalSyntheticGenerationError:
                 # if synthetic-API is unresponsive, shut down validator.
+                logger.error("Synthetic API is unresponsive, shutting down validator")
                 await self._cleanup()
                 raise
             # In case of unforeseen errors, the validator will log the error and continue operations.
@@ -687,7 +689,7 @@ class Validator:
                     expire_to=expire_to,
                 )
 
-                logger.success("✓ Task results updated successfully")
+                logger.success("Polling task results completed")
             except Exception:
                 logger.error("Error in updating task results")
                 traceback.print_exc()
@@ -766,8 +768,9 @@ class Validator:
             logger.info("Updating Dojo task completions...")
             batch_size: int = 10
 
+            # filter_empty_result=True to avoid processing task's result that has already updated.
             async for task_batch in self._get_task_batches(
-                batch_size, expire_from, expire_to
+                batch_size, expire_from, expire_to, filter_empty_result=True
             ):
                 if not task_batch:
                     continue
@@ -983,6 +986,12 @@ class Validator:
         )
         return
 
+    async def cleanup_resources(self):
+        while True:
+            if self.dendrite.synapse_history:
+                self.dendrite.synapse_history.clear()
+            await asyncio.sleep(300)
+
     @staticmethod
     async def _send_shuffled_requests(
         dendrite: bt.dendrite, axons: List[bt.AxonInfo], synapse: TaskSynapseObject
@@ -1071,12 +1080,14 @@ class Validator:
         batch_size: int,
         expire_from: datetime,
         expire_to: datetime,
+        filter_empty_result: bool = False,
     ) -> AsyncGenerator[List[DendriteQueryResponse], None]:
         """Get task in batches from the database"""
         async for task_batch, has_more_batches in ORM.get_expired_tasks(
             batch_size=batch_size,
             expire_from=expire_from,
             expire_to=expire_to,
+            filter_empty_result=filter_empty_result,
         ):
             # Yield task batch first before break if no more batches
             yield task_batch
@@ -1094,9 +1105,6 @@ class Validator:
         """
         Returns a list of updated miner responses
         """
-        # logger.info(
-        #     f"Updating task results for task id: {task.validator_task.dojo_task_id}"
-        # )
         task_id: str = task.validator_task.task_id
         obfuscated_to_real_model_id: Dict[str, str] = await ORM.get_real_model_ids(
             task_id
@@ -1109,25 +1117,16 @@ class Validator:
         num_batches = math.ceil(len(task.miner_responses) / batch_size)
 
         for i in range(0, len(task.miner_responses), batch_size):
-            batch: List[TaskSynapseObject] = task.miner_responses[i : i + batch_size]
+            batch: list[TaskSynapseObject] = task.miner_responses[i : i + batch_size]
 
             # Get the miner UIDs and create identifier tuples for logging
-            miner_uids = []
-            for miner_response in batch:
-                hotkey = miner_response.miner_hotkey
-                hotkey_short = hotkey[:6] if hotkey else "None"
-
-                try:
-                    uid = self.metagraph.hotkeys.index(hotkey) if hotkey else None
-                    miner_uids.append((hotkey_short, uid))
-                except ValueError:
-                    miner_uids.append((hotkey_short, None))
-
-            logger.debug(
+            miner_uids: list[tuple[str, int]] = self._extract_miners_hotkey_uid(
+                batch, self.metagraph
+            )
+            logger.info(
                 f"Processing miner responses batch {i // batch_size + 1} of {num_batches} for validator task request: {task.validator_task.task_id} "
                 f"to miners: {miner_uids}"
             )
-            # logger.info(f"Preparing requests to miners: {miner_uids}")
 
             tasks = [
                 self._update_miner_response(miner_response, obfuscated_to_real_model_id)
@@ -1144,33 +1143,17 @@ class Validator:
                     logger.error(f"Unexpected error: {result}")
 
             # After processing all results, determine successful and failed miners
-            successful_identifiers = []
-            failed_identifiers = []
-
-            # Get the hotkeys of successful miners from updated_miner_responses
-            successful_hotkeys = {
-                miner_response.miner_hotkey
-                for miner_response in updated_miner_responses
-                if miner_response.miner_hotkey
-            }
-
-            # Classify each miner as successful or failed
-            for idx, miner_response in enumerate(batch):
-                hotkey = miner_response.miner_hotkey
-                if not hotkey:
-                    continue
-
-                identifier = miner_uids[idx]
-                if hotkey in successful_hotkeys:
-                    successful_identifiers.append(identifier)
-                else:
-                    failed_identifiers.append(identifier)
+            successful_identifiers, failed_identifiers = self._classify_miner_results(
+                batch, updated_miner_responses, miner_uids
+            )
 
             # Log successful and failed miners
-            logger.debug(f"Successful responses from miners: {successful_identifiers}")
+            logger.info(
+                f"Successful miner responses for validator request id: {task.validator_task.task_id}: {successful_identifiers}"
+            )
             if failed_identifiers:
                 logger.warning(
-                    f"Failed to get responses from miners: {failed_identifiers}"
+                    f"Failed to get miner responses for validator request id: {task.validator_task.task_id}: {failed_identifiers}"
                 )
 
             logger.success(
@@ -1209,7 +1192,7 @@ class Validator:
 
         if not task_results:
             logger.info(
-                f"No task results from miner: {miner_response.axon.hotkey} for validator task id: {miner_response.task_id}, platform task id: {miner_response.dojo_task_id}, skipping"
+                f"No task results from miner: {miner_response.axon.hotkey} for dojo task id: {miner_response.dojo_task_id}, skipping"
             )
             return None
 
@@ -1471,3 +1454,70 @@ class Validator:
         block_header = parse_block_headers(block)
         block_number = block_header.number.to_int()
         self._last_block = block_number
+
+    def _extract_miners_hotkey_uid(
+        self, batch: list[TaskSynapseObject], metagraph: bt.metagraph
+    ) -> list[tuple[str, int]]:
+        """
+        Extract UIDs for miners based on their hotkeys.
+
+        Args:
+            batch: List of miner responses
+            metagraph: The metagraph containing hotkey information
+
+        Returns:
+            List of tuples containing (hotkey_short, uid)
+        """
+        miner_uids = []
+        for miner_response in batch:
+            hotkey = miner_response.miner_hotkey
+            hotkey_short = hotkey if hotkey else "None"
+
+            try:
+                uid = metagraph.hotkeys.index(hotkey) if hotkey else None
+                miner_uids.append((hotkey_short, uid))
+            except ValueError:
+                miner_uids.append((hotkey_short, None))
+
+        return miner_uids
+
+    def _classify_miner_results(
+        self,
+        batch: list[TaskSynapseObject],
+        updated_miner_responses: list[TaskSynapseObject],
+        miner_uids: list[tuple[str, int]],
+    ) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
+        """
+        Classify miners as successful or failed based on their responses.
+
+        Args:
+            batch: List of original miner responses
+            updated_miner_responses: List of successfully processed miner responses
+            miner_uids: List of (hotkey_short, uid) tuples from _extract_miners_hotkey_uid
+
+        Returns:
+            Tuple of (successful_identifiers, failed_identifiers)
+        """
+        # Get the hotkeys of successful miners from updated_miner_responses
+        successful_hotkeys = {
+            miner_response.miner_hotkey
+            for miner_response in updated_miner_responses
+            if miner_response.miner_hotkey
+        }
+
+        # Classify each miner as successful or failed
+        successful_identifiers = []
+        failed_identifiers = []
+
+        for idx, miner_response in enumerate(batch):
+            hotkey = miner_response.miner_hotkey
+            if not hotkey:
+                continue
+
+            identifier = miner_uids[idx]
+            if hotkey in successful_hotkeys:
+                successful_identifiers.append(identifier)
+            else:
+                failed_identifiers.append(identifier)
+
+        return successful_identifiers, failed_identifiers
