@@ -80,7 +80,7 @@ name = "cz_conventional_commits"
 [tool.pyright]
 exclude = ["**/__pycache__", "database/prisma", "wandb", ".nox"]
 reportUnusedCallResult = false
-typeCheckingMode = "basic"
+typeCheckingMode = "strict"
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.

@@ -4,7 +4,7 @@ All types related to Bittensor chain data.
 Configure as needed in __init__.py for module level access.
 """
 
-from typing import List
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -15,7 +15,7 @@ class HexString(str):
 
 
 class Digest(BaseModel):
-    logs: List[str]
+    logs: list[str]
 
 
 class BlockHeader(BaseModel):
@@ -26,7 +26,7 @@ class BlockHeader(BaseModel):
     digest: Digest
 
     @field_validator("number", mode="before")
-    def validate_number(cls, v):
+    def validate_number(cls, v: Any) -> HexString:
         if isinstance(v, str):
             return HexString(v)
         return v
