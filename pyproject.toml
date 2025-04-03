@@ -41,6 +41,7 @@ dependencies = [
   "pingouin==0.5.4",
   "prompt_toolkit==3.0.47",
   "pydantic==2.8.2",
+  "pydantic-settings==2.2.1",
   "python-dotenv==1.0.1",
   "scikit-learn==1.5.1",
   "scipy==1.14.0",
@@ -57,7 +58,8 @@ dependencies = [
   "websocket-client==1.8.0",
   "aioboto3==13.4.0",
   "aiofiles==24.1.0",
-  "python-multipart==0.0.20"
+  "python-multipart==0.0.20",
+  "async-lru==2.0.5"
 ]
 
 [project.optional-dependencies]
@@ -77,6 +79,8 @@ name = "cz_conventional_commits"
 
 [tool.pyright]
 exclude = ["**/__pycache__", "database/prisma", "wandb", ".nox"]
+reportUnusedCallResult = false
+typeCheckingMode = "strict"
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
