@@ -66,7 +66,11 @@ ObfuscatedModelMap: TypeAlias = dict[str, str]
 
 latest_local = get_latest_git_tag()
 latest_remote = get_latest_remote_tag()
-if latest_local != latest_remote:
+if (
+    latest_local
+    and latest_remote
+    and latest_local.strip("v") != latest_remote.strip("v")
+):
     logger.warning("Your repository is not up to date, and may fail to set weights.")
     logger.warning(
         f"latest local version: {latest_local}\nlatest remote version: {latest_remote}"

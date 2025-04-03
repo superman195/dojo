@@ -82,7 +82,7 @@ exclude = ["**/__pycache__", "database/prisma", "wandb", ".nox"]
 reportRedeclaration = "none"
 reportDeprecated = true
 reportUnusedCallResult = false
-typeCheckingMode = "basic"
+typeCheckingMode = "strict"
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
