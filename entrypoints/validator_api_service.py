@@ -1,6 +1,14 @@
+"""
+validator_api_service.py
+    API to receive data from validators.
+"""
+
 import asyncio
 import os
+from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import List
+from urllib.parse import urlparse
 
 import aioboto3
 import aiofiles
@@ -11,11 +19,75 @@ from bittensor.utils.btlogging import logging as logger
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
+from commons.api_settings import ValidatorAPISettings, get_settings
+from commons.cache import RedisCache
 from commons.objects import ObjectManager
-from commons.utils import get_effective_stake
-from dojo import VALIDATOR_MIN_STAKE
+from commons.utils import (
+    check_stake,
+    verify_hotkey_in_metagraph,
+    verify_signature,
+)
+from dojo.utils.config import source_dotenv
+from entrypoints.analytics_endpoint import analytics_router
 
-app = FastAPI(title="Validator API Service")
+source_dotenv()
+settings: ValidatorAPISettings = get_settings()
+cfg: bt.config = ObjectManager.get_config()
+bt.logging.set_debug(True)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.bt_cfg = cfg
+    app.state.api_config = settings.aws
+    app.state.redis = RedisCache(settings.redis)
+    app.state.subtensor = bt.subtensor(config=app.state.bt_cfg)
+
+    # Initialize metagraph once during startup
+    logger.info("Initializing metagraph...")
+    app.state.metagraph = app.state.subtensor.metagraph(app.state.bt_cfg.netuid)  # type: ignore
+    app.state.metagraph.sync(block=None, lite=True)
+    logger.info("Metagraph initialized successfully")
+
+    # Create task for periodic metagraph updates
+    app.state.metagraph_update_task = asyncio.create_task(
+        periodic_metagraph_update(app)
+    )
+    yield
+
+    # Cancel the metagraph update task
+    if hasattr(app.state, "metagraph_update_task"):
+        app.state.metagraph_update_task.cancel()
+        try:
+            await app.state.metagraph_update_task
+        except asyncio.CancelledError:
+            pass
+
+    await app.state.redis.close()
+    app.state.subtensor.close()
+
+
+# Periodic metagraph update function
+async def periodic_metagraph_update(app):
+    """Periodically updates the metagraph in the background"""
+    update_interval = 20 * 60  # Update every 20 minutes
+    while True:
+        try:
+            await asyncio.sleep(update_interval)
+            app.state.last_metagraph_update = datetime.now()
+            logger.info("Updating metagraph...")
+            app.state.metagraph = app.state.subtensor.metagraph(app.state.bt_cfg.netuid)
+            app.state.metagraph.sync(block=None, lite=True)
+            app.state.last_metagraph_update = datetime.now()
+            logger.info("Metagraph updated successfully")
+        except asyncio.CancelledError:
+            logger.info("Metagraph update task cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Error updating metagraph: {e}")
+
+
+app = FastAPI(title="Validator API Service", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,39 +95,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-config = ObjectManager.get_config()
-subtensor = bt.subtensor(config=config)
-metagraph = subtensor.metagraph(netuid=52, lite=True)
-AWS_REGION = os.getenv("AWS_REGION")
-BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
-MAX_CHUNK_SIZE_MB = int(os.getenv("MAX_CHUNK_SIZE_MB", 50))
 
-
-def verify_hotkey_in_metagraph(hotkey: str) -> bool:
-    return hotkey in metagraph.hotkeys
-
-
-def verify_signature(hotkey: str, signature: str, message: str) -> bool:
-    keypair = bt.Keypair(ss58_address=hotkey, ss58_format=42)
-    if not keypair.verify(data=message, signature=signature):
-        logger.error(f"Invalid signature for address={hotkey}")
-        return False
-
-    logger.success(f"Signature verified, signed by {hotkey}")
-    return True
-
-
-def check_stake(hotkey: str) -> bool:
-    stake = get_effective_stake(hotkey, subtensor)
-
-    if stake < VALIDATOR_MIN_STAKE:
-        logger.error(
-            f"Insufficient stake for hotkey {hotkey}: {stake} < {VALIDATOR_MIN_STAKE}"
-        )
-        return False
-
-    logger.info(f"Stake check passed for {hotkey} with stake {stake}")
-    return True
+# Routes:
+app.include_router(analytics_router)
 
 
 @app.post("/upload_dataset")
@@ -65,7 +107,11 @@ async def upload_dataset(
     message: str = Form(...),
     files: List[UploadFile] = File(...),
 ):
+    api_config = app.state.api_config
+
     try:
+        metagraph = app.state.metagraph
+
         if not signature.startswith("0x"):
             raise HTTPException(
                 status_code=401, detail="Invalid signature format, must be hex."
@@ -75,31 +121,33 @@ async def upload_dataset(
             logger.error(f"Invalid signature for address={hotkey}")
             raise HTTPException(status_code=401, detail="Invalid signature.")
 
-        if not verify_hotkey_in_metagraph(hotkey):
+        if not verify_hotkey_in_metagraph(metagraph, hotkey):
             logger.error(f"Hotkey {hotkey} not found in metagraph")
             raise HTTPException(
                 status_code=401, detail="Hotkey not found in metagraph."
             )
 
-        if not check_stake(hotkey):
+        if not check_stake(app.state.subtensor, hotkey):
             logger.error(f"Insufficient stake for hotkey {hotkey}")
             raise HTTPException(
                 status_code=401, detail="Insufficient stake for hotkey."
             )
 
-        session = aioboto3.Session(region_name=AWS_REGION)
+        session = aioboto3.Session(region_name=api_config.AWS_REGION)
         async with session.resource("s3") as s3:
-            bucket = await s3.Bucket(BUCKET_NAME)
+            bucket = await s3.Bucket(api_config.BUCKET_NAME)
             for file in files:
                 content = await file.read()
                 file_size = len(content)
-                if file_size > MAX_CHUNK_SIZE_MB * 1024 * 1024:  # 50MB in bytes
+                if (
+                    file_size > api_config.MAX_CHUNK_SIZE_MB * 1024 * 1024
+                ):  # 50MB in bytes
                     raise HTTPException(
                         status_code=413,
-                        detail=f"File too large. Maximum size is {MAX_CHUNK_SIZE_MB}MB",
+                        detail=f"File too large. Maximum size is {api_config.MAX_CHUNK_SIZE_MB}MB",
                     )
 
-                filename = f"hotkey_{hotkey}_{file.filename}"
+                filename = f"datasets/hotkey_{hotkey}_{file.filename}"
 
                 await bucket.put_object(
                     Key=filename,
@@ -117,7 +165,22 @@ async def upload_dataset(
 
 
 async def server():
-    config = uvicorn.Config(app, host="0.0.0.0", port=9999)
+    # host endpoint with .env VALIDATOR_API_BASE_URL var; default to localhost:9999
+    api_url = os.getenv("VALIDATOR_API_BASE_URL", "http://0.0.0.0:9999")
+    parsed_url = urlparse(api_url)
+    # Extract host and port
+    host = parsed_url.hostname or "0.0.0.0"
+    port = parsed_url.port or 9999
+
+    # Configure server
+    config = uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_level="debug",
+        timeout_notify=300,
+        timeout_keep_alive=240,
+    )
     server = uvicorn.Server(config)
     await server.serve()
 

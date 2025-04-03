@@ -179,7 +179,7 @@ echo $0
 fnm --version
 
 # get npm & node, and verify npm installation
-fnm install lst/iron && npm --version
+fnm install lts/iron && npm --version
 
 # install pm2 and verify installation
 npm install -g pm2 && pm2 --version
@@ -204,7 +204,7 @@ docker plugin install grafana/loki-docker-driver:3.3.2-amd64 --alias loki --gran
 ```
 
 4. Start local subtensor node (**optional**)
-   > The included subtensor service only expose 30333 (p2p) to the public, 9933 and 9944 are only accesssible internally in the docker network, feel free to change the configuration if required.
+   > The included subtensor service only exposes 30333 (p2p) to the public, 9933 and 9944 are only accessible internally in the docker network, feel free to change the configuration if required.
 
 ```bash
 # Mainnet
