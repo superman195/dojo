@@ -77,10 +77,9 @@ class DojoAPI:
     @staticmethod
     def serialize_task_request(data: TaskSynapseObject):
         output = dict(
-            task=data.task_type,
             prompt=data.prompt,
             responses=[],
-            task_type=str(data.task_type).upper(),
+            task_modality=str(data.task_type).upper(),
         )
 
         # Safety check for responses
