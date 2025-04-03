@@ -104,3 +104,11 @@ class SyntheticGenerationError(Exception):
     def __init__(self, message: str):
         self.message = message
         super().__init__(self.message)
+
+
+class FatalSubtensorConnectionError(Exception):
+    """Raised when a fatal error occurs when all attempts failed to connect to the subtensor."""
+
+    def __init__(self, message):
+        self.message = message
+        super().__init__(self.message)

@@ -96,7 +96,7 @@ class SyntheticAPI:
                             )
 
                         synthetic_qa = _map_synthetic_response(response_json["body"])
-                        logger.info("Synthetic QA generated and parsed successfully")
+                        logger.success("Synthetic QA generated and parsed successfully")
                         return synthetic_qa
         except RetryError:
             logger.error(
