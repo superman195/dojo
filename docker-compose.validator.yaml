@@ -42,6 +42,7 @@ services:
   synthetic-api:
     container_name: synthetic-api
     image: ghcr.io/tensorplex-labs/dojo-synthetic-api:main
+    restart: on-failure
     labels:
       com.centurylinklabs.watchtower.enable: "true"
     env_file:
@@ -88,6 +89,7 @@ services:
   validator:
     container_name: validator
     image: ghcr.io/tensorplex-labs/dojo:main
+    restart: on-failure
     labels:
       com.centurylinklabs.watchtower.enable: "true"
       com.centurylinklabs.watchtower.depends-on: "synthetic-api,postgres"
