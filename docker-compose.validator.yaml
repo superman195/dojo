@@ -16,10 +16,10 @@ networks:
     name: subtensor
 
 services:
-#  watchtower:
-#    extends:
-#      file: docker-compose.shared.yaml
-#      service: watchtower
+  #  watchtower:
+  #    extends:
+  #      file: docker-compose.shared.yaml
+  #      service: watchtower
 
   redis:
     extends:
@@ -114,6 +114,8 @@ services:
       driver: loki
       options:
         mode: non-blocking
+        no-file: 0
+        max-size: "50m"
         loki-url: "https://${DOJO_LOKI_URL}"
         loki-external-labels: "validator=${VALIDATOR_HOTKEY}"
 
