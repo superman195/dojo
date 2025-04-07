@@ -59,7 +59,6 @@ from dojo.protocol import (
 )
 from dojo.utils.config import get_config
 from dojo.utils.uids import extract_miner_uids, is_miner
-from entrypoints.analytics_upload import run_analytics_upload
 
 ObfuscatedModelMap: TypeAlias = Dict[str, str]
 
@@ -92,7 +91,7 @@ class Validator:
 
     def __init__(self):
         self.MAX_BLOCK_CHECK_ATTEMPTS = 3
-        self.QUALITY_WEIGHT=0.8
+        self.QUALITY_WEIGHT = 0.8
         self._last_block = None
         self._block_check_attempts = 0
         self._connection_lock = asyncio.Lock()
@@ -744,10 +743,13 @@ class Validator:
                 )
 
                 # average scores across all tasks being scored by this trigger to update_scores
-                # so miners moving average decay is lower 
+                # so miners moving average decay is lower
                 # we incentivise both quality and quantity, but quality has higher weight than quantity
                 final_hotkey_to_score = {
-                    hotkey: sum(scores) / len(scores) * self.QUALITY_WEIGHT + sum(scores) / len(processed_request_ids) * (1-self.QUALITY_WEIGHT)
+                    hotkey: sum(scores) / len(scores) * self.QUALITY_WEIGHT
+                    + sum(scores)
+                    / len(processed_request_ids)
+                    * (1 - self.QUALITY_WEIGHT)
                     for hotkey, scores in hotkey_to_all_scores.items()
                     if scores
                 }
@@ -758,9 +760,9 @@ class Validator:
 
                 # upload scores to analytics API after updating.
                 # record last successful upload time.
-                self.last_anal_upload_time = await run_analytics_upload(
-                    self._scores_alock, self.last_anal_upload_time, expire_to
-                )
+                # self.last_anal_upload_time = await run_analytics_upload(
+                #     self._scores_alock, self.last_anal_upload_time, expire_to
+                # )
             except Exception:
                 logger.error("Error in score_and_send_feedback")
                 traceback.print_exc()
