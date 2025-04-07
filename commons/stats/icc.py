@@ -3,7 +3,7 @@ import pandas as pd
 import pingouin as pg
 
 
-def _calculate_icc(hotkey_to_scores: dict[str, list[float]]) -> dict[str, float]:
+def calculate_icc(hotkey_to_scores: dict[str, list[float]]) -> dict[str, float]:
     """Calculate ICC for each rater against the mean of all other raters
 
     Args:
@@ -69,7 +69,7 @@ if __name__ == "__main__":
         "Rater3": [8.0, 7.5, 6.8, 9.5, 6.5],
         "Rater4": [7.2, 8.2, 6.2, 9.2, 7.8],
     }
-    icc_scores = _calculate_icc(data)
+    icc_scores = calculate_icc(data)
     # Display the results
     print("Inter-Rater Reliability (ICC) Scores:")
 
