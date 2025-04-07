@@ -26,14 +26,12 @@ from database.prisma.errors import PrismaError
 from database.prisma.models import (
     GroundTruth,
     HFLState,
-    MinerScore,
     ValidatorTask,
 )
 from database.prisma.types import (
     CriterionWhereInput,
     MinerResponseCreateWithoutRelationsInput,
     MinerResponseInclude,
-    MinerResponseWhereInput,
     MinerScoreCreateInput,
     MinerScoreUpdateInput,
     ValidatorTaskInclude,
@@ -812,50 +810,6 @@ class ORM:
         except:  # noqa: E722
             logger.error(f"Failed to get HFL State with current task id: {task_id}")
         return None
-
-    @staticmethod
-    async def get_miner_scores_for_completed_sf(
-        sf_task: ValidatorTask,
-    ) -> list[MinerScore]:
-        # Get all related data in a single query using nested includes
-        miner_responses = await prisma.minerresponse.find_many(
-            where=MinerResponseWhereInput(
-                {
-                    "validator_task_id": sf_task.id,
-                }
-            ),
-            include={
-                "scores": {
-                    "include": {
-                        "criterion_relation": True,
-                        "miner_response_relation": True,
-                    }
-                }
-            },
-        )
-
-        # Extract completion IDs from sf_task
-        completion_ids = (
-            [c.id for c in sf_task.completions]
-            if sf_task and sf_task.completions
-            else []
-        )
-
-        # Get all criteria in a single query
-        criteria = await prisma.criterion.find_many(
-            where={"completion_id": {"in": completion_ids}},
-        )
-
-        # Create ordering maps
-        criteria_order = {criterion.id: idx for idx, criterion in enumerate(criteria)}
-
-        # Flatten and sort miner scores
-        all_miner_scores = [
-            score for response in miner_responses for score in response.scores
-        ]
-        all_miner_scores.sort(key=lambda x: criteria_order[x.criterion_id])
-
-        return all_miner_scores
 
     @staticmethod
     async def get_original_or_parent_sf_task(sf_task_id: str):
