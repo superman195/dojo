@@ -92,6 +92,7 @@ class Validator:
 
     def __init__(self):
         self.MAX_BLOCK_CHECK_ATTEMPTS = 3
+        self.QUALITY_WEIGHT=0.8
         self._last_block = None
         self._block_check_attempts = 0
         self._connection_lock = asyncio.Lock()
@@ -743,9 +744,10 @@ class Validator:
                 )
 
                 # average scores across all tasks being scored by this trigger to update_scores
-                # so miners moving average decay is lower and we incentivise quality > quantity
+                # so miners moving average decay is lower 
+                # we incentivise both quality and quantity, but quality has higher weight than quantity
                 final_hotkey_to_score = {
-                    hotkey: sum(scores) / len(scores)
+                    hotkey: sum(scores) / len(scores) * self.QUALITY_WEIGHT + sum(scores) / len(processed_request_ids) * (1-self.QUALITY_WEIGHT)
                     for hotkey, scores in hotkey_to_all_scores.items()
                     if scores
                 }
