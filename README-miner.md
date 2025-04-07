@@ -57,8 +57,8 @@ Complete the .env file by changing / uncommenting the required variables
 | ----------------------- | ----------------------------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | SAS_SUBSTRATE_URL       | Substrate URL                 | Same as SUBTENSOR_ENDPOINT                              | Must match network configuration                                                        |
 | SAS_EXPRESS_PORT        | Sidecar Express server port   | 8081                                                    | Internal service port                                                                   |
-| SUBSTRATE_API_URL       | Substrate API URL             | sidecar:8081                                            | Internal service endpoint                                                               |
-| NEXT_PUBLIC_BACKEND_URL | Backend URL for Dojo UI       | http://localhost:3000                               | Must be accessible from UI                                                              |
+| SUBSTRATE_API_URL       | Substrate API URL             | http://sidecar:8081                                        | Internal service endpoint                                                               |
+| NEXT_PUBLIC_BACKEND_URL | Backend URL for Dojo UI       | http://worker-api:8080                               | Must be accessible from UI                                                              |
 | NEXT_PUBLIC_GA_TAG      | Google Analytics tag          | G-DEVELOPMENT                                           | For development environment                                                             |
 | DISABLE_CSP             | Disable Content Security Policy| true                                                    | Set to true to disable CSP restrictions                                                 |
 | SERVER_PORT             | Worker API server port        | 8080                                                    | Must not conflict with other services                                                   |
