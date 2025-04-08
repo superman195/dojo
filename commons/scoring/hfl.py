@@ -11,7 +11,40 @@ from database.prisma.models import Completion, HFLState, MinerScore, ValidatorTa
 from dojo.protocol import Scores
 
 
-async def calc_sf_score(task: ValidatorTask) -> dict[str, float]:
+async def score_hfl_tasks() -> dict[str, float]:
+    """MAIN DRIVER FUNCTION TO SCORE HFL TASKS"""
+    sf_tasks = await ORM.get_sf_tasks_by_status(status=HFLStatusEnum.SF_COMPLETED)
+
+    # average across a few?
+    hotkey_to_score: dict[str, float] = defaultdict(float)
+    TF_WEIGHTS = 0.7
+    SF_WEIGHT = 0.3
+    for task in sf_tasks:
+        # NOTE: we can only determine the score for a TF_TASK after SF_TASK is
+        # completed by comparing the increment/decrement in the ratings from miners
+        hotkey_to_tf_score = await _calc_tf_score(task)
+        if not hotkey_to_tf_score:
+            raise ValueError(f"Failed to calculate TF score for task {task.id}")
+
+        hotkey_to_sf_score = await _calc_sf_score(task)
+
+        for hotkey, tf_score in hotkey_to_tf_score.items():
+            hotkey_to_score[hotkey] = (
+                TF_WEIGHTS * tf_score + SF_WEIGHT * hotkey_to_sf_score.get(hotkey, 0.0)
+            )
+
+    return dict(hotkey_to_score)
+
+
+async def _calc_sf_score(task: ValidatorTask) -> dict[str, float]:
+    """Calculate SF Score, which is used when we don't have ground truth for the score feedback task.
+
+    Args:
+        task (ValidatorTask): Task to score
+
+    Returns:
+        dict[str, float]: Mapping of hotkey to score
+    """
     # ensure completion ordering
     task = ensure_miner_response_order(task)
     # NOTE: you cannot use Scoring.calculate_score because SF Task doesn't have ground truth
@@ -36,43 +69,15 @@ async def calc_sf_score(task: ValidatorTask) -> dict[str, float]:
     return hotkey_to_icc
 
 
-async def score_hfl_tasks() -> dict[str, float]:
-    """MAIN DRIVER FUNCTION TO SCORE HFL TASKS
-    ┌─────────────┐       ┌──────┐       ┌──────┐      ┌──────┐     ┌──────┐
-    │             │       │      │       │      │      │      │     │      │
-    │Original Task│──────▶│ TF_1 │──────▶│ SF_1 │─────▶│ TF_2 │────▶│ SF_2 │
-    │             │       │      │       │      │      │      │     │      │
-    └─────────────┘       └──────┘       └──────┘      └──────┘     └──────┘
-    """
-    sf_tasks = await ORM.get_sf_tasks_by_status(status=HFLStatusEnum.SF_COMPLETED)
-
-    # average across a few?
-    hotkey_to_score: dict[str, float] = defaultdict(float)
-    TF_WEIGHT = 0.7
-    SF_WEIGHT = 0.3
-    for task in sf_tasks:
-        # NOTE: we can only determine the score for a TF_TASK after SF_TASK is
-        # completed by comparing the increment/decrement in the ratings from miners
-        hotkey_to_tf_score = await calc_tf_score(task)
-        if not hotkey_to_tf_score:
-            raise ValueError(f"Failed to calculate TF score for task {task.id}")
-
-        hotkey_to_sf_score = await calc_sf_score(task)
-
-        for hotkey, tf_score in hotkey_to_tf_score.items():
-            hotkey_to_score[hotkey] = (
-                TF_WEIGHT * tf_score + SF_WEIGHT * hotkey_to_sf_score.get(hotkey, 0.0)
-            )
-
-    return dict(hotkey_to_score)
-
-
-def validate_task(task: ValidatorTask, hfl_state: HFLState) -> None:
-    """validate_task.
+def _validate_task(task: ValidatorTask, hfl_state: HFLState) -> None:
+    """Validate a task for HFL Scoring.
 
     Args:
         task (ValidatorTask): task
         hfl_state (HFLState): hfl_state
+
+    Returns:
+        None:
     """
     if not hfl_state.ValidatorTask or hfl_state.status == HFLStatusEnum.SF_COMPLETED:
         raise Exception("HFL State not ready for scoring")
@@ -87,10 +92,17 @@ def validate_task(task: ValidatorTask, hfl_state: HFLState) -> None:
         )
 
 
-async def calc_change_in_scores(
+async def _calc_change_in_scores(
     sf_task: ValidatorTask,
 ) -> tuple[dict[str, float], dict[str, Completion]]:
-    """calc_change_in_scores.
+    """Calculate the change in scores between an SF_TASK and its parent TF_TASK.
+    Or an SF_TASK and its original task.
+
+    ┌─────────────┐       ┌──────┐       ┌──────┐      ┌──────┐     ┌──────┐
+    │             │       │      │       │      │      │      │     │      │
+    │Original Task│──────▶│ TF_1 │──────▶│ SF_1 │─────▶│ TF_2 │────▶│ SF_2 │
+    │             │       │      │       │      │      │      │     │      │
+    └─────────────┘       └──────┘       └──────┘      └──────┘     └──────┘
 
     Args:
         sf_task (ValidatorTask): sf_task
@@ -127,19 +139,27 @@ async def calc_change_in_scores(
     return sf_cid_to_scores_delta, sf_cid_to_tf_completion
 
 
-async def calc_tf_score(sf_task: ValidatorTask):
-    """Use a completed SF_TASK to determine the TF_TASK score"""
+async def _calc_tf_score(sf_task: ValidatorTask) -> dict[str, float]:
+    """Calculate TF_TASK score, which happens after the corresponding SF_TASK is completed.
+
+    Args:
+        sf_task (ValidatorTask): sf_task
+
+    Returns:
+        dict[str, float]: Mapping of hotkey to score
+            or empty dict if validation fails or HFL State is not ready.
+    """
     sf_task_id = sf_task.id
     try:
         if (
             hfl_state := await ORM.get_hfl_state_by_current_task_id(sf_task_id)
         ) is not None:
-            validate_task(sf_task, hfl_state)
+            _validate_task(sf_task, hfl_state)
     except Exception as e:
         logger.error(f"Error validating task: {e}")
-        return
+        return {}
 
-    sf_cid_to_scores_delta, sf_cid_to_tf_completion = await calc_change_in_scores(
+    sf_cid_to_scores_delta, sf_cid_to_tf_completion = await _calc_change_in_scores(
         sf_task
     )
 
@@ -183,6 +203,10 @@ async def calc_tf_score(sf_task: ValidatorTask):
 async def get_tf_to_sf_completion_mapping(
     sf_task: ValidatorTask,
 ) -> dict[str, Completion]:
+    """Get the mapping of SF completion id to TF completion.
+    We map to Completion object instead of use dict[str,str] so that we don't
+    need to fetch from DB again later.
+    """
     if (sf_completion_ids := [comp.id for comp in sf_task.completions or []]) == []:
         logger.error(
             "No SF completions found, therefore unable to map TF to SF task completions"
