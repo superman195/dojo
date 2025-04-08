@@ -1,3 +1,11 @@
+class NoProcessedTasksYet(Exception):
+    """Exception raised when no processed tasks are found for uploading to analytics API."""
+
+    def __init__(self, message):
+        self.message = message
+        super().__init__(self.message)
+
+
 class NoNewExpiredTasksYet(Exception):
     """Exception raised when no expired tasks are found for processing."""
 
@@ -94,6 +102,14 @@ class SyntheticGenerationError(Exception):
     """Raised when synthetic QA generation fails"""
 
     def __init__(self, message: str):
+        self.message = message
+        super().__init__(self.message)
+
+
+class FatalSubtensorConnectionError(Exception):
+    """Raised when a fatal error occurs when all attempts failed to connect to the subtensor."""
+
+    def __init__(self, message):
         self.message = message
         super().__init__(self.message)
 

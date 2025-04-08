@@ -68,6 +68,9 @@ validator-up-deps:
 dojo-platform:
 	docker compose -f docker-compose.platform.yaml up -d
 
+dojo-platform-down:
+	docker compose -f docker-compose.platform.yaml down
+
 dojo-cli:
 	docker compose -f docker-compose.miner.yaml run --rm dojo-cli
 
@@ -89,6 +92,12 @@ miner-logs:
 
 validator-logs:
 	docker compose -f docker-compose.validator.yaml logs --since=1h -f validator
+
+worker-logs:
+	docker compose -f docker-compose.platform.yaml logs --since=1h -f worker-api
+
+worker-ui-logs:
+	docker compose -f docker-compose.platform.yaml logs --since=1h -f worker-ui
 
 # ---------------------------------------------------------------------------- #
 #                             LOCAL SUBTENSOR                                  #

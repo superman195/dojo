@@ -9,10 +9,12 @@ import bittensor
 from bittensor.core.metagraph import AsyncMetagraph
 from bittensor.utils.btlogging import logging as logger
 
+from commons.exceptions import FatalSubtensorConnectionError
 from commons.human_feedback.dojo import DojoAPI
 from commons.objects import ObjectManager
 from commons.utils import aget_effective_stake, aobject, get_epoch_time, serve_axon
 from dojo import MINER_STATUS, VALIDATOR_MIN_STAKE
+from dojo.chain import get_async_subtensor, parse_block_headers
 from dojo.protocol import (
     Heartbeat,
     ScoringResult,
@@ -80,20 +82,25 @@ class Miner(aobject):
     async def init_metagraphs(self):
         logger.info("Performing async init for miner")
         config = ObjectManager.get_config()
-        async with bittensor.AsyncSubtensor(config=config) as subtensor:
-            self.block = await subtensor.get_current_block()
-            # The metagraph holds the state of the network, letting us know about other validators and miners.
-            self.subnet_metagraph = await subtensor.metagraph(
-                config.netuid,  # type: ignore
-                block=self.block,
-            )
-            self.root_metagraph = await subtensor.metagraph(0, block=self.block)
-            self.subtensor = subtensor
-            # Check if the miner is registered on the Bittensor network before proceeding further.
-            await self.check_registered()
-            logger.info(f"Subtensor initialized, {self.subtensor}")
-            logger.info(f"Root metagraph initialized, {self.root_metagraph}")
-            logger.info(f"Subnet metagraph initialized, {self.subnet_metagraph}")
+        subtensor = await get_async_subtensor()
+        if not subtensor:
+            message = "Failed to connect to async subtensor during initialisation of validator"
+            logger.error(message)
+            raise FatalSubtensorConnectionError(message)
+
+        self.block = await subtensor.get_current_block()
+        # The metagraph holds the state of the network, letting us know about other validators and miners.
+        self.subnet_metagraph = await subtensor.metagraph(
+            config.netuid,  # type: ignore
+            block=self.block,
+        )
+        self.root_metagraph = await subtensor.metagraph(0, block=self.block)
+        self.subtensor = subtensor
+        # Check if the miner is registered on the Bittensor network before proceeding further.
+        await self.check_registered()
+        logger.info(f"Subtensor initialized, {self.subtensor}")
+        logger.info(f"Root metagraph initialized, {self.root_metagraph}")
+        logger.info(f"Subnet metagraph initialized, {self.subnet_metagraph}")
 
     async def run(self):
         """
@@ -464,5 +471,6 @@ class Miner(aobject):
 
     async def block_headers_callback(self, block: dict):
         logger.trace(f"Received block headers{block}")
-        block_number = int(block.get("header", {}).get("number"))
+        block_header = parse_block_headers(block)
+        block_number = block_header.number.to_int()
         self.block = block_number
