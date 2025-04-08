@@ -1,7 +1,6 @@
 import json
 
 import bittensor as bt
-from pydantic import BaseModel
 
 from commons.utils import datetime_to_iso8601_str, iso8601_str_to_datetime
 from database.prisma import Json
@@ -23,12 +22,7 @@ from dojo.protocol import (
     TextCriteria,
 )
 
-from .types import HFLEvent
-
-
-class Metadata(BaseModel):
-    git_tag: str
-    commit_hash: str
+from .types import HFLEvent, Metadata
 
 
 def _parse_hfl_events(hfl_state: HFLState) -> list[HFLEvent]:

@@ -11,3 +11,8 @@ class HFLEvent(BaseModel):
     task_id: str
     timestamp: str
     metadata: dict[str, Any]
+
+
+class Metadata(BaseModel):
+    git_tag: str
+    commit_hash: str
