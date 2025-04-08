@@ -59,6 +59,7 @@ from dojo.protocol import (
 )
 from dojo.utils.config import get_config
 from dojo.utils.uids import extract_miner_uids, is_miner
+from entrypoints.analytics_upload import run_analytics_upload
 
 ObfuscatedModelMap: TypeAlias = Dict[str, str]
 
@@ -760,9 +761,9 @@ class Validator:
 
                 # upload scores to analytics API after updating.
                 # record last successful upload time.
-                # self.last_anal_upload_time = await run_analytics_upload(
-                #     self._scores_alock, self.last_anal_upload_time, expire_to
-                # )
+                self.last_anal_upload_time = await run_analytics_upload(
+                    self._scores_alock, self.last_anal_upload_time, expire_to
+                )
             except Exception:
                 logger.error("Error in score_and_send_feedback")
                 traceback.print_exc()
