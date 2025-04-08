@@ -350,17 +350,24 @@ class Validator:
         # Zero out all hotkeys that have been replaced.
         for uid, hotkey in enumerate(previous_metagraph.hotkeys):
             if hotkey != self.metagraph.hotkeys[uid]:
-                self.scores[uid] = 0  # hotkey has been replaced
+                # hotkey has been replaced
+                self.scores[uid] = 0
+                self.hfl_scores[uid] = 0
 
         # Check to see if the metagraph has changed size.
         # If so, we need to add new hotkeys and moving averages.
         if len(previous_metagraph.hotkeys) < len(self.metagraph.hotkeys):
             # Update the size of the moving average scores.
-            new_moving_average = torch.zeros(len(self.metagraph.hotkeys))
+            new_scores = torch.zeros(len(self.metagraph.hotkeys))
             min_len = min(len(previous_metagraph.hotkeys), len(self.scores))
-            new_moving_average[:min_len] = self.scores[:min_len]
+            new_scores[:min_len] = self.scores[:min_len]
+
+            new_hfl_scores = torch.zeros(len(self.metagraph.hotkeys))
+            min_len = min(len(previous_metagraph.hotkeys), len(self.hfl_scores))
+            new_hfl_scores[:min_len] = self.hfl_scores[:min_len]
             async with self._scores_alock:
-                self.scores = torch.clamp(new_moving_average, min=0.0)
+                self.scores = torch.clamp(new_scores, min=0.0)
+                self.hfl_scores = torch.clamp(new_hfl_scores, min=0.0)
 
     async def update_scores(self, hotkey_to_scores: dict[str, float]):
         """Performs exponential moving average on the scores based on the rewards received from the miners,
