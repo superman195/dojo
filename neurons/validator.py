@@ -1458,22 +1458,3 @@ class Validator:
         logger.trace(f"Received block headers{block}")
         block_number = int(block.get("header", {}).get("number"))
         self._last_block = block_number
-
-    async def update_hfl_score(self, hotkey_to_tf_score):
-        async with self._scores_alock:
-            previous_hfl_scores = self.hfl_score
-            for hotkey, score in hotkey_to_tf_score:
-                try:
-                    uid = self.metagraph.hotkeys[hotkey]
-                    hfl_alpha = self.config.weights.hfl_ema_alpha  # type: ignore
-                    self.hfl_score[uid] = (
-                        hfl_alpha * hotkey_to_tf_score[hotkey]
-                        + (1 - hfl_alpha) * self.hfl_score[uid]
-                    )
-                except IndexError:
-                    logger.debug(
-                        f"Error getting uid from hotkey: {hotkey} from metagraph, must've deregistered"
-                    )
-
-            logger.info(f"Previous HFL Scores: {previous_hfl_scores}")
-            logger.info(f"Update HFL scores: {self.hfl_score}")
