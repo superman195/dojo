@@ -118,6 +118,9 @@ services:
         mode: non-blocking
         loki-url: "https://${DOJO_LOKI_URL}"
         loki-external-labels: "validator=${VALIDATOR_HOTKEY}"
+        # disable loki's default of not saving to a file, so we have persistence
+        no-file: 0
+        max-size: "50m"
 
   validator-api-service:
     container_name: validator-api-service
