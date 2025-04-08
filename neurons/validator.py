@@ -126,9 +126,8 @@ class Validator:
         self.scores: torch.Tensor = torch.zeros(
             len(self.metagraph.hotkeys), dtype=torch.float32
         )
-        # TODO: update based on outputs of scoring func
-        self.hfl_score = torch.Tensor = torch.zeros(
-            len(self.metagraph.hotkey), dtype=torch.float32
+        self.hfl_scores = torch.Tensor = torch.zeros(
+            len(self.metagraph.hotkeys), dtype=torch.float32
         )
         self.check_registered()
 
@@ -200,9 +199,10 @@ class Validator:
         The weights determine the trust and incentive level the validator assigns to miner nodes on the network.
         """
 
-        # ensure self.scores not being written to by other coroutines
-        # Check if self.scores contains any NaN values and log a warning if it does.
-        if torch.isnan(self.scores).any():
+        # ensure scores not being written to by other coroutines
+        # Check if scores contains any NaN values and log a warning if it does.
+        scores = await self.get_combined_score()
+        if torch.isnan(scores).any():
             logger.warning(
                 "Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
             )
@@ -210,7 +210,7 @@ class Validator:
         logger.info("Attempting to set weights")
 
         # ensure sum = 1
-        normalized_weights = F.normalize(self.scores.cpu(), p=1, dim=0)
+        normalized_weights = F.normalize(scores.cpu(), p=1, dim=0)
 
         safe_normalized_weights = normalized_weights
         if isinstance(normalized_weights, np.ndarray):
@@ -219,7 +219,7 @@ class Validator:
             pass
 
         # we don't read uids from metagraph because polling metagraph happens
-        # faster than calling set_weights and self.scores is already
+        # faster than calling set_weights and scores is already
         # based on uids, adjusted based on metagraph during `resync_metagraph`
         uids = torch.tensor(list(range(len(safe_normalized_weights))))
 
@@ -1438,3 +1438,24 @@ class Validator:
         block_header = parse_block_headers(block)
         block_number = block_header.number.to_int()
         self._last_block = block_number
+
+    async def get_combined_score(self) -> torch.FloatTensor:
+        """Combination of both synthetic task score and HFL task score
+
+        Returns:
+            torch.FloatTensor: Combined score tensor
+        """
+        # TODO: shift these to a config
+        synthetic_score_weight = 0.5
+        hfl_score_weight = 0.5
+        async with self._scores_alock:
+            # TODO: assignment of self.hfl_score
+            assert (
+                self.scores.shape == self.hfl_scores.shape
+            ), "Scores and HFL scores must be the same shape"
+            combined_score = (
+                synthetic_score_weight * self.scores
+                + hfl_score_weight * self.hfl_scores
+            )
+
+        return combined_score
