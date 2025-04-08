@@ -11,6 +11,7 @@ from commons.api.middleware import LimitContentLengthMiddleware
 from commons.block_subscriber import start_block_subscriber
 from commons.dataset.synthetic import SyntheticAPI
 from commons.exceptions import FatalSyntheticGenerationError
+from commons.logging import ValidatorAPILogHandler
 from commons.objects import ObjectManager
 from database.client import connect_db, disconnect_db
 from dojo.chain import get_async_subtensor
@@ -20,12 +21,31 @@ source_dotenv()
 
 validator = ObjectManager.get_validator()
 
+api_log_handler = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Performing startup tasks...")
     await connect_db()
+
+    # Setup validator API logging
+    global api_log_handler
+    api_log_handler = ValidatorAPILogHandler(
+        api_url=ObjectManager.get_config().api.url,
+        hotkey=validator.wallet.hotkey.ss58_address,
+        signature=validator.wallet.hotkey.sign("validator-api-logging"),
+    )
+    api_log_handler.start()
+    logger.addHandler(api_log_handler)
+
     yield
+
+    # Cleanup logging handler
+    if api_log_handler:
+        await api_log_handler.stop()
+        logger.removeHandler(api_log_handler)
+
     await _shutdown_validator()
 
 

@@ -194,3 +194,5 @@ scores/*.pt
 
 # migration logs
 migration_logs/
+
+test/
