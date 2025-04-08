@@ -369,6 +369,50 @@ class Validator:
                 self.scores = torch.clamp(new_scores, min=0.0)
                 self.hfl_scores = torch.clamp(new_hfl_scores, min=0.0)
 
+    def _calculate_incentives(
+        self,
+        metagraph_hotkeys: list[str],
+        hotkey_to_scores: dict[str, float],
+        scores_tensor: torch.FloatTensor,
+    ) -> tuple[torch.FloatTensor, torch.FloatTensor]:
+        # scores dimensions might have been updated after resyncing... len(uids) != len(self.scores)
+        new_incentives = torch.zeros((len(metagraph_hotkeys),))
+        existing_incentives = torch.zeros((len(metagraph_hotkeys),))
+        nan_value_indices = np.isnan(list(hotkey_to_scores.values()))
+        if nan_value_indices.any():
+            logger.warning(f"NaN values detected in rewards: {hotkey_to_scores}")
+            # Set NaN values to 0.0
+            hotkey_to_scores = {
+                key: (0.0 if np.isnan(value) else value)
+                for key, value in hotkey_to_scores.items()
+            }
+
+        for index, (key, value) in enumerate(hotkey_to_scores.items()):
+            # handle nan values
+            if nan_value_indices[index]:
+                new_incentives[key] = 0.0  # type: ignore
+            # search metagraph for hotkey and grab uid
+            try:
+                uid: int = self.metagraph.hotkeys.index(key)
+            except ValueError:
+                logger.warning("Old hotkey found from previous metagraph")
+                continue
+
+            logger.info(f"Score for hotkey {key} is {value}")
+            new_incentives[uid] = value
+
+            # scores_tensor is a tensor already based on uids
+            # use this logic to ensure
+            # 1. rewards and existing_scores are the same length
+            # 2. if hotkey is deregistered, the new participant will not benefit from existing scores
+            if uid < len(scores_tensor):
+                existing_incentives[uid] = scores_tensor[uid]
+
+        assert (
+            existing_incentives.shape == new_incentives.shape
+        ), "Existing incentives and new incentives must have same shape for consistency"
+        return existing_incentives, new_incentives
+
     async def update_scores(self, hotkey_to_scores: dict[str, float]):
         """Performs exponential moving average on the scores based on the rewards received from the miners,
         after setting the self.scores variable here, `set_weights` will be called to set the weights on chain.
@@ -377,55 +421,46 @@ class Validator:
             logger.warning("hotkey_to_scores is empty, skipping score update")
             return
 
-        nan_value_indices = np.isnan(list(hotkey_to_scores.values()))
-        if nan_value_indices.any():
-            logger.warning(f"NaN values detected in rewards: {hotkey_to_scores}")
-            return
+        hotkeys: list[str] = self.metagraph.hotkeys
+        existing_incentives, new_incentives = self._calculate_incentives(
+            metagraph_hotkeys=hotkeys,
+            hotkey_to_scores=hotkey_to_scores,
+            scores_tensor=self.scores,
+        )
 
-        # Compute forward pass rewards, assumes uids are mutually exclusive.
-        # scores dimensions might have been updated after resyncing... len(uids) != len(self.scores)
-        rewards = torch.zeros((len(self.metagraph.hotkeys),))
-        existing_scores = torch.zeros((len(self.metagraph.hotkeys),))
-        for index, (key, value) in enumerate(hotkey_to_scores.items()):
-            # handle nan values
-            if nan_value_indices[index]:
-                rewards[key] = 0.0  # type: ignore
-            # search metagraph for hotkey and grab uid
-            try:
-                uid = self.metagraph.hotkeys.index(key)
-            except ValueError:
-                logger.warning("Old hotkey found from previous metagraph")
-                continue
+        existing_hfl_incentives, new_hfl_incentives = self._calculate_incentives(
+            metagraph_hotkeys=hotkeys,
+            hotkey_to_scores=hotkey_to_scores,
+            scores_tensor=self.hfl_scores,
+        )
 
-            logger.info(f"Score for hotkey {key} is {value}")
-            rewards[uid] = value
+        logger.info(f"Incentives for synthetic tasks: {new_incentives}")
+        logger.info(f"Incentives for HFL tasks: {new_hfl_incentives}")
 
-            # self.scores is a tensor already based on uids
-            # use this logic to ensure
-            # 1. rewards and existing_scores are the same length
-            # 2. if hotkey is deregistered, the new participant will not benefit from existing scores
-            if uid < len(self.scores):
-                existing_scores[uid] = self.scores[uid]
-
-        logger.info(f"Rewards: {rewards}")
         # Update scores with rewards produced by this step.
-        # shape: [ metagraph.n ]
-        alpha: float = self.config.neuron.moving_average_alpha
-        # don't acquire lock here because we're already acquiring it in the CALLER
         async with self._scores_alock:
             _terminal_plot(
                 f"scores before update, block: {self.block}", self.scores.numpy()
             )
-            assert (
-                existing_scores.shape == rewards.shape
-            ), "Scores and rewards must be the same length when calculating moving average"
 
-            self.scores = alpha * rewards + (1 - alpha) * existing_scores
+            alpha: float = self.config.neuron.moving_average_alpha
+            self.scores = alpha * new_incentives + (1 - alpha) * existing_incentives
             self.scores = torch.clamp(self.scores, min=0.0)
             _terminal_plot(
                 f"scores after update, block: {self.block}", self.scores.numpy()
             )
+
+            beta: float = self.config.weights.hfl_ema_alpha
+            self.hfl_scores = (
+                beta * new_hfl_incentives + (1 - beta) * existing_hfl_incentives
+            )
+            self.hfl_scores = torch.clamp(self.hfl_scores, min=0.0)
+            _terminal_plot(
+                f"scores after update, block: {self.block}", self.hfl_scores.numpy()
+            )
+
         logger.info(f"Updated scores: {self.scores}")
+        logger.info(f"Updated HFL scores: {self.hfl_scores}")
 
     async def save_state(
         self,
