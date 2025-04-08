@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from commons.utils import datetime_to_iso8601_str, iso8601_str_to_datetime
 from database.prisma import Json
-from database.prisma.enums import CriteriaTypeEnum, HFLStatusEnum, TaskTypeEnum
+from database.prisma.enums import CriteriaTypeEnum, TaskTypeEnum
 from database.prisma.models import HFLState, MinerResponse, ValidatorTask
 from database.prisma.types import (
     CompletionCreateInput,
@@ -23,18 +23,12 @@ from dojo.protocol import (
     TextCriteria,
 )
 
+from .types import HFLEvent
+
 
 class Metadata(BaseModel):
     git_tag: str
     commit_hash: str
-
-
-# NOTE: this exists so we ca
-class HFLEvent(BaseModel):
-    type: HFLStatusEnum
-    task_id: str
-    timestamp: str
-    metadata: dict
 
 
 def _parse_hfl_events(hfl_state: HFLState) -> list[HFLEvent]:
