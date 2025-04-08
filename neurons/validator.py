@@ -929,7 +929,31 @@ class Validator:
         miner_responses: List[TaskSynapseObject] = await self._send_shuffled_requests(
             self.dendrite, axons, synapse
         )
+        valid_count = 0
+        fails = []
+        for response in miner_responses:
+            try:
+                status_code = response.dendrite.status_code
+            except Exception:
+                status_code = None
+            try:
+                logger.info(
+                    f"Miner hotkey: {response.axon.hotkey}, dojo_task_id: {response.dojo_task_id}, status_code: {status_code}"
+                )
+                if response.dojo_task_id:
+                    valid_count += 1
+                else:
+                    fails.append(
+                        (response.axon.hotkey, status_code, response.dojo_task_id)
+                    )
+            except Exception as e:
+                logger.error(f"Error logging miner response: {e}")
+                logger.info("dendrite", response.dendrite)
+                fails.append((response.axon.hotkey, status_code, response))
+                continue
 
+        logger.info(f"Fails: {fails}")
+        logger.info(f"Valid miner responses: {valid_count}")
         valid_miner_responses: List[TaskSynapseObject] = []
         for response in miner_responses:
             try:
