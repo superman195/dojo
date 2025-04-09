@@ -14,6 +14,7 @@ from commons.exceptions import FatalSyntheticGenerationError
 from commons.logging import ValidatorAPILogHandler
 from commons.objects import ObjectManager
 from database.client import connect_db, disconnect_db
+from dojo import get_dojo_api_base_url
 from dojo.chain import get_async_subtensor
 from dojo.utils.config import source_dotenv
 
@@ -31,20 +32,48 @@ async def lifespan(app: FastAPI):
 
     # Setup validator API logging
     global api_log_handler
+
     api_log_handler = ValidatorAPILogHandler(
-        api_url=ObjectManager.get_config().api.url,
+        api_url=get_dojo_api_base_url(),
         hotkey=validator.wallet.hotkey.ss58_address,
-        signature=validator.wallet.hotkey.sign("validator-api-logging"),
+        wallet=validator.wallet,
     )
     api_log_handler.start()
-    logger.addHandler(api_log_handler)
+
+    # Register with standard Python logging
+    import logging
+
+    python_logger = logging.getLogger()
+    python_logger.addHandler(api_log_handler)
+
+    # Create a bridging handler to capture bittensor logs
+    # This handler will forward messages from the standard Python
+    # logging system to our custom handler
+    class BitLogForwarder(logging.Handler):
+        def emit(self, record):
+            # Forward the log record to our custom handler
+            api_log_handler.emit(record)
+
+    # Add our forwarder to the bittensor logger
+    bt_logger = logging.getLogger("bittensor")
+    bt_forwarder = BitLogForwarder()
+    bt_logger.addHandler(bt_forwarder)
 
     yield
 
-    # Cleanup logging handler
+    # Cleanup logging handlers
     if api_log_handler:
         await api_log_handler.stop()
-        logger.removeHandler(api_log_handler)
+
+        # Remove from standard Python logger
+        import logging
+
+        python_logger = logging.getLogger()
+        python_logger.removeHandler(api_log_handler)
+
+        # Remove our forwarder from bittensor logger
+        bt_logger = logging.getLogger("bittensor")
+        bt_logger.removeHandler(bt_forwarder)
 
     await _shutdown_validator()
 

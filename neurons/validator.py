@@ -57,9 +57,9 @@ from dojo.protocol import (
     TaskSynapseObject,
     TaskTypeEnum,
 )
+from dojo.utils.analytics import run_analytics_upload
 from dojo.utils.config import get_config
 from dojo.utils.uids import extract_miner_uids, is_miner
-from entrypoints.analytics_upload import run_analytics_upload
 
 ObfuscatedModelMap: TypeAlias = Dict[str, str]
 
