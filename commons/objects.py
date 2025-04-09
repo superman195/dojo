@@ -13,8 +13,7 @@ class ObjectManager:
             from simulator.miner import MinerSim
 
             if cls._miner is None:
-                # TODO: might need to be async
-                cls._miner = MinerSim()
+                cls._miner = await MinerSim()
         else:
             from neurons.miner import Miner
 
