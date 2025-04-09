@@ -27,6 +27,7 @@ from database.prisma.errors import PrismaError
 from database.prisma.models import GroundTruth, ValidatorTask
 from database.prisma.types import (
     CriterionWhereInput,
+    FindManyMinerResponseArgsFromValidatorTask,
     MinerResponseCreateWithoutRelationsInput,
     MinerResponseInclude,
     MinerScoreCreateInput,
@@ -50,6 +51,7 @@ class ORM:
         batch_size: int = 10,
         expire_from: datetime | None = None,
         expire_to: datetime | None = None,
+        filter_empty_result: bool = False,
         is_processed: bool = False,
         has_previous_task: bool = False,
         task_type: TaskTypeEnum | None = None,
@@ -61,6 +63,7 @@ class ORM:
             expire_from: (datetime | None) If provided, only tasks with expire_at after expire_from will be returned.
             expire_to: (datetime | None) If provided, only tasks with expire_at before expire_to will be returned.
             You must determine the `expire_at` cutoff yourself, otherwise it defaults to current time UTC.
+            filter_empty_results: If True, only include miner_responses with empty task_result
             is_processed: (bool, optional): If True, only processed tasks will be returned. Defaults to False.
             has_previous_task: (bool, optional): Checks if task has a previous task. Defaults to False.
 
@@ -74,12 +77,20 @@ class ORM:
             - Boolean indicating if there are more batches to process
         """
 
+        # Create miner_responses include query
+        miner_responses_include: FindManyMinerResponseArgsFromValidatorTask = {
+            "include": {"scores": True}
+        }
+
+        if filter_empty_result:
+            miner_responses_include["where"] = {"task_result": {"equals": Json("{}")}}
+
         include_query = ValidatorTaskInclude(
             {
                 "completions": {
                     "include": {"criterion": {"include": {"scores": True}}}
                 },
-                "miner_responses": {"include": {"scores": True}},
+                "miner_responses": miner_responses_include,
                 "ground_truth": True,
             }
         )
@@ -128,7 +139,10 @@ class ORM:
                 take=batch_size,
             ),
         )
-
+        if first_batch and first_batch[0] and first_batch[0].miner_responses:
+            logger.debug(
+                f"First batch: {[miner_response.task_result for miner_response in first_batch[0].miner_responses]}"
+            )
         if is_processed:
             logger.debug(f"Count of processed validator tasks: {task_count}")
         else:
