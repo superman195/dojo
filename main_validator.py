@@ -1,4 +1,5 @@
 import asyncio
+import gc
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -37,6 +38,8 @@ def _check_fatal_errors(task: asyncio.Task):
     except FatalSyntheticGenerationError as e:
         logger.error(f"Fatal Error - shutting down validator: {e}")
         asyncio.create_task(_shutdown_validator())
+    finally:
+        gc.collect()
 
 
 async def _shutdown_validator():
@@ -89,6 +92,7 @@ async def main():
                 callbacks=[validator.block_headers_callback], max_interval_sec=60
             )
         ),
+        asyncio.create_task(validator.cleanup_resources()),
         asyncio.create_task(feedback_loop.run(validator)),
     ]
     # set a callback on validator.run() to check for fatal errors.
