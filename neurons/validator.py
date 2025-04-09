@@ -1154,6 +1154,8 @@ class Validator:
             expire_to=expire_to,
             filter_empty_result=filter_empty_result,
             is_processed=False,
+            has_previous_task=False,
+            task_type=TaskTypeEnum.CODE_GENERATION,
         ):
             # Yield task batch first before break if no more batches
             yield task_batch
