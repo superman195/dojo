@@ -2,15 +2,17 @@ import asyncio
 import json
 import random
 from datetime import datetime, timedelta, timezone
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 from bittensor.utils.btlogging import logging as logger
 
 import dojo
 from commons.exceptions import NoNewExpiredTasksYet
+from commons.hfl_heplers import HFLManager
 from commons.orm import ORM
 from commons.utils import datetime_as_utc, get_new_uuid, set_expire_time
-from database.prisma.models import MinerResponse, MinerScore
+from database.prisma.enums import HFLStatusEnum
+from database.prisma.models import HFLState, MinerResponse, MinerScore
 from database.prisma.types import MinerScoreWhereInput
 from dojo.protocol import (
     CriteriaType,
@@ -18,6 +20,7 @@ from dojo.protocol import (
     TaskSynapseObject,
     TaskTypeEnum,
     TextCriteria,
+    TextFeedbackEvent,
 )
 from neurons.validator import Validator
 
@@ -43,6 +46,20 @@ class FeedbackLoop:
                 selected_task, selected_completion
             )
             if text_criteria_task:
+                # Create HFLState for this feedback loop
+                hfl_state = await HFLManager.create_state(
+                    original_task_id=selected_task.task_id,
+                    current_task_id=text_criteria_task.task_id,
+                    status=HFLStatusEnum.TF_PENDING,
+                )
+
+                # We can't directly set hfl_state_id on the task object since it's not part of the TaskSynapseObject,
+                # this is a limitation in the current design, but we can still track the association
+                # via the HFLState table which has both IDs
+                logger.info(
+                    f"Created HFL state with ID: {hfl_state.id} for task: {text_criteria_task.task_id}"
+                )
+
                 # Call send_request with the text criteria task
                 await validator.send_request(
                     synapse=text_criteria_task,
@@ -50,6 +67,10 @@ class FeedbackLoop:
                     obfuscated_model_to_model=None,
                     synthetic_task=False,
                     subset_size=7,
+                )
+
+                logger.info(
+                    f"Started HFL with state ID: {hfl_state.id}, original task: {selected_task.task_id}, TF task: {text_criteria_task.task_id}"
                 )
 
     async def select_validator_task(self) -> Tuple[TaskSynapseObject, str] | None:
@@ -280,13 +301,21 @@ class FeedbackLoop:
 
     async def update_text_feedback_results(
         self, validator: Validator
-    ) -> dict[str, list[MinerResponse]]:
+    ) -> Dict[str, List[MinerResponse]]:
         """
         Updates task results for TEXT_TO_COMPLETION tasks that haven't been processed yet.
         Similar to validator.update_task_results but specifically for text feedback tasks.
+
+        Ensures each task has at least 3 responses before marking as processed.
+        If fewer than 3 responses are received, the task is sent to additional miners
+        until enough responses are collected.
         """
         # Dictionary to store selected responses by task ID
         selected_responses_by_task = {}
+
+        # Track tasks that have been sent for additional responses to avoid excessive retries
+        # Reset this tracking every function call so we don't accumulate stale data
+        self.resent_task_attempts = getattr(self, "resent_task_attempts", {})
 
         try:
             logger.info("Updating text feedback task results...")
@@ -298,6 +327,18 @@ class FeedbackLoop:
             expire_to = datetime_as_utc(datetime.now(timezone.utc))
 
             try:
+                # Find HFL states associated with TEXT_TO_COMPLETION tasks
+                hfl_states = await HFLState.prisma().find_many(
+                    where={
+                        "status": HFLStatusEnum.TF_PENDING,
+                    }
+                )
+
+                # Create a map of task IDs to HFL state IDs
+                hfl_state_map = {
+                    state.current_task_id: state.id for state in hfl_states
+                }
+
                 async for task_batch, has_more in ORM.get_expired_tasks(
                     batch_size=batch_size,
                     expire_from=expire_from,
@@ -321,27 +362,124 @@ class FeedbackLoop:
                     # Check which tasks have enough responses
                     for i, responses in enumerate(miner_responses_lists):
                         task = task_batch[i].validator_task
+                        task_id = task.task_id
                         response_count = len(responses) if responses else 0
+
+                        # Get the count of previous retry attempts, default to 0
+                        retry_count = self.resent_task_attempts.get(task_id, 0)
 
                         if response_count >= 3:
                             logger.info(
-                                f"Task {task.task_id} has {response_count} responses, marking as processed"
+                                f"Task {task_id} has {response_count} responses, marking as processed"
                             )
-                            sufficient_response_task_ids.append(task.task_id)
+                            sufficient_response_task_ids.append(task_id)
+
+                            # Remove from retry tracking if it was there
+                            if task_id in self.resent_task_attempts:
+                                del self.resent_task_attempts[task_id]
 
                             # Select 3 random responses for this task
                             selected_responses = random.sample(responses, 3)
                             selected_responses_by_task[task.task_id] = (
                                 selected_responses
                             )
+
+                            # Update HFLState if there's a state associated with this task
+                            hfl_state_id = hfl_state_map.get(task_id)
+                            if hfl_state_id:
+                                # Get the HFL state
+                                hfl_state = await HFLState.prisma().find_unique(
+                                    where={"id": hfl_state_id}
+                                )
+
+                                if hfl_state:
+                                    # Update HFLState to TF_COMPLETED
+                                    event_data = TextFeedbackEvent(
+                                        task_id=task_id,
+                                        iteration=hfl_state.current_iteration,
+                                        timestamp=datetime_as_utc(
+                                            datetime.now(timezone.utc)
+                                        ),
+                                    )
+
+                                    await HFLManager.update_state(
+                                        hfl_state_id=hfl_state.id,
+                                        updates={"status": HFLStatusEnum.TF_COMPLETED},
+                                        event_data=event_data,
+                                    )
+
+                                    logger.info(
+                                        f"Updated HFL state {hfl_state.id} to TF_COMPLETED for task {task_id}"
+                                    )
+
                             logger.info(
-                                f"Selected 3 random responses for task {task.task_id}"
+                                f"Selected {len(selected_responses)} responses for task {task_id}"
                             )
                         else:
-                            logger.info(
-                                f"Task {task.task_id} has only {response_count} responses, sending to more miners"
-                            )
-                            tasks_needing_more_responses.append(task)
+                            # Only retry up to a reasonable number of times (e.g., 5 attempts)
+                            # This prevents tasks that are consistently failing from being retried indefinitely
+                            MAX_RETRY_ATTEMPTS = 5
+
+                            if retry_count < MAX_RETRY_ATTEMPTS:
+                                # Increment retry count for this task
+                                self.resent_task_attempts[task_id] = retry_count + 1
+
+                                logger.info(
+                                    f"Task {task_id} has only {response_count} responses (attempt {retry_count + 1}/{MAX_RETRY_ATTEMPTS}), "
+                                    f"sending to more miners"
+                                )
+                                tasks_needing_more_responses.append(task)
+                            else:
+                                logger.warning(
+                                    f"Task {task_id} failed to get enough responses after {MAX_RETRY_ATTEMPTS} attempts. "
+                                    f"Using available {response_count} responses."
+                                )
+
+                                # Process the task with whatever responses we have
+                                if responses:
+                                    # Select all available responses (up to 3)
+                                    selected_responses = responses[
+                                        : min(3, response_count)
+                                    ]
+                                    selected_responses_by_task[task_id] = (
+                                        selected_responses
+                                    )
+                                    sufficient_response_task_ids.append(task_id)
+
+                                    # Update HFLState to TF_COMPLETED
+                                    hfl_state_id = hfl_state_map.get(task_id)
+                                    if hfl_state_id:
+                                        hfl_state = await HFLState.prisma().find_unique(
+                                            where={"id": hfl_state_id}
+                                        )
+
+                                        if hfl_state:
+                                            event_data = TextFeedbackEvent(
+                                                task_id=task_id,
+                                                iteration=hfl_state.current_iteration,
+                                                timestamp=datetime_as_utc(
+                                                    datetime.now(timezone.utc)
+                                                ),
+                                            )
+
+                                            await HFLManager.update_state(
+                                                hfl_state_id=hfl_state.id,
+                                                updates={
+                                                    "status": HFLStatusEnum.TF_COMPLETED
+                                                },
+                                                event_data=event_data,
+                                            )
+
+                                            logger.info(
+                                                f"Updated HFL state {hfl_state.id} to TF_COMPLETED for task {task_id} "
+                                                f"with only {response_count} responses"
+                                            )
+
+                                    logger.info(
+                                        f"Used all {response_count} available responses for task {task_id}"
+                                    )
+                                # Remove from tracking since we're done with this task
+                                del self.resent_task_attempts[task_id]
 
                     # Mark tasks with sufficient responses as processed
                     if sufficient_response_task_ids:

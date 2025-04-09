@@ -17,6 +17,7 @@ from dojo import MINER_STATUS, VALIDATOR_MIN_STAKE
 from dojo.chain import get_async_subtensor, parse_block_headers
 from dojo.protocol import (
     Heartbeat,
+    ScoreCriteria,
     ScoringResult,
     TaskResult,
     TaskResultRequest,
@@ -208,7 +209,7 @@ class Miner(aobject):
             # Log scores for each completion response
             for idx, completion in enumerate(miner_completion_responses):
                 for criteria in completion.criteria_types:
-                    if hasattr(criteria, "scores") and criteria.scores:
+                    if isinstance(criteria, ScoreCriteria) and criteria.scores:
                         scores = criteria.scores
                         # Log shared scores only once
                         if not shared_scores_logged:
