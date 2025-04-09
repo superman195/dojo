@@ -41,14 +41,23 @@ def get_caller_info() -> str | None:
 
 
 class CustomFormatter(logging.Formatter):
+    def __init__(self, fmt=None, datefmt=None):
+        super().__init__(fmt=fmt, datefmt=datefmt)
+        # Always enable detailed formatting
+        self.trace = True
+
+    # Support Bittensor's method but ignore the setting
+    def set_trace(self, value):
+        # Always keep trace as True regardless of the value passed
+        self.trace = True
+
     def format(self, record):
         caller_info = get_caller_info()
         if caller_info is None:
-            # if we fail to inspect stack, default to log_format
-            # log_format = "%(filename)s.%(funcName)s:%(lineno)s - %(message)s"
             caller_info = f"{record.filename}:{record.funcName}:{record.lineno}".rjust(
                 40
             )
+
         module_name, function_name, line_no = caller_info.split(":")
         record.name = module_name
         record.filename = function_name
@@ -62,13 +71,15 @@ custom_formatter = CustomFormatter(datefmt=date_format)
 
 
 def apply_custom_logging_format():
-    # Retrieve the existing Bittensor logger
-    bittensor_logger = logging.getLogger(
-        "bittensor"
-    )  # Ensure this matches the logger name you are using
-    # bittensor_logger.setLevel(logging.INFO)  # Set the logging level to INFO
+    # Get Bittensor's logging machine
+    bt_logging_machine = bt.logging
 
-    # Apply the custom formatter to each handler
+    # DIRECTLY SET TRACE MODE ON - to ensure we get the full log format
+    if hasattr(bt_logging_machine, "_stream_formatter"):
+        bt_logging_machine._stream_formatter.set_trace(True)
+
+    # Apply to bittensor logger handlers
+    bittensor_logger = logging.getLogger("bittensor")
     for handler in bittensor_logger.handlers:
         handler.setFormatter(custom_formatter)
 
@@ -92,18 +103,26 @@ def configure_logging(config: bt.config):
     """
     Configures logging based on the provided configuration.
     """
-    # Configure the global logging state from the config
-    bt.logging.set_config(config)
 
-    # Apply logging configurations based on the config
-    bt.logging.on()  # Default state: INFO level
     try:
+        # Configure global logging state
+        bt.logging.set_config(config)
+        bt.logging.on()
+
         if config.logging.trace:  # pyright: ignore[reportOptionalMemberAccess]
             bt.logging.set_trace(True)
         elif config.logging.debug:  # pyright: ignore[reportOptionalMemberAccess]
             bt.logging.set_debug(True)
-    except Exception:
-        pass
+        elif config.logging.info:  # pyright: ignore[reportOptionalMemberAccess]
+            bt.logging.set_info(True)
+        else:
+            # Default to INFO level
+            bt.logging.set_info(True)
+
+    except Exception as e:
+        print(f"Failed to configure logging: {str(e)}")
+        # Fallback to INFO level
+        bt.logging.set_info(True)
 
     # Optionally enable file logging if `record_log` and `logging_dir` are provided
     if config.record_log and config.logging_dir:

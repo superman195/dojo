@@ -252,6 +252,28 @@ class TaskResultRequest(bt.Synapse):
     )
 
 
+class AnalyticsData(BaseModel):
+    """
+    defines the structure for analytics data that will be sent by validators to the analytics endpoint.
+    """
+
+    validator_task_id: str
+    validator_hotkey: str
+    prompt: str
+    completions: List[dict]
+    ground_truths: List[dict]
+    scored_hotkeys: List[str]
+    absent_hotkeys: List[str]
+    miner_responses: List[dict]  # contains responses from all miners.
+    created_at: str
+    updated_at: str
+    metadata: dict | None
+
+
+class AnalyticsPayload(BaseModel):
+    tasks: List[AnalyticsData]
+
+
 class HFLEvent(BaseModel):
     type: str = Field(description="Type of the event")
     task_id: str = Field(description="ID of the task")

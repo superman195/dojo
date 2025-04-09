@@ -16,17 +16,17 @@ import numpy as np
 import torch
 from bittensor.utils.btlogging import logging as logger
 from bittensor.utils.weight_utils import process_weights_for_netuid
-from tenacity import RetryError
 from torch.nn import functional as F
-from websocket import create_connection
 
 import dojo
 from commons.dataset.synthetic import SyntheticAPI
 from commons.exceptions import (
     EmptyScores,
+    FatalSyntheticGenerationError,
     InvalidMinerResponse,
     NoNewExpiredTasksYet,
     SetWeightsFailed,
+    SyntheticGenerationError,
 )
 from commons.obfuscation.obfuscation_utils import obfuscate_html_and_js
 from commons.objects import ObjectManager
@@ -43,6 +43,7 @@ from commons.utils import (
 )
 from database.prisma.models import ValidatorTask
 from dojo import get_latest_git_tag, get_latest_remote_tag, get_spec_version
+from dojo.chain import parse_block_headers
 from dojo.protocol import (
     CompletionResponse,
     CriteriaType,
@@ -59,15 +60,20 @@ from dojo.protocol import (
 )
 from dojo.utils.config import get_config
 from dojo.utils.uids import extract_miner_uids, is_miner
+from entrypoints.analytics_upload import run_analytics_upload
 
 ObfuscatedModelMap: TypeAlias = Dict[str, str]
 
 
 latest_local = get_latest_git_tag()
 latest_remote = get_latest_remote_tag()
-if latest_local != latest_remote:
-    logger.warn("Your repository is not up to date, and may fail to set weights.")
-    logger.warn(
+if (
+    latest_local
+    and latest_remote
+    and latest_local.strip("v") != latest_remote.strip("v")
+):
+    logger.warning("Your repository is not up to date, and may fail to set weights.")
+    logger.warning(
         f"latest local version: {latest_local}\nlatest remote version: {latest_remote}"
     )
 
@@ -87,6 +93,7 @@ class Validator:
 
     def __init__(self):
         self.MAX_BLOCK_CHECK_ATTEMPTS = 3
+        self.QUALITY_WEIGHT = 0.8
         self._last_block = None
         self._block_check_attempts = 0
         self._connection_lock = asyncio.Lock()
@@ -112,7 +119,7 @@ class Validator:
             f"Running neuron on subnet: {self.config.netuid} with uid {self.uid}"
         )
         self.step = 0
-
+        self.last_anal_upload_time: datetime | None = None
         # Dendrite lets us send messages to other nodes (axons) in the network.
         self.dendrite = bt.dendrite(wallet=self.wallet)
         logger.info(f"Dendrite: {self.dendrite}")
@@ -139,9 +146,7 @@ class Validator:
         if not axons:
             logger.warning("No axons to send consensus to... skipping")
         else:
-            logger.debug(
-                f"Sending back scores to miners for task id: {synapse.task_id}"
-            )
+            logger.info(f"Sending back scores to miners for task id: {synapse.task_id}")
 
         await self.dendrite.forward(
             axons=axons, synapse=synapse, deserialize=False, timeout=30
@@ -231,16 +236,16 @@ class Validator:
         if isinstance(final_uids, np.ndarray):
             final_uids = torch.from_numpy(final_uids).to("cpu")
 
-        logger.debug(f"weights:\n{safe_normalized_weights}")
-        logger.debug(f"uids:\n{uids}")
+        logger.info(f"weights:\n{safe_normalized_weights}")
+        logger.info(f"uids:\n{uids}")
 
         _terminal_plot(
             f"pre-processed weights, block: {self.block}",
             safe_normalized_weights.numpy(),
         )
 
-        logger.debug(f"final weights:\n{final_weights}")
-        logger.debug(f"final uids:\n{final_uids}")
+        logger.info(f"final weights:\n{final_weights}")
+        logger.info(f"final uids:\n{final_uids}")
 
         _terminal_plot(
             f"final weights, block: {self.block}",
@@ -279,8 +284,9 @@ class Validator:
         attempt = 0
         result = False
         while attempt < max_attempts and not result:
+            message: str = ""
             try:
-                logger.debug(
+                logger.info(
                     f"Set weights attempt {attempt + 1}/{max_attempts} at block: {self.block},time: {time.time()}"
                 )
 
@@ -381,7 +387,7 @@ class Validator:
                 logger.warning("Old hotkey found from previous metagraph")
                 continue
 
-            logger.debug(f"Score for hotkey {key} is {value}")
+            logger.info(f"Score for hotkey {key} is {value}")
             rewards[uid] = value
 
             # self.scores is a tensor already based on uids
@@ -391,7 +397,7 @@ class Validator:
             if uid < len(self.scores):
                 existing_scores[uid] = self.scores[uid]
 
-        logger.debug(f"Rewards: {rewards}")
+        logger.info(f"Rewards: {rewards}")
         # Update scores with rewards produced by this step.
         # shape: [ metagraph.n ]
         alpha: float = self.config.neuron.moving_average_alpha
@@ -409,7 +415,7 @@ class Validator:
             _terminal_plot(
                 f"scores after update, block: {self.block}", self.scores.numpy()
             )
-        logger.debug(f"Updated scores: {self.scores}")
+        logger.info(f"Updated scores: {self.scores}")
 
     async def save_state(
         self,
@@ -425,7 +431,7 @@ class Validator:
             await ScoreStorage.save(self.scores)
             logger.success(f"📦 Saved validator state with scores: {self.scores}")
         except EmptyScores as e:
-            logger.debug(f"No need to to save validator state: {e}")
+            logger.info(f"No need to to save validator state: {e}")
         except Exception as e:
             logger.error(f"Failed to save validator state: {e}")
 
@@ -532,7 +538,10 @@ class Validator:
             if hasattr(self.subtensor.substrate, "websocket"):
                 self.subtensor.substrate.websocket.close()
 
-            self.subtensor = bt.subtensor(self.subtensor.config)
+            if hasattr(self.subtensor.substrate, "ws"):
+                self.subtensor.substrate.ws.close()
+
+            self.subtensor = bt.subtensor(config=self.subtensor.config)
             await asyncio.sleep(1)
             return True
         except Exception as e:
@@ -551,42 +560,6 @@ class Validator:
             except Exception as e:
                 logger.error(f"Unexpected error checking connection: {e}")
                 return False
-
-    async def _ensure_subtensor_ws_connected(
-        self, max_attempts: int = 5, sleep: int = 3
-    ):
-        if not self.subtensor.substrate.websocket:
-            logger.warning("Substrate websocket not initialized, skipping connection")
-            return False
-
-        attempts = 0
-        while (
-            not self.subtensor.substrate.websocket.connected and attempts < max_attempts
-        ):
-            try:
-                self.subtensor.substrate.websocket = create_connection(
-                    url=self.subtensor.substrate.url,  # type: ignore
-                    timeout=10,
-                    **self.subtensor.substrate.ws_options,
-                )
-                if self.subtensor.substrate.websocket.connected:
-                    logger.debug(
-                        f"Successfully connected to substrate websocket on attempt {attempts}"
-                    )
-                    return True
-                else:
-                    await asyncio.sleep(sleep)
-            finally:
-                attempts += 1
-
-        if not self.subtensor.substrate.websocket.connected:
-            logger.error(
-                "Failed to connect to substrate websocket after maximum attempts"
-            )
-            return False
-
-        logger.debug("Substrate websocket is already connected")
-        return True
 
     # ---------------------------------------------------------------------------- #
     #                         VALIDATOR CORE FUNCTIONS                             #
@@ -607,14 +580,11 @@ class Validator:
         while True:
             await asyncio.sleep(dojo.VALIDATOR_HEARTBEAT)
             try:
-                all_miner_uids = extract_miner_uids(metagraph=self.metagraph)
-                logger.debug(f"Sending heartbeats to {len(all_miner_uids)} miners")
+                all_miner_uids = await extract_miner_uids()
+                logger.info(f"Sending heartbeats to {len(all_miner_uids)} miners")
 
                 axons: list[bt.AxonInfo] = [
-                    self.metagraph.axons[uid]
-                    for uid in all_miner_uids
-                    if self.metagraph.axons[uid].hotkey.casefold()
-                    != self.vali_hotkey.casefold()
+                    self.metagraph.axons[uid] for uid in all_miner_uids
                 ]
 
                 # Send heartbeats in batches
@@ -640,7 +610,7 @@ class Validator:
                 async with self._uids_alock:
                     self._active_miner_uids = active_uids
 
-                logger.debug(
+                logger.info(
                     f"⬇️ Heartbeats acknowledged by active miners: {sorted(active_uids)}"
                 )
             except Exception as e:
@@ -652,6 +622,9 @@ class Validator:
         # This loop maintains the validator's operations until intentionally stopped.
         while True:
             try:
+                # Always clear the synapse history to avoid memory leak not just on success
+                self.dendrite.synapse_history.clear()
+
                 # Check if there are any active miners. If no active miners, skip the request generation.
                 if not self._active_miner_uids:
                     logger.info(
@@ -673,22 +646,23 @@ class Validator:
                         )
 
                 if self._should_exit:
-                    logger.debug("Validator should stop...")
+                    logger.info("Validator should stop...")
                     break
 
-                # Clear history after successful operations and to avoid memory leak
-                self.dendrite.synapse_history.clear()
                 self.step += 1
 
                 # Sync metagraph and potentially set weights.
                 await self.sync()
                 await asyncio.sleep(dojo.VALIDATOR_RUN)
-
             except KeyboardInterrupt:
                 # Handle shutdown gracefully
                 await self._cleanup()
                 return
-
+            except FatalSyntheticGenerationError:
+                # if synthetic-API is unresponsive, shut down validator.
+                logger.error("Synthetic API is unresponsive, shutting down validator")
+                await self._cleanup()
+                raise
             # In case of unforeseen errors, the validator will log the error and continue operations.
             except Exception as err:
                 logger.error(f"Error during validation: {err}")
@@ -698,18 +672,20 @@ class Validator:
         # Cleanup on exit
         await self._cleanup()
 
-    async def update_score_and_send_feedback(self):
+    async def update_tasks_polling(self):
+        """
+        Periodically updates task results for expired tasks every 15 minutes.
+        Decoupled from scoring function to allow more frequent updates.
+        """
         while True:
-            await asyncio.sleep(dojo.VALIDATOR_UPDATE_SCORE)
-            # for each hotkey, a list of scores from all tasks being scored
-            hotkey_to_all_scores = defaultdict(list)
+            await asyncio.sleep(dojo.VALIDATOR_UPDATE_TASK)  # 15 minutes
             try:
                 # Grab tasks that were expired TASK_DEADLINE duration ago
                 expire_from = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
                     hours=2
                 )
                 expire_to = datetime_as_utc(datetime.now(timezone.utc))
-                logger.debug(
+                logger.info(
                     f"Updating with expire_from: {expire_from} and expire_to: {expire_to}"
                 )
 
@@ -719,7 +695,32 @@ class Validator:
                     expire_to=expire_to,
                 )
 
-                logger.info("📝 performing scoring ...")
+                logger.success("Polling task results completed")
+            except Exception:
+                logger.error("Error in updating task results")
+                traceback.print_exc()
+            finally:
+                gc.collect()
+
+    async def score_and_send_feedback(self):
+        """
+        Periodically scores tasks and sends feedback every hour.
+        Uses a buffer period to ensure tasks have had sufficient update cycles.
+        """
+        while True:
+            await asyncio.sleep(dojo.VALIDATOR_UPDATE_SCORE)  # 60 minutes
+            # for each hotkey, a list of scores from all tasks being scored
+            hotkey_to_all_scores = defaultdict(list)
+            try:
+                # Get tasks that expired between 2 hours ago and 30 minutes ago
+                # This creates a 30-minute buffer to ensure tasks have been updated sufficiently
+                now = datetime.now()
+                expire_from = datetime_as_utc(now - timedelta(hours=2))
+                expire_to = datetime_as_utc(now - timedelta(seconds=dojo.BUFFER_PERIOD))
+
+                logger.info(
+                    f"📝 performing scoring, context: {expire_from=}, {expire_to=}"
+                )
                 processed_request_ids = []
 
                 batch_size = 10
@@ -744,20 +745,29 @@ class Validator:
                 )
 
                 # average scores across all tasks being scored by this trigger to update_scores
-                # so miners moving average decay is lower and we incentivise quality > quantity
+                # so miners moving average decay is lower
+                # we incentivise both quality and quantity, but quality has higher weight than quantity
                 final_hotkey_to_score = {
-                    hotkey: sum(scores) / len(scores)
+                    hotkey: sum(scores) / len(scores) * self.QUALITY_WEIGHT
+                    + sum(scores)
+                    / len(processed_request_ids)
+                    * (1 - self.QUALITY_WEIGHT)
                     for hotkey, scores in hotkey_to_all_scores.items()
                     if scores
                 }
-                logger.debug(
+                logger.info(
                     f"📝 Got hotkey to score across all tasks between expire_at from:{expire_from} and expire_at to:{expire_to}: {final_hotkey_to_score}"
                 )
                 await self.update_scores(hotkey_to_scores=final_hotkey_to_score)
 
+                # upload scores to analytics API after updating.
+                # record last successful upload time.
+                self.last_anal_upload_time = await run_analytics_upload(
+                    self._scores_alock, self.last_anal_upload_time, expire_to
+                )
             except Exception:
+                logger.error("Error in score_and_send_feedback")
                 traceback.print_exc()
-                pass
             finally:
                 gc.collect()
 
@@ -768,8 +778,9 @@ class Validator:
             logger.info("Updating Dojo task completions...")
             batch_size: int = 10
 
+            # filter_empty_result=True to avoid processing task's result that has already updated.
             async for task_batch in self._get_task_batches(
-                batch_size, expire_from, expire_to
+                batch_size, expire_from, expire_to, filter_empty_result=True
             ):
                 if not task_batch:
                     continue
@@ -827,7 +838,7 @@ class Validator:
     async def _cleanup(self):
         """Handle cleanup operations when shutting down"""
         self.axon.stop()
-        logger.success("Validator shutdown complete")
+        logger.success("Validator axon stopped")
 
     async def _generate_synthetic_request(
         self,
@@ -868,11 +879,18 @@ class Validator:
             )
 
             return synapse, data.ground_truth, obfuscated_model_to_model
-
-        except (RetryError, ValueError, aiohttp.ClientError) as e:
+        except (
+            ValueError,
+            aiohttp.ClientError,
+            SyntheticGenerationError,
+        ) as e:
             logger.error(
                 f"Failed to generate synthetic request: {type(e).__name__}: {str(e)}"
             )
+        except FatalSyntheticGenerationError as e:
+            # propagate FatalSyntheticGenerationError upstream to trigger validator shutdown.
+            logger.error("QA generation failed after all retry attempts")
+            raise e
         except Exception as e:
             logger.error(f"Unexpected error during synthetic data generation: {e}")
             logger.debug(f"Traceback: {traceback.format_exc()}")
@@ -920,12 +938,7 @@ class Validator:
                 f"Selected {subset_size} random miners from {len(self._active_miner_uids)} active miners"
             )
 
-        axons = [
-            axon
-            for uid in sel_miner_uids
-            if (axon := self.metagraph.axons[uid]).hotkey.casefold()
-            != self.vali_hotkey.casefold()
-        ]
+        axons = [self.metagraph.axons[uid] for uid in sel_miner_uids]
 
         if not axons:
             logger.warning("🤷 No axons to query ... skipping")
@@ -938,7 +951,31 @@ class Validator:
         miner_responses: List[TaskSynapseObject] = await self._send_requests_to_miners(
             self.dendrite, axons, synapse, synthetic_task
         )
+        valid_count = 0
+        fails = []
+        for response in miner_responses:
+            try:
+                status_code = response.dendrite.status_code
+            except Exception:
+                status_code = None
+            try:
+                logger.info(
+                    f"Miner hotkey: {response.axon.hotkey}, dojo_task_id: {response.dojo_task_id}, status_code: {status_code}"
+                )
+                if response.dojo_task_id:
+                    valid_count += 1
+                else:
+                    fails.append(
+                        (response.axon.hotkey, status_code, response.dojo_task_id)
+                    )
+            except Exception as e:
+                logger.error(f"Error logging miner response: {e}")
+                logger.info("dendrite", response.dendrite)
+                fails.append((response.axon.hotkey, status_code, response))
+                continue
 
+        logger.info(f"Fails: {fails}")
+        logger.info(f"Valid miner responses: {valid_count}")
         valid_miner_responses: List[TaskSynapseObject] = []
         for response in miner_responses:
             try:
@@ -1006,6 +1043,12 @@ class Validator:
             f"Sending request to miners & processing took {get_epoch_time() - start}"
         )
         return
+
+    async def cleanup_resources(self):
+        while True:
+            if self.dendrite.synapse_history:
+                self.dendrite.synapse_history.clear()
+            await asyncio.sleep(300)
 
     @staticmethod
     async def _send_requests_to_miners(
@@ -1102,12 +1145,14 @@ class Validator:
         batch_size: int,
         expire_from: datetime,
         expire_to: datetime,
+        filter_empty_result: bool = False,
     ) -> AsyncGenerator[List[DendriteQueryResponse], None]:
         """Get task in batches from the database"""
         async for task_batch, has_more_batches in ORM.get_expired_tasks(
             batch_size=batch_size,
             expire_from=expire_from,
             expire_to=expire_to,
+            filter_empty_result=filter_empty_result,
             is_processed=False,
         ):
             # Yield task batch first before break if no more batches
@@ -1138,9 +1183,16 @@ class Validator:
         num_batches = math.ceil(len(task.miner_responses) / batch_size)
 
         for i in range(0, len(task.miner_responses), batch_size):
-            batch = task.miner_responses[i : i + batch_size]
+            batch: list[TaskSynapseObject] = task.miner_responses[i : i + batch_size]
 
-            logger.debug(f"Processing batch {i // batch_size + 1} of {num_batches}")
+            # Get the miner UIDs and create identifier tuples for logging
+            miner_uids: list[tuple[str, int]] = self._extract_miners_hotkey_uid(
+                batch, self.metagraph
+            )
+            logger.info(
+                f"Processing miner responses batch {i // batch_size + 1} of {num_batches} for validator task request: {task.validator_task.task_id} "
+                f"to miners: {miner_uids}"
+            )
 
             tasks = [
                 self._update_miner_response(miner_response, obfuscated_to_real_model_id)
@@ -1149,19 +1201,30 @@ class Validator:
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for result in results:
-                if result is None:
-                    logger.info("Result is None, skipping")
-                    pass
-                elif isinstance(result, TaskSynapseObject):
+                if isinstance(result, TaskSynapseObject):
                     updated_miner_responses.append(result)
                 elif isinstance(result, InvalidMinerResponse):
                     logger.error(f"Invalid miner response: {result}")
                 elif isinstance(result, Exception):
                     logger.error(f"Unexpected error: {result}")
 
-        logger.success(
-            f"Completed processing {len(updated_miner_responses)} miner responses in {num_batches} batches"
-        )
+            # After processing all results, determine successful and failed miners
+            successful_identifiers, failed_identifiers = self._classify_miner_results(
+                batch, updated_miner_responses, miner_uids
+            )
+
+            # Log successful and failed miners
+            logger.info(
+                f"Successful miner responses for validator request id: {task.validator_task.task_id}: {successful_identifiers}"
+            )
+            if failed_identifiers:
+                logger.warning(
+                    f"Failed to get miner responses for validator request id: {task.validator_task.task_id}: {failed_identifiers}"
+                )
+
+            logger.success(
+                f"Completed processing {len(updated_miner_responses)} miner responses in {num_batches} batches"
+            )
         return updated_miner_responses
 
     async def _update_miner_response(
@@ -1194,7 +1257,9 @@ class Validator:
         )
 
         if not task_results:
-            logger.debug("No task results from miner, skipping")
+            logger.info(
+                f"No task results from miner: {miner_response.axon.hotkey} for dojo task id: {miner_response.dojo_task_id}, skipping"
+            )
             return None
 
         # Update the task results in the database
@@ -1216,7 +1281,7 @@ class Validator:
 
         # Check for completion responses
         if not miner_response.completion_responses:
-            logger.debug("No completion responses, skipping")
+            logger.info("No completion responses, skipping")
             return None
 
         for completion in miner_response.completion_responses:
@@ -1259,7 +1324,7 @@ class Validator:
             )
 
             if not responses or not responses[0]:
-                logger.debug(
+                logger.info(
                     f"No results from miner {miner_hotkey} for task {dojo_task_id}"
                 )
                 return []
@@ -1412,7 +1477,7 @@ class Validator:
             )
             return task.validator_task.task_id, {}
 
-        logger.debug(
+        logger.info(
             f"📝 Received {len(task.miner_responses)} responses from miners. "
             f"Processed {len(hotkey_to_completion_responses.keys())} responses for scoring."
         )
@@ -1451,6 +1516,74 @@ class Validator:
         return hotkey_to_dojo_task_scores_and_gt
 
     async def block_headers_callback(self, block: dict):
-        logger.debug(f"Received block headers{block}")
-        block_number = int(block.get("header", {}).get("number"))
+        logger.trace(f"Received block headers {block}")
+        block_header = parse_block_headers(block)
+        block_number = block_header.number.to_int()
         self._last_block = block_number
+
+    def _extract_miners_hotkey_uid(
+        self, batch: list[TaskSynapseObject], metagraph: bt.metagraph
+    ) -> list[tuple[str, int]]:
+        """
+        Extract UIDs for miners based on their hotkeys.
+
+        Args:
+            batch: List of miner responses
+            metagraph: The metagraph containing hotkey information
+
+        Returns:
+            List of tuples containing (hotkey_short, uid)
+        """
+        miner_uids = []
+        for miner_response in batch:
+            hotkey = miner_response.miner_hotkey
+            hotkey_short = hotkey if hotkey else "None"
+
+            try:
+                uid = metagraph.hotkeys.index(hotkey) if hotkey else None
+                miner_uids.append((hotkey_short, uid))
+            except ValueError:
+                miner_uids.append((hotkey_short, None))
+
+        return miner_uids
+
+    def _classify_miner_results(
+        self,
+        batch: list[TaskSynapseObject],
+        updated_miner_responses: list[TaskSynapseObject],
+        miner_uids: list[tuple[str, int]],
+    ) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
+        """
+        Classify miners as successful or failed based on their responses.
+
+        Args:
+            batch: List of original miner responses
+            updated_miner_responses: List of successfully processed miner responses
+            miner_uids: List of (hotkey_short, uid) tuples from _extract_miners_hotkey_uid
+
+        Returns:
+            Tuple of (successful_identifiers, failed_identifiers)
+        """
+        # Get the hotkeys of successful miners from updated_miner_responses
+        successful_hotkeys = {
+            miner_response.miner_hotkey
+            for miner_response in updated_miner_responses
+            if miner_response.miner_hotkey
+        }
+
+        # Classify each miner as successful or failed
+        successful_identifiers = []
+        failed_identifiers = []
+
+        for idx, miner_response in enumerate(batch):
+            hotkey = miner_response.miner_hotkey
+            if not hotkey:
+                continue
+
+            identifier = miner_uids[idx]
+            if hotkey in successful_hotkeys:
+                successful_identifiers.append(identifier)
+            else:
+                failed_identifiers.append(identifier)
+
+        return successful_identifiers, failed_identifiers

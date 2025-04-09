@@ -11,6 +11,10 @@ from tenacity import (
     wait_exponential,
 )
 
+from commons.exceptions import (
+    FatalSyntheticGenerationError,
+    SyntheticGenerationError,
+)
 from dojo.protocol import SyntheticQA
 
 SYNTHETIC_API_BASE_URL = os.getenv("SYNTHETIC_API_URL")
@@ -65,6 +69,7 @@ class SyntheticAPI:
         logger.debug(f"Generating synthetic QA from {path}.")
 
         MAX_RETRIES = 6
+
         try:
             async for attempt in AsyncRetrying(
                 stop=stop_after_attempt(MAX_RETRIES),
@@ -77,17 +82,30 @@ class SyntheticAPI:
                     async with cls._session.get(path) as response:
                         response.raise_for_status()
                         response_json = await response.json()
+                        if response_json["success"] is False:
+                            raise SyntheticGenerationError(
+                                message=response_json.get(
+                                    "error", "No error details provided"
+                                ),
+                            )
                         if "body" not in response_json:
-                            raise ValueError("Invalid response from the server.")
+                            raise SyntheticGenerationError(
+                                "Invalid response from the server. "
+                                "No body found in the response."
+                            )
+
                         synthetic_qa = _map_synthetic_response(response_json["body"])
-                        logger.info("Synthetic QA generated and parsed successfully")
+                        logger.success("Synthetic QA generated and parsed successfully")
                         return synthetic_qa
         except RetryError:
             logger.error(
                 f"Failed to generate synthetic QA after {MAX_RETRIES} retries."
             )
             traceback.print_exc()
-            raise
+            raise FatalSyntheticGenerationError(
+                "QA generation failed after all retry attempts"
+            )
+
         except Exception:
             raise
 

@@ -68,14 +68,17 @@ validator-up-deps:
 dojo-platform:
 	docker compose -f docker-compose.platform.yaml up -d
 
+dojo-platform-down:
+	docker compose -f docker-compose.platform.yaml down
+
 dojo-cli:
 	docker compose -f docker-compose.miner.yaml run --rm dojo-cli
 
 extract-dataset:
-	docker compose -f docker-compose.validator.yaml run --rm --remove-orphans extract-dataset
+	docker compose -f docker-compose.validator.yaml run --remove-orphans extract-dataset
 
 fill-score-column:
-	docker compose -f docker-compose.validator.yaml run --rm --remove-orphans fill-score-column
+	docker compose -f docker-compose.validator.yaml run --remove-orphans fill-score-column
 
 migration:
 	docker compose -f docker-compose.validator.yaml run --rm migration
@@ -84,14 +87,17 @@ migration:
 #                             CORE SERVICE LOGGING                             #
 # ---------------------------------------------------------------------------- #
 
-miner-decentralised-logs:
-	docker compose -f docker-compose.miner.yaml logs -f miner-decentralised
-
-miner-centralised-logs:
-	docker compose -f docker-compose.miner.yaml logs -f miner-centralised
+miner-logs:
+	docker compose -f docker-compose.miner.yaml logs --since=1h -f miner
 
 validator-logs:
-	docker compose -f docker-compose.validator.yaml logs -f validator
+	docker compose -f docker-compose.validator.yaml logs --since=1h -f validator
+
+worker-logs:
+	docker compose -f docker-compose.platform.yaml logs --since=1h -f worker-api
+
+worker-ui-logs:
+	docker compose -f docker-compose.platform.yaml logs --since=1h -f worker-ui
 
 # ---------------------------------------------------------------------------- #
 #                             LOCAL SUBTENSOR                                  #

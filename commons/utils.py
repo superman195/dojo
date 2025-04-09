@@ -14,9 +14,85 @@ import numpy as np
 import plotext
 import requests
 import torch
+from bittensor.core.metagraph import AsyncMetagraph
 from bittensor.utils.btlogging import logging as logger
 from Crypto.Hash import keccak
 from tenacity import RetryError, Retrying, stop_after_attempt, wait_exponential_jitter
+
+from commons.objects import ObjectManager
+
+ROOT_WEIGHT = 0.18
+ROOT_NETUID = 0
+
+
+class aobject:
+    """Inheriting this class allows you to define an async __init__.
+
+    So you can create objects by doing something like `await MyClass(params)`
+    """
+
+    async def __new__(cls, *a, **kw):
+        instance = super().__new__(cls)
+        await instance.__init__(*a, **kw)
+        return instance
+
+    async def __init__(self):
+        pass
+
+
+def get_effective_stake(hotkey: str, subtensor: bt.subtensor) -> float:
+    if isinstance(subtensor, bt.AsyncSubtensor):
+        raise NotImplementedError("Async subtensor not supported")
+
+    root_stake = 0
+    try:
+        root_metagraph = subtensor.metagraph(ROOT_NETUID)
+        root_stake = root_metagraph.S[root_metagraph.hotkeys.index(hotkey)].item()
+    except (ValueError, IndexError):
+        logger.trace(
+            f"Hotkey {hotkey} not found in root metagraph, defaulting to 0 root_stake"
+        )
+
+    alpha_stake = 0
+    try:
+        config = ObjectManager.get_config()
+        subnet_metagraph = subtensor.metagraph(netuid=config.netuid)  # type:ignore
+        alpha_stake = subnet_metagraph.alpha_stake[
+            subnet_metagraph.hotkeys.index(hotkey)
+        ]
+    except (ValueError, IndexError):
+        logger.trace(
+            f"Hotkey {hotkey} not found in subnet metagraph for netuid: {subnet_metagraph.netuid}, defaulting to 0 alpha_stake"
+        )
+
+    effective_stake = (root_stake * ROOT_WEIGHT) + alpha_stake
+
+    return effective_stake
+
+
+async def aget_effective_stake(
+    hotkey: str, root_metagraph: AsyncMetagraph, subnet_metagraph: AsyncMetagraph
+) -> float:
+    root_stake = 0
+    try:
+        root_stake = root_metagraph.S[root_metagraph.hotkeys.index(hotkey)].item()
+    except (ValueError, IndexError):
+        logger.trace(
+            f"Hotkey {hotkey} not found in root metagraph, defaulting to 0 root_stake"
+        )
+
+    alpha_stake = 0
+    try:
+        idx = subnet_metagraph.hotkeys.index(hotkey)
+        alpha_stake = subnet_metagraph.alpha_stake[idx]
+    except (ValueError, IndexError):
+        logger.trace(
+            f"Hotkey {hotkey} not found in subnet metagraph for netuid: {subnet_metagraph.netuid}, defaulting to 0 alpha_stake"
+        )
+
+    effective_stake = (root_stake * ROOT_WEIGHT) + alpha_stake
+
+    return effective_stake
 
 
 def _terminal_plot(
@@ -115,18 +191,23 @@ def log_retry_info(retry_state):
     )
 
 
-def serve_axon(
-    subtensor: bt.subtensor, axon: bt.axon, config: bt.config, max_attempts: int = 10
+async def serve_axon(
+    subtensor: bt.AsyncSubtensor,
+    axon: bt.axon,
+    config: bt.config,
+    max_attempts: int = 10,
 ) -> bool:
     """A wrapper around the underlying self.axon.serve(...) call with retries"""
     try:
         for attempt in Retrying(
             stop=stop_after_attempt(max_attempts),
             before_sleep=log_retry_info,
-            wait=wait_exponential_jitter(initial=6, max=24, jitter=1),
+            wait=wait_exponential_jitter(initial=12, max=60, jitter=1),
         ):
             with attempt:
-                serve_success = subtensor.serve_axon(netuid=config.netuid, axon=axon)
+                serve_success = await subtensor.serve_axon(
+                    netuid=config.netuid, axon=axon
+                )
                 if serve_success:
                     return True
 
@@ -363,3 +444,36 @@ def is_valid_expiry(expire_at: str) -> bool:
     else:
         logger.warning(f"Expiry time {expire_at} is out of the reasonable range.")
         return False
+
+
+def verify_hotkey_in_metagraph(metagraph: bt.metagraph, hotkey: str) -> bool:
+    """
+    returns true if input hotkey is in input metagraph, false otherwise.
+    """
+    return hotkey in metagraph.hotkeys
+
+
+def verify_signature(hotkey: str, signature: str, message: str) -> bool:
+    """
+    returns true if input signature was created by input hotkey for input message.
+    """
+    keypair = bt.Keypair(ss58_address=hotkey, ss58_format=42)
+    if not keypair.verify(data=message, signature=signature):
+        logger.error(f"Invalid signature for address={hotkey}")
+        return False
+
+    logger.success(f"Signature verified, signed by {hotkey}")
+    return True
+
+
+def check_stake(subtensor: bt.subtensor, hotkey: str) -> bool:
+    """
+    returns true if hotkey has enough stake to be a validator and false otherwise.
+    """
+    from dojo import VALIDATOR_MIN_STAKE
+
+    stake = get_effective_stake(hotkey, subtensor)
+
+    if stake < VALIDATOR_MIN_STAKE:
+        return False
+    return True

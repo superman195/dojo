@@ -10,6 +10,7 @@ from commons.exceptions import (
     ExpiredFromMoreThanExpireTo,
     InvalidMinerResponse,
     NoNewExpiredTasksYet,
+    NoProcessedTasksYet,
 )
 from commons.utils import datetime_as_utc
 from database.client import prisma, transaction
@@ -26,6 +27,7 @@ from database.prisma.errors import PrismaError
 from database.prisma.models import GroundTruth, ValidatorTask
 from database.prisma.types import (
     CriterionWhereInput,
+    FindManyMinerResponseArgsFromValidatorTask,
     MinerResponseCreateWithoutRelationsInput,
     MinerResponseInclude,
     MinerScoreCreateInput,
@@ -43,6 +45,7 @@ class ORM:
         batch_size: int = 10,
         expire_from: datetime | None = None,
         expire_to: datetime | None = None,
+        filter_empty_result: bool = False,
         is_processed: bool = False,
     ) -> AsyncGenerator[tuple[List[DendriteQueryResponse], bool], None]:
         """Returns batches of expired ValidatorTask records and a boolean indicating if there are more batches.
@@ -52,6 +55,7 @@ class ORM:
             expire_from: (datetime | None) If provided, only tasks with expire_at after expire_from will be returned.
             expire_to: (datetime | None) If provided, only tasks with expire_at before expire_to will be returned.
             You must determine the `expire_at` cutoff yourself, otherwise it defaults to current time UTC.
+            filter_empty_results: If True, only include miner_responses with empty task_result
             is_processed: (bool, optional): If True, only processed tasks will be returned. Defaults to False.
 
         Raises:
@@ -64,13 +68,20 @@ class ORM:
             - Boolean indicating if there are more batches to process
         """
 
-        # find all validator requests first
+        # Create miner_responses include query
+        miner_responses_include: FindManyMinerResponseArgsFromValidatorTask = {
+            "include": {"scores": True}
+        }
+
+        if filter_empty_result:
+            miner_responses_include["where"] = {"task_result": {"equals": Json("{}")}}
+
         include_query = ValidatorTaskInclude(
             {
                 "completions": {
                     "include": {"criterion": {"include": {"scores": True}}}
                 },
-                "miner_responses": {"include": {"scores": True}},
+                "miner_responses": miner_responses_include,
                 "ground_truth": True,
             }
         )
@@ -114,7 +125,10 @@ class ORM:
                 take=batch_size,
             ),
         )
-
+        if first_batch and first_batch[0] and first_batch[0].miner_responses:
+            logger.debug(
+                f"First batch: {[miner_response.task_result for miner_response in first_batch[0].miner_responses]}"
+            )
         if is_processed:
             logger.debug(f"Count of processed validator tasks: {task_count}")
         else:
@@ -319,7 +333,9 @@ class ORM:
             - List of indices for any failed batches
         """
         if not len(miner_responses):
-            logger.debug("Updating completion responses: nothing to update, skipping.")
+            logger.warning(
+                "Attempting to update miner responses: nothing to update, skipping."
+            )
             return True, []
 
         # Returns ceiling of the division to get number of batches to process
@@ -487,7 +503,7 @@ class ORM:
                         )
                         valid_miner_data.append(miner_data)
                     except InvalidMinerResponse as e:
-                        miner_hotkey = getattr(miner_response, "miner_hotkey", "??")
+                        miner_hotkey = miner_response.miner_hotkey
                         logger.debug(
                             f"Miner response from hotkey: {miner_hotkey} is invalid: {e}"
                         )
@@ -742,6 +758,103 @@ class ORM:
                 f"Error fetching completion scores and ground truths for dojo_task_id {dojo_task_id}: {e}"
             )
             return {}
+
+    @staticmethod
+    async def get_processed_tasks(
+        batch_size: int = 10,
+        expire_from: datetime | None = None,
+        expire_to: datetime | None = None,
+    ) -> AsyncGenerator[tuple[List[ValidatorTask], bool], None]:
+        """
+        Returns batches of processed ValidatorTask records and a boolean indicating if there are more batches.
+        Used to collect analytics data.
+
+        Args:
+            batch_size (int, optional): Number of tasks to return in a batch. Defaults to 10.
+            expire_from: (datetime | None) If provided, only tasks with expire_at after expire_from will be returned.
+            expire_to: (datetime | None) If provided, only tasks with expire_at before expire_to will be returned.
+            You must determine the `expire_at` cutoff yourself, otherwise it defaults to current time UTC.
+
+        Raises:
+            ExpiredFromMoreThanExpireTo: If expire_from is greater than expire_to
+            NoProcessedTasksYet: If no processed tasks are found for uploading.
+
+        Yields:
+            tuple[validator_task, bool]: Each yield returns:
+            - List of ValidatorTask records with their related completions, miner_responses, and GroundTruth
+            - Boolean indicating if there are more batches to process
+
+        @to-do: write unit test for this function.
+        """
+        # find all validator requests first
+        include_query = ValidatorTaskInclude(
+            {
+                "completions": {"include": {"criterion": True}},
+                "miner_responses": {"include": {"scores": True}},
+                "ground_truth": True,
+            }
+        )
+
+        # Set default expiry timeframe of 6 hours before the latest expired tasks
+        if not expire_from:
+            expire_from = (
+                datetime_as_utc(datetime.now(timezone.utc))
+                - timedelta(seconds=TASK_DEADLINE)
+                - timedelta(hours=6)
+            )
+        if not expire_to:
+            expire_to = datetime_as_utc(datetime.now(timezone.utc)) - timedelta(
+                seconds=TASK_DEADLINE
+            )
+
+        # Check that expire_from is lesser than expire_to
+        if expire_from > expire_to:
+            raise ExpiredFromMoreThanExpireTo(
+                "expire_from should be less than expire_to."
+            )
+
+        vali_where_query_processed = ValidatorTaskWhereInput(
+            {
+                # only check for expire at since miner may lie
+                "expire_at": {
+                    "gt": expire_from,
+                    "lt": expire_to,
+                },
+                "is_processed": True,
+            }
+        )
+
+        # Get total count and first batch of validator tasks in parallel
+        task_count_processed, first_batch = await asyncio.gather(
+            ValidatorTask.prisma().count(where=vali_where_query_processed),
+            ValidatorTask.prisma().find_many(
+                include=include_query,
+                where=vali_where_query_processed,
+                order={"created_at": "desc"},
+                take=batch_size,
+            ),
+        )
+
+        logger.debug(f"Count of processed validator tasks: {task_count_processed}")
+
+        if not task_count_processed:
+            raise NoProcessedTasksYet(
+                "No processed tasks found for uploading, wait for next scoring execution."
+            )
+
+        yield first_batch, task_count_processed > batch_size
+
+        # Process remaining batches
+        for skip in range(batch_size, task_count_processed, batch_size):
+            validator_tasks = await ValidatorTask.prisma().find_many(
+                include=include_query,
+                where=vali_where_query_processed,
+                order={"created_at": "desc"},
+                skip=skip,
+                take=batch_size,
+            )
+            has_more = (skip + batch_size) < task_count_processed
+            yield validator_tasks, has_more
 
     @staticmethod
     async def get_TF_tasks_by_hfl_status(
