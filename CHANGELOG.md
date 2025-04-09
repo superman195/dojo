@@ -1,3 +1,20 @@
+## [1.10.0](https://github.com/tensorplex-labs/dojo/compare/v1.9.0...v1.10.0) (2025-04-09)
+
+### Features
+
+* analytics API ([#114](https://github.com/tensorplex-labs/dojo/issues/114)) ([1379f5f](https://github.com/tensorplex-labs/dojo/commit/1379f5fb58d0d8b732d9e1448ca183268b54f1d1)), closes [#119](https://github.com/tensorplex-labs/dojo/issues/119)
+* **scoring:** balance tasks quality and quantity when score miner ([#157](https://github.com/tensorplex-labs/dojo/issues/157)) ([818351d](https://github.com/tensorplex-labs/dojo/commit/818351d2d2e82d8edc7940b4240ceafa6d123305))
+
+### Bug Fixes
+
+* properly compare git tags ([06b62bc](https://github.com/tensorplex-labs/dojo/commit/06b62bcee001ae25f5338df4ba6b73ed5d176cd3))
+* **scoring:** use right timedelta param ([2c25f8e](https://github.com/tensorplex-labs/dojo/commit/2c25f8ed1946f81b6241678b0e5a3e582df6e8f8))
+* update worker-ui service in dojo-platform ([#163](https://github.com/tensorplex-labs/dojo/issues/163)) ([14ac00e](https://github.com/tensorplex-labs/dojo/commit/14ac00e1fe97e2ea8c15b81138d6c27d2920ee8b))
+
+### Performance Improvements
+
+* **scoring:** add forward semaphore, retry ([#175](https://github.com/tensorplex-labs/dojo/issues/175)) ([347c008](https://github.com/tensorplex-labs/dojo/commit/347c008dd5e867e84970a44a96225bb5b1e13d66))
+
 ## [1.9.0](https://github.com/tensorplex-labs/dojo/compare/v1.8.0...v1.9.0) (2025-03-20)
 
 ### Features
