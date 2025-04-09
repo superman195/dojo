@@ -494,6 +494,9 @@ class ORM:
                     logger.error("Failed to map validator task")
                     return None
 
+                if prev_task_id:
+                    validator_task_data["previous_task_id"] = prev_task_id
+
                 created_task = await tx.validatortask.create(data=validator_task_data)
 
                 # Create completions separately, ValidatorTaskCreateInput does not support CompletionCreateInput
@@ -870,58 +873,145 @@ class ORM:
     @staticmethod
     async def get_TF_tasks_by_hfl_status(
         status: HFLStatusEnum,
-    ) -> list[ValidatorTask]:
-        """Get validator tasks by HFL status.
+        batch_size: int = 10,
+    ) -> AsyncGenerator[tuple[list[ValidatorTask], bool], None]:
+        """Get validator tasks by HFL status in batches.
 
         Args:
             status: HFL status to filter by
+            batch_size: Number of tasks to return in each batch
 
-        Returns:
-            List of validator tasks with the specified HFL status
+        Yields:
+            tuple[list[ValidatorTask], bool]: Each yield returns:
+            - List of validator tasks with the specified HFL status
+            - Boolean indicating if there are more batches to process
         """
         try:
-            tasks = await ValidatorTask.prisma().find_many(
-                where=ValidatorTaskWhereInput(
-                    task_type=TaskTypeEnum.TEXT_TO_COMPLETION,
-                    HFLState={
-                        "is": {
-                            "status": status,
-                        }
-                    },
-                ),
-                include={
-                    "HFLState": True,
+            where_query = ValidatorTaskWhereInput(
+                task_type=TaskTypeEnum.TEXT_TO_COMPLETION,
+                HFLState={
+                    "is": {
+                        "status": status,
+                    }
                 },
-                order={"created_at": "desc"},
             )
-            return tasks
+
+            # Get total count of matching tasks
+            total_tasks = await ValidatorTask.prisma().count(where=where_query)
+
+            if total_tasks == 0:
+                yield [], False
+                return
+
+            # Process in batches
+            for skip in range(0, total_tasks, batch_size):
+                tasks = await ValidatorTask.prisma().find_many(
+                    where=where_query,
+                    include={
+                        "HFLState": True,
+                    },
+                    order={"created_at": "desc"},
+                    take=batch_size,
+                    skip=skip,
+                )
+
+                has_more = skip + batch_size < total_tasks
+                yield tasks, has_more
+
         except Exception as e:
             logger.error(f"Error getting tasks by HFL status {status}: {e}")
-            return []
+            yield [], False
 
     @staticmethod
-    # TODO include table name in the query as needed
-    async def get_sf_tasks_by_status(
+    async def get_SF_tasks_by_hfl_status(
         status: HFLStatusEnum,
-    ) -> list[ValidatorTask]:
-        """Get Score-Feedback tasks by HFL status."""
+        expire_from: datetime | None = None,
+        expire_to: datetime | None = None,
+        batch_size: int = 10,
+    ) -> AsyncGenerator[tuple[list[ValidatorTask], bool], None]:
+        """Get Score-Feedback tasks by HFL status and expiry window in batches.
+
+        Args:
+            status: HFL status to filter by
+            expire_from: Optional datetime to filter tasks that expired after this time
+            expire_to: Optional datetime to filter tasks that expired before this time
+            batch_size: Number of tasks to return in each batch
+
+        Yields:
+            tuple[list[ValidatorTask], bool]: Each yield returns:
+            - List of validator tasks with the specified HFL status
+            - Boolean indicating if there are more batches to process
+        """
         try:
-            tasks = await ValidatorTask.prisma().find_many(
-                where=ValidatorTaskWhereInput(
-                    {
-                        "task_type": TaskTypeEnum.SCORE_FEEDBACK,
-                        "HFLState": {"is": {"status": status}},
-                    }
-                ),
-                include={
-                    "HFLState": True,
-                },
-                order={"created_at": "desc"},
+            where_query = ValidatorTaskWhereInput(
+                task_type=TaskTypeEnum.SCORE_FEEDBACK,
+                HFLState={"is": {"status": status}},
             )
-            return tasks
+
+            # Add expire time filters if provided
+            if expire_from and expire_to:
+                where_query["expire_at"] = {
+                    "gt": expire_from,
+                    "lt": expire_to,
+                }
+
+            # Get total count of matching tasks
+            total_tasks = await ValidatorTask.prisma().count(where=where_query)
+
+            if total_tasks == 0:
+                yield [], False
+                return
+
+            # Process in batches
+            for skip in range(0, total_tasks, batch_size):
+                tasks = await ValidatorTask.prisma().find_many(
+                    where=where_query,
+                    include={
+                        "HFLState": True,
+                        "miner_responses": True,
+                    },
+                    order={"created_at": "desc"},
+                    take=batch_size,
+                    skip=skip,
+                )
+
+                has_more = skip + batch_size < total_tasks
+                yield tasks, has_more
+
         except Exception as e:
             logger.error(f"Error getting SF tasks by status {status}: {e}")
-            return []
+            yield [], False
+
+    @staticmethod
+    async def create_hfl_completion_relation(
+        completion_id_pairs: List[tuple[str, str]],
+    ) -> bool:
+        """Create HFLCompletionRelation records connecting TF completions to SF completions.
+
+        Args:
+            completion_id_pairs: List of tuples with (tf_completion_id, sf_completion_id) pairs
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Create a relation for each (tf_id, sf_id) pair
+            async with prisma.tx() as tx:
+                for tf_id, sf_id in completion_id_pairs:
+                    await tx.hflcompletionrelation.create(
+                        data={
+                            "tf_completion_id": tf_id,
+                            "sf_completion_id": sf_id,
+                        }
+                    )
+
+            logger.success(
+                f"Created {len(completion_id_pairs)} HFLCompletionRelation records"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to create HFLCompletionRelation records: {e}")
+            return False
 
 
 # ---------------------------------------------------------------------------- #
