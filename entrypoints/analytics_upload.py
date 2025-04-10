@@ -9,6 +9,7 @@ import json
 import os
 import traceback
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import List
 
 import bittensor as bt
@@ -221,7 +222,7 @@ async def run_analytics_upload(
             all_miners = await _get_all_miner_hotkeys(subnet_metagraph, root_metagraph)
 
         # 1. collect processed tasks from db
-        anal_data = await _get_task_data(
+        anal_data: AnalyticsPayload = await _get_task_data(
             validator_hotkey, all_miners, expire_from, expire_to
         )
 
@@ -233,18 +234,41 @@ async def run_analytics_upload(
             signature = f"0x{signature}"
 
         try:
-            res = await _post_task_data(
-                payload=anal_data,
-                hotkey=validator_hotkey,
-                signature=signature,
-                message=message,
-            )
+            # todo: re-enable in prod
+            # disable s3 upload for testnet. Save to local instead
+            # res = await _post_task_data(
+            #     payload=anal_data,
+            #     hotkey=validator_hotkey,
+            #     signature=signature,
+            #     message=message,
+            # )
 
             # if upload was successful, return new upload time
             # else return last successful upload time
-            if res and res.status_code == 200:
-                return expire_to
-            return last_analytics_upload_time
+            # if res and res.status_code == 200:
+            #     return expire_to
+
+            # return last_analytics_upload_time
+
+            # todo: remove in prod
+            # for testnet save to local
+            # Save analytics data to local JSON file
+
+            # Create analytics directory if it doesn't exist
+            analytics_dir = Path("analytics")
+            analytics_dir.mkdir(exist_ok=True)
+
+            # Generate filename with validator hotkey and current timestamp
+            timestamp = datetime.now().strftime("%m%d_%H%M")
+            filename = analytics_dir / f"testnet_analytics_{timestamp}.json"
+
+            # Save data to JSON file
+            with open(filename, "w") as f:
+                json.dump(anal_data.model_dump(mode="json"), f, indent=2)
+
+            logger.info(f"Saved analytics data to {filename}")
+            return expire_to
+
         except NoProcessedTasksYet:
             logger.info("No processed tasks to upload. Skipping analytics upload.")
             return last_analytics_upload_time
