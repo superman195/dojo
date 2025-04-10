@@ -1,83 +1,87 @@
 import asyncio
-import http
-from typing import Any
+from typing import Any, Awaitable, Callable, List, Type
 
-import substrateinterface
+import orjson
 import uvicorn
+from fastapi import FastAPI, HTTPException, Request
 from loguru import logger
-from starlette.applications import Starlette
-from starlette.middleware import Middleware
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response
-from starlette.routing import Route
 
-from dojo.messaging.types import RouteType
+from dojo.messaging.types import PayloadA, T
+from dojo.messaging.utils import create_response, decode_body
 
 
-class SignatureMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app):  # pyright: ignore
-        super().__init__(app)  # pyright: ignore
+def register_route_handler(
+    app: FastAPI,
+    handler: Callable[[Request, T], Awaitable[Any]],
+    model: Type[T],
+    methods: List[str] = ["POST"],
+):
+    """Register a route with a Pydantic model to allow easily adding new endpoints"""
 
-    async def dispatch(self, request: Request, call_next: Any):
-        signature = request.headers.get("signature", "")
-        hotkey = request.headers.get("hotkey", "")
-        message = request.headers.get("message", "")
-        if not verify_signature(hotkey, signature, message):
-            return Response(content=http.HTTPStatus(403).phrase, status_code=403)
+    async def handler_wrapper(request: Request):
+        """Wrapper around the request that handles zstd decompression and payload validation"""
+        try:
+            body = await decode_body(request)
 
-        # otherwise, proceed with the normal request
-        response = await call_next(request)
-        return response
+            print(f"Got request: body: {body=}")
+            try:
+                data = orjson.loads(body)
+            except orjson.JSONDecodeError as e:
+                return create_response(
+                    success=False, error=f"Invalid JSON, exception: {str(e)}"
+                )
 
+            try:
+                payload = model.model_validate(data)
+            except Exception as e:
+                return create_response(
+                    success=False, error=f"Validation error: {str(e)}"
+                )
 
-def verify_signature(hotkey: str, signature: str, message: str) -> bool:
-    """
-    returns true if input signature was created by input hotkey for input message.
-    """
-    try:
-        keypair = substrateinterface.Keypair(ss58_address=hotkey, ss58_format=42)
-        if not keypair.verify(data=message, signature=signature):
-            logger.error(f"Invalid signature for address={hotkey}")
-            return False
+            result = await handler(request, payload)
 
-        logger.success(f"Signature verified, signed by {hotkey}")
-        return True
-    except Exception as e:
-        logger.error(f"Error occurred while verifying signature, exception {e}")
-        return False
+            # Return standardized response format
+            return create_response(success=True, body=result)
+        except HTTPException as e:
+            logger.error(f"HTTPException: {str(e)}")
+            raise e
+        except Exception as e:
+            logger.error(f"Error processing request due to: {str(e)}")
+            return create_response(
+                success=False, error=f"Internal server error: {str(e)}"
+            )
 
-
-class Server:
-    def __init__(self):
-        self._routes: list[RouteType] = []
-        self._middleware: list[Middleware] = [Middleware(SignatureMiddleware)]
-        self.app: Starlette | None = None
-
-    def add_route(self, route: RouteType):
-        self._routes.append(route)
-
-    def add_middleware(self, middleware: Middleware):
-        self._middleware.append(middleware)
-
-    def initialize(self) -> Starlette:
-        self.app = Starlette(
-            debug=True, routes=self._routes, middleware=self._middleware
-        )
-        return self.app
+    handler_wrapper.__name__ = handler.__name__
+    app.add_api_route(
+        path="/" + model.__name__.lstrip("/"),
+        endpoint=handler_wrapper,
+        methods=methods,
+        operation_id=f"handle_{model.__name__}",
+    )
 
 
-def hello():
-    print("hello")
+# NOTE: example usage below
+# NOTE: example usage below
+
+app = FastAPI()
 
 
-server = Server()
-server.add_route(Route("/", hello))
-app = server.initialize()
+# e.g. miner here, and this gets called
+async def handler_a(request: Request, payload: PayloadA) -> PayloadA:
+    # Access both request info and the validated payload
+    return payload
+
+
+# Register routes with their respective payload models
+register_route_handler(
+    app=app,
+    handler=handler_a,
+    model=PayloadA,
+)
 
 
 async def main():
-    # uvicorn.run(app, host="0.0.0.0", port=8000)
+    print(app.routes)
     config = uvicorn.Config(
         app=app,
         host="0.0.0.0",
@@ -92,22 +96,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
-# async def try_forward_task_request(request: Request):
-#     signature = request.headers.get("signature")
-#     hotkey = request.headers.get("hotkey")
-#     message = request.headers.get("message")
-#     if not signature:
-#         raise ValueError(f"Invalid signature: {signature=}")
-#     if not hotkey:
-#         raise ValueError(f"Invalid hotkey: {hotkey=}")
-#     if not message:
-#         raise ValueError(f"Invalid message: {message=}")
-#     if not verify_signature(hotkey, signature, message):
-#         raise ValueError("Invalid signature")
-#
-#     try:
-#         logger.info(f"Request client host: {request.client.host}")
-#     except:
-#         pass
