@@ -27,25 +27,29 @@ from dojo.protocol import (
     TaskSynapseObject,
     TaskTypeEnum,
     TextCriteria,
+    TextFeedbackCompletion,
     TextFeedbackEvent,
+    TextFeedbackRequest,
 )
 from neurons.validator import Validator
 
 
 class FeedbackLoop:
-    async def run(self, validator: Validator):
-        """Runs the feedback loop periodically."""
-        while True:
-            # Wait for the validator update score interval
-            await asyncio.sleep(dojo.VALIDATOR_UPDATE_SCORE)
-            try:
-                await self.start_feedback_loop(validator)
-                await self.update_text_feedback_results(validator)
-            except Exception as e:
-                logger.error(f"Error in feedback loop: {e}")
-
     async def start_feedback_loop(self, validator: Validator):
-        """Starts the feedback loop."""
+        """Continuously processes new feedback loop iterations."""
+        while True:
+            try:
+                await self._start_feedback_loop(validator)
+                await asyncio.sleep(dojo.VALIDATOR_UPDATE_SCORE)
+            except Exception as e:
+                logger.error(f"Error in start_feedback_loop: {e}")
+                await asyncio.sleep(dojo.VALIDATOR_UPDATE_SCORE)
+
+    async def _start_feedback_loop(self, validator: Validator):
+        """
+        Core implementation of the feedback loop logic.
+        Selects a validator task, creates a text criteria task, and sends it to miners.
+        """
         result = await self.select_validator_task()
         if result:
             selected_task, selected_completion = result
@@ -58,6 +62,7 @@ class FeedbackLoop:
                     original_task_id=selected_task.task_id,
                     current_task_id=text_criteria_task.task_id,
                     status=HFLStatusEnum.TF_PENDING,
+                    selected_completion_id=selected_completion,
                 )
 
                 # We can't directly set hfl_state_id on the task object since it's not part of the TaskSynapseObject,
@@ -287,7 +292,7 @@ class FeedbackLoop:
                 task_id=get_new_uuid(),
                 previous_task_id=validator_task.task_id,
                 prompt=prompt,
-                task_type=TaskTypeEnum.TEXT_TO_COMPLETION,
+                task_type=TaskTypeEnum.TEXT_FEEDBACK,
                 expire_at=set_expire_time(
                     int(dojo.TASK_DEADLINE / 2)
                 ),  # Half the deadline for TF
@@ -306,16 +311,24 @@ class FeedbackLoop:
             logger.error(f"Error generating text criteria task: {e}")
             return None
 
-    async def update_text_feedback_results(
+    async def update_tf_task_results(self, validator: Validator):
+        """
+        Continuously monitors and processes TEXT_FEEDBACK tasks.
+        """
+        while True:
+            try:
+                await self._update_tf_task_results(validator)
+                await asyncio.sleep(dojo.VALIDATOR_UPDATE_SCORE)
+            except Exception as e:
+                logger.error(f"Error in update_text_feedback_results: {e}")
+                await asyncio.sleep(dojo.VALIDATOR_UPDATE_SCORE)
+
+    async def _update_tf_task_results(
         self, validator: Validator
     ) -> Dict[str, List[MinerResponse]]:
         """
-        Updates task results for TEXT_TO_COMPLETION tasks that haven't been processed yet.
-        Similar to validator.update_task_results but specifically for text feedback tasks.
-
-        Ensures each task has at least 3 responses before marking as processed.
-        If fewer than 3 responses are received, the task is sent to additional miners
-        until enough responses are collected.
+        Core implementation for processing TEXT_FEEDBACK tasks.
+        Ensures each task has sufficient responses and manages the feedback workflow.
         """
         # Dictionary to store selected responses by task ID
         selected_responses_by_task = {}
@@ -334,7 +347,7 @@ class FeedbackLoop:
             expire_to = datetime_as_utc(datetime.now(timezone.utc))
 
             try:
-                # Find HFL states associated with TEXT_TO_COMPLETION tasks
+                # Find HFL states associated with TEXT_FEEDBACK tasks
                 hfl_states = await HFLState.prisma().find_many(
                     where={
                         "status": HFLStatusEnum.TF_PENDING,
@@ -352,7 +365,7 @@ class FeedbackLoop:
                     expire_to=expire_to,
                     is_processed=False,
                     has_previous_task=True,
-                    task_type=TaskTypeEnum.TEXT_TO_COMPLETION,
+                    task_type=TaskTypeEnum.TEXT_FEEDBACK,
                 ):
                     if not task_batch:
                         continue
@@ -400,23 +413,169 @@ class FeedbackLoop:
                                 )
 
                                 if hfl_state:
-                                    # Update HFLState to TF_COMPLETED
-                                    event_data = TextFeedbackEvent(
-                                        task_id=task_id,
-                                        iteration=hfl_state.current_iteration,
-                                        timestamp=datetime_as_utc(
-                                            datetime.now(timezone.utc)
-                                        ),
-                                    )
+                                    # Get the original task to extract the prompt and selected completion
+                                    original_task = None
+                                    if hfl_state.original_task_id:
+                                        original_task_result = (
+                                            await ORM.get_validator_task_by_id(
+                                                hfl_state.original_task_id
+                                            )
+                                        )
+                                        if original_task_result:
+                                            original_task = (
+                                                original_task_result.validator_task
+                                            )
 
-                                    await HFLManager.update_state(
-                                        hfl_state_id=hfl_state.id,
-                                        updates={"status": HFLStatusEnum.TF_COMPLETED},
-                                        event_data=event_data,
-                                    )
+                                    if original_task:
+                                        # Find the selected completion in the original task
+                                        selected_completion = None
+                                        for completion in (
+                                            original_task.completion_responses or []
+                                        ):
+                                            if (
+                                                completion.completion_id
+                                                == hfl_state.selected_completion_id
+                                            ):
+                                                selected_completion = completion
+                                                break
 
-                                    logger.info(
-                                        f"Updated HFL state {hfl_state.id} to TF_COMPLETED for task {task_id}"
+                                        if selected_completion:
+                                            hf_completions = []
+
+                                            # Extract text feedback from selected responses
+                                            logger.info(
+                                                f"Processing {len(selected_responses)} miner responses for feedback"
+                                            )
+                                            for response in selected_responses:
+                                                if response.task_result and isinstance(
+                                                    response.task_result, dict
+                                                ):
+                                                    # Extract the text feedback from task_result
+                                                    text_feedback = ""
+                                                    if (
+                                                        "text_feedback"
+                                                        in response.task_result
+                                                    ):
+                                                        text_feedback = (
+                                                            response.task_result[
+                                                                "text_feedback"
+                                                            ]
+                                                        )
+
+                                                    logger.debug(
+                                                        f"Extracted text feedback from miner {response.hotkey}: {text_feedback[:50]}..."
+                                                    )
+
+                                                    # Create TextFeedbackCompletion object
+                                                    hf_completions.append(
+                                                        TextFeedbackCompletion(
+                                                            miner_hotkey=response.hotkey,
+                                                            miner_response_id=response.id,
+                                                            text_feedback=text_feedback,
+                                                        )
+                                                    )
+
+                                            # Create the TextFeedbackRequest object
+                                            text_feedback_data = TextFeedbackRequest(
+                                                prompt=original_task.prompt,
+                                                base_completion=selected_completion.completion,
+                                                hf_completions=hf_completions,
+                                            )
+
+                                            # Send to synthetic API
+                                            if (
+                                                len(text_feedback_data.hf_completions)
+                                                > 0
+                                            ):
+                                                try:
+                                                    logger.info(
+                                                        f"Sending {len(text_feedback_data.hf_completions)} feedback responses to synthetic API"
+                                                    )
+                                                    syn_req_id = await SyntheticAPI.send_text_feedback(
+                                                        text_feedback_data
+                                                    )
+
+                                                    # Update HFLState with the synthetic request ID
+                                                    await HFLManager.update_state(
+                                                        hfl_state_id=hfl_state.id,
+                                                        updates={
+                                                            "status": HFLStatusEnum.TF_COMPLETED,
+                                                            "current_synthetic_req_id": syn_req_id,
+                                                            "selected_completion_id": selected_completion.completion_id,
+                                                        },
+                                                        event_data=TextFeedbackEvent(
+                                                            task_id=task_id,
+                                                            iteration=hfl_state.current_iteration,
+                                                            timestamp=datetime_as_utc(
+                                                                datetime.now(
+                                                                    timezone.utc
+                                                                )
+                                                            ),
+                                                        ),
+                                                    )
+
+                                                    logger.info(
+                                                        f"Sent text feedback data to synthetic API for task {task_id}, "
+                                                        f"got syn_req_id: {syn_req_id}"
+                                                    )
+                                                except Exception as e:
+                                                    logger.error(
+                                                        f"Error sending text feedback to synthetic API: {str(e)}"
+                                                    )
+                                            else:
+                                                # Update HFLState to TF_COMPLETED even if we couldn't send to synthetic API
+                                                await HFLManager.update_state(
+                                                    hfl_state_id=hfl_state.id,
+                                                    updates={
+                                                        "status": HFLStatusEnum.TF_COMPLETED
+                                                    },
+                                                    event_data=TextFeedbackEvent(
+                                                        task_id=task_id,
+                                                        iteration=hfl_state.current_iteration,
+                                                        timestamp=datetime_as_utc(
+                                                            datetime.now(timezone.utc)
+                                                        ),
+                                                    ),
+                                                )
+                                        else:
+                                            logger.warning(
+                                                f"Could not find selected completion for task {hfl_state.original_task_id}"
+                                            )
+                                            # Update HFLState to TF_COMPLETED
+                                            await HFLManager.update_state(
+                                                hfl_state_id=hfl_state.id,
+                                                updates={
+                                                    "status": HFLStatusEnum.TF_COMPLETED
+                                                },
+                                                event_data=TextFeedbackEvent(
+                                                    task_id=task_id,
+                                                    iteration=hfl_state.current_iteration,
+                                                    timestamp=datetime_as_utc(
+                                                        datetime.now(timezone.utc)
+                                                    ),
+                                                ),
+                                            )
+                                    else:
+                                        logger.warning(
+                                            f"Could not find original task {hfl_state.original_task_id}"
+                                        )
+                                        # Update HFLState to TF_COMPLETED
+                                        await HFLManager.update_state(
+                                            hfl_state_id=hfl_state.id,
+                                            updates={
+                                                "status": HFLStatusEnum.TF_COMPLETED
+                                            },
+                                            event_data=TextFeedbackEvent(
+                                                task_id=task_id,
+                                                iteration=hfl_state.current_iteration,
+                                                timestamp=datetime_as_utc(
+                                                    datetime.now(timezone.utc)
+                                                ),
+                                            ),
+                                        )
+                                else:
+                                    logger.warning(
+                                        f"Could not find HFLState with ID {hfl_state_id}"
                                     )
 
                             logger.info(
@@ -510,9 +669,7 @@ class FeedbackLoop:
                         logger.info(f"Sent task {task.task_id} to 7 additional miners")
 
             except NoNewExpiredTasksYet as e:
-                logger.info(
-                    f"No expired TEXT_TO_COMPLETION tasks found for processing: {e}"
-                )
+                logger.info(f"No expired TEXT_FEEDBACK tasks found for processing: {e}")
                 return selected_responses_by_task
 
             return selected_responses_by_task

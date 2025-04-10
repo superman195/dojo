@@ -12,7 +12,7 @@ class TaskTypeEnum(StrEnum):
     TEXT_TO_THREE_D = "TEXT_TO_THREE_D"
     TEXT_TO_IMAGE = "TEXT_TO_IMAGE"
     CODE_GENERATION = "CODE_GENERATION"
-    TEXT_TO_COMPLETION = "TEXT_TO_COMPLETION"
+    TEXT_FEEDBACK = "TEXT_FEEDBACK"
     SCORE_FEEDBACK = "SCORE_FEEDBACK"
 
 
@@ -296,4 +296,31 @@ class TextFeedbackEvent(HFLEvent):
 class ScoreFeedbackEvent(HFLEvent):
     type: str = Field(
         description="Type of the event", default=HFLEventTypeEnum.SF_PENDING
+    )
+
+
+class TextFeedbackCompletion(BaseModel):
+    """
+    Represents a single text feedback response from a miner.
+    """
+
+    miner_hotkey: str = Field(description="Hotkey of the miner providing the feedback")
+    miner_response_id: str = Field(
+        description="ID of the miner response in the database"
+    )
+    text_feedback: str = Field(description="Text feedback provided by the miner")
+
+
+class TextFeedbackRequest(BaseModel):
+    """
+    Represents a request to the synthetic API with text feedback data.
+    Used to generate improved responses based on human feedback.
+    """
+
+    prompt: str = Field(description="Original prompt that was given to the LLM")
+    base_completion: str | dict = Field(
+        description="Original completion that was selected for feedback (can be string or JSON object)"
+    )
+    hf_completions: List[TextFeedbackCompletion] = Field(
+        description="List of human feedback completions from miners"
     )

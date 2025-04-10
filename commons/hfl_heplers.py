@@ -14,6 +14,7 @@ class HFLManager:
         original_task_id: str,
         current_task_id: str,
         status: HFLStatusEnum = HFLStatusEnum.TF_PENDING,
+        selected_completion_id: str = None,
     ) -> HFLState:
         """Create initial HFL state."""
         # TODO: add data as needed
@@ -23,15 +24,20 @@ class HFLManager:
             timestamp=datetime_as_utc(datetime.now(timezone.utc)),
         )
 
-        return await HFLState.prisma().create(
-            data={
-                "original_task_id": original_task_id,
-                "current_task_id": current_task_id,
-                "current_iteration": 1,
-                "status": status,
-                "events": [Json(initial_event.model_dump())],
-            }
-        )
+        # Prepare data for creating the HFL state
+        create_data = {
+            "original_task_id": original_task_id,
+            "current_task_id": current_task_id,
+            "current_iteration": 1,
+            "status": status,
+            "events": [Json(initial_event.model_dump())],
+        }
+
+        # Add selected_completion_id if provided
+        if selected_completion_id:
+            create_data["selected_completion_id"] = selected_completion_id
+
+        return await HFLState.prisma().create(data=create_data)
 
     @staticmethod
     async def update_state(
@@ -84,8 +90,6 @@ class HFLManager:
     ) -> HFLState:
         """Handle transition to TF_COMPLETED."""
         # TODO Add TF completion specific logic as needed
-        if not state.current_synthetic_req_id:
-            raise ValueError("Current synthetic request ID is not set")
         return await HFLManager._update_state(state, updates, event_data)
 
     @staticmethod

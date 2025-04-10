@@ -888,7 +888,7 @@ class ORM:
         """
         try:
             where_query = ValidatorTaskWhereInput(
-                task_type=TaskTypeEnum.TEXT_TO_COMPLETION,
+                task_type=TaskTypeEnum.TEXT_FEEDBACK,
                 HFLState={
                     "is": {
                         "status": status,

@@ -15,7 +15,7 @@ from commons.exceptions import (
     FatalSyntheticGenerationError,
     SyntheticGenerationError,
 )
-from dojo.protocol import SyntheticQA
+from dojo.protocol import SyntheticQA, TextFeedbackRequest
 
 SYNTHETIC_API_BASE_URL = os.getenv("SYNTHETIC_API_URL")
 
@@ -60,6 +60,39 @@ class SyntheticAPI:
             await cls._session.close()
             cls._session = None
         logger.debug("Ensured SyntheticAPI session is closed.")
+
+    @classmethod
+    async def send_text_feedback(cls, text_feedback_data: TextFeedbackRequest) -> str:
+        """
+        Dummy function that will be replaced with actual synthetic API call.
+        Takes text feedback data with base completion and miner responses,
+        and returns a synthetic request ID.
+
+        Args:
+            text_feedback_data (dict): Contains prompt, base_completion, and hf_completions
+                with miner feedback responses
+
+        Returns:
+            str: A synthetic request ID
+        """
+        # Log the received data for debugging
+        logger.info(
+            f"Creating text feedback request with prompt: {text_feedback_data.prompt[:50]}..."
+        )
+        logger.info(
+            f"Number of feedback completions: {len(text_feedback_data.hf_completions)}"
+        )
+
+        # In a real implementation, this would make an API call to the synthetic API
+        # and get back a request ID
+
+        # For now, just generate a random request ID
+        import uuid
+
+        syn_req_id = f"{uuid.uuid4()}"
+
+        logger.info(f"Created synthetic request with ID: {syn_req_id}")
+        return syn_req_id
 
     @classmethod
     async def get_qa(cls) -> SyntheticQA | None:

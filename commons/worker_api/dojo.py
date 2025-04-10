@@ -78,7 +78,7 @@ class DojoAPI:
     def serialize_task_request(data: TaskSynapseObject):
         # Use a mapping for task_modality to avoid if-else logic
         if data.task_type in (
-            TaskTypeEnum.TEXT_TO_COMPLETION,
+            TaskTypeEnum.TEXT_FEEDBACK,
             TaskTypeEnum.CODE_GENERATION,
         ):
             task_modality = TaskTypeEnum.CODE_GENERATION
@@ -125,7 +125,7 @@ class DojoAPI:
         # Simplified title assignment
         title = (
             "Text Feedback Task"
-            if task_request.task_type == TaskTypeEnum.TEXT_TO_COMPLETION
+            if task_request.task_type == TaskTypeEnum.TEXT_FEEDBACK
             else cls.CODE_GEN_TASK_TITLE
         )
 

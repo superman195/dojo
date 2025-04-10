@@ -93,7 +93,8 @@ async def main():
             )
         ),
         asyncio.create_task(validator.cleanup_resources()),
-        asyncio.create_task(feedback_loop.run(validator)),
+        asyncio.create_task(feedback_loop.start_feedback_loop(validator)),
+        asyncio.create_task(feedback_loop.update_tf_task_results(validator)),
         asyncio.create_task(feedback_loop.create_sf_tasks(validator)),
         asyncio.create_task(feedback_loop.update_sf_task_results(validator)),
     ]
