@@ -1,10 +1,10 @@
 from typing import List, Tuple
 
 import aioboto3
-from bittensor.utils.btlogging import logging as logger
 from fastapi import UploadFile
 
 from commons.api_settings import AWSSettings
+from commons.logging import logging as logger
 
 
 class DatasetStorage:

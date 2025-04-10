@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 
 import bittensor as bt
-from bittensor.utils.btlogging import logging as logger
 
+from commons.logging import logging as logger
 from commons.objects import ObjectManager
 from commons.utils import initialise, ttl_get_block
 from dojo import get_spec_version

@@ -5,9 +5,9 @@ from collections import defaultdict
 from typing import List
 
 import bittensor as bt
-from bittensor.utils.btlogging import logging as logger
 
 from commons.exceptions import FatalSubtensorConnectionError
+from commons.logging import logging as logger
 from commons.objects import ObjectManager
 from commons.utils import aget_effective_stake, get_effective_stake, keccak256_hash
 from dojo.chain import get_async_subtensor

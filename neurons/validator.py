@@ -1,3 +1,6 @@
+"""The validator neuron registers on the substrate chain and then serves up requested
+prompts for miners to respond to."""
+
 import asyncio
 import copy
 import gc
@@ -14,7 +17,6 @@ import aiohttp
 import bittensor as bt
 import numpy as np
 import torch
-from bittensor.utils.btlogging import logging as logger
 from bittensor.utils.weight_utils import process_weights_for_netuid
 from torch.nn import functional as F
 
@@ -28,6 +30,7 @@ from commons.exceptions import (
     SetWeightsFailed,
     SyntheticGenerationError,
 )
+from commons.logging import logging as logger
 from commons.obfuscation.obfuscation_utils import obfuscate_html_and_js
 from commons.objects import ObjectManager
 from commons.orm import ORM

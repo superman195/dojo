@@ -1,24 +1,132 @@
 """
-Custom logging handler for forwarding logs to the validator API
+Custom logging handler for forwarding logs to the validator API.
+
+This module sets up Loguru as the primary logging system and provides:
+1. A mechanism to intercept standard Python logging and forward to Loguru
+2. A handler that forwards logs to the validator API
+3. Proper formatting with module paths and color support
+
+Features:
+- Python logging is forwarded to Loguru with correct module paths
+- Color tags are properly converted to ANSI codes
+- API logs are sent in batches for efficiency
 """
 
 import asyncio
-import logging
+import logging as python_logging
 from datetime import datetime
 
 import aiohttp
 import bittensor as bt
-from bittensor.utils.btlogging import logging as logger
+from loguru import logger
+
+from commons.color_utils import convert_tags_to_ansi
 
 
-class ValidatorAPILogHandler(logging.Handler):
+# Create a filter for forwarded logs
+class ForwardedLogFilter:
+    """Filter that extracts the original module path from forwarded logs"""
+
+    def __call__(self, record):
+        """Process a log record - extract original module path if present"""
+        message = record["message"]
+
+        # Check if this is a forwarded log from Python's logging
+        if message.startswith("ORIG_MODULE="):
+            try:
+                # Extract original module info and message using a more efficient split
+                parts = message.split("|", 3)
+                if len(parts) == 4:
+                    # Extract metadata from parts and update record
+                    record["name"] = parts[0].replace("ORIG_MODULE=", "")
+                    record["function"] = parts[1].replace("ORIG_FUNC=", "")
+                    record["line"] = parts[2].replace("ORIG_LINE=", "")
+                    record["message"] = convert_tags_to_ansi(parts[3])
+            except Exception:
+                # If parsing fails, just convert color tags in the original message
+                record["message"] = convert_tags_to_ansi(message)
+        else:
+            # For regular Loguru logs, ensure color tags are converted
+            record["message"] = convert_tags_to_ansi(record["message"])
+
+        return True
+
+
+# Remove default handler and add custom handler with filter
+logger.remove()
+# Create an instance of the filter
+forwarded_log_filter = ForwardedLogFilter()
+# Add default handler with the filter
+logger.add(
+    sink=lambda msg: print(msg, end="", flush=True),
+    format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level:^15}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | <level>{message}</level>",
+    colorize=True,
+    level="DEBUG",
+    filter=forwarded_log_filter,  # Apply filter to console output
+)
+logging = logger
+
+
+def setup_python_logging_to_loguru(level=python_logging.INFO):
+    """
+    Intercepts standard Python logging and forwards it to Loguru.
+    This allows libraries using standard Python logging to have their logs
+    processed by Loguru instead.
+
+    Args:
+        level: The minimum log level to capture (default: INFO)
+    """
+
+    # Create a handler that forwards to Loguru
+    class InterceptHandler(python_logging.Handler):
+        def emit(self, record):
+            # Map Python log levels to Loguru levels
+            try:
+                # Get the corresponding Loguru level
+                level_name = record.levelname.lower()
+                # Loguru uses 'warn' instead of 'warning'
+                if level_name == "warning":
+                    level_name = "warn"
+
+                log_method = getattr(logger, level_name, logger.info)
+
+                # Forward the log with metadata that our filter can use
+                # Format: ORIG_MODULE=name|ORIG_FUNC=func|ORIG_LINE=line|message
+                log_method(
+                    f"ORIG_MODULE={record.name}|"
+                    f"ORIG_FUNC={record.funcName}|"
+                    f"ORIG_LINE={record.lineno}|"
+                    f"{record.getMessage()}"
+                )
+            except Exception as e:
+                # Fallback if anything goes wrong
+                print(f"Failed to forward log to Loguru: {e}")
+                print(f"Original message: {record.getMessage()}")
+
+    # Remove all existing handlers from Python's root logger
+    python_logging.root.handlers.clear()
+
+    # Set the level for the root logger
+    python_logging.root.setLevel(level)
+
+    # Add the Loguru InterceptHandler to the root logger
+    python_logging.root.addHandler(InterceptHandler())
+
+    # Disable propagation of logs to avoid duplicates
+    for name in python_logging.root.manager.loggerDict:
+        python_logging.getLogger(name).propagate = False
+        python_logging.getLogger(name).handlers.clear()
+        python_logging.getLogger(name).addHandler(InterceptHandler())
+
+
+class ValidatorAPILogHandler(python_logging.Handler):
     def __init__(
         self,
         api_url: str,
-        hotkey: str,
         wallet: bt.wallet,
         batch_size: int = 100,
         flush_interval: float = 1.0,
+        console_output: bool = True,  # Flag to control console output
     ):
         super().__init__()
 
@@ -37,13 +145,60 @@ class ValidatorAPILogHandler(logging.Handler):
             logger.warning("API URL is not set, log forwarding to API will be disabled")
 
         self.api_url = api_url
-        self.hotkey = hotkey
+        self.hotkey = wallet.hotkey.ss58_address
         self.wallet = wallet  # Store wallet for signing messages
         self.batch_size = batch_size
         self.flush_interval = flush_interval
-        self.log_queue = asyncio.Queue()
+        self.log_queue: asyncio.Queue[dict[str, str | int | float]] = asyncio.Queue()
         self._shutdown = False
         self._flush_task = None
+        self.console_output = console_output  # Whether to also print to console
+
+    def __call__(self, message):
+        """
+        This method makes the handler compatible with Loguru sinks
+        Loguru will call this method with the message when logging
+        """
+        try:
+            # Extract time and format it
+            record_time = message.record["time"].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+            # Get level name and pad it
+            level = message.record["level"].name
+            level_padded = f"{level:^15}"
+
+            # Since we're no longer using the compatibility layer,
+            # we can directly extract caller information from the record
+            module_name = message.record["name"]
+            function_name = message.record["function"]
+            line_no = message.record["line"]
+
+            module_path = f"{module_name}:{function_name}:{line_no}"
+
+            # Get the original message (not formatted)
+            original_message = message.record["message"]
+
+            # Convert any color tags to ANSI color codes
+            original_message = convert_tags_to_ansi(original_message)
+
+            # Build our log message in desired format
+            formatted_message = (
+                f"{record_time} | {level_padded} | {module_path} | {original_message}"
+            )
+
+            # Create log entry for API only (never print to console from __call__)
+            # This avoids duplicates since Loguru already prints to console
+            log_entry = {
+                "timestamp": datetime.now().isoformat(),
+                "level": level,
+                "message": formatted_message,
+            }
+
+            # Put in queue for API
+            asyncio.create_task(self.log_queue.put(log_entry))
+        except Exception as e:
+            # Use print instead of logger to avoid recursion
+            print(f"Error in ValidatorAPILogHandler.__call__: {e}")
 
     def sign_message(self, message: str) -> str:
         """Sign a message using the wallet's hotkey"""
@@ -52,8 +207,8 @@ class ValidatorAPILogHandler(logging.Handler):
             signature = f"0x{signature}"
         return signature
 
-    def emit(self, record: logging.LogRecord) -> None:
-        """Emit a log record to the queue"""
+    def emit(self, record: python_logging.LogRecord) -> None:
+        """Emit a log record to the queue - for compatibility with Python logging"""
         try:
             # Get module path from record
             module_path = f"{record.module}:{record.funcName}:{record.lineno}"
@@ -63,18 +218,30 @@ class ValidatorAPILogHandler(logging.Handler):
                 "%Y-%m-%d %H:%M:%S.%f"
             )[:-3]
 
-            # Get the original message (potentially with ANSI colors)
+            # Get the original message
             message = record.getMessage()
 
-            # Format message to match sample logs but preserve any existing colors
+            # Convert any color tags to ANSI color codes
+            message = convert_tags_to_ansi(message)
+
+            # Map custom log levels to their string representation
+            level_name = record.levelname
+            if record.levelno == 25:  # Loguru's SUCCESS level
+                level_name = "SUCCESS"
+
+            # Format message to match sample logs with ANSI colors
             formatted_message = (
-                f"{timestamp} | {record.levelname:^15} | {module_path} | {message}"
+                f"{timestamp} | {level_name:^15} | {module_path} | {message}"
             )
+
+            # Print to console if enabled (for Python's standard logging)
+            if self.console_output:
+                print(formatted_message, flush=True)
 
             # Convert the log record to a dict with only essential fields
             log_entry = {
                 "timestamp": datetime.fromtimestamp(record.created).isoformat(),
-                "level": record.levelname,
+                "level": level_name,
                 "message": formatted_message,
             }
 
@@ -82,7 +249,8 @@ class ValidatorAPILogHandler(logging.Handler):
             asyncio.create_task(self.log_queue.put(log_entry))
 
         except Exception as e:
-            logger.error(f"Error in ValidatorAPILogHandler.emit: {e}")
+            # Use print instead of logger to avoid recursion
+            print(f"Error in ValidatorAPILogHandler.emit: {e}")
 
     async def _flush_logs(self):
         """Periodically flush logs to the API"""

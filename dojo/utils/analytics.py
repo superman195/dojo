@@ -15,9 +15,9 @@ import bittensor as bt
 import httpx
 from bittensor.core.async_subtensor import AsyncSubtensor
 from bittensor.core.metagraph import AsyncMetagraph
-from bittensor.utils.btlogging import logging as logger
 
 from commons.exceptions import NoProcessedTasksYet
+from commons.logging import logging as logger
 from commons.objects import ObjectManager
 from commons.orm import ORM
 from commons.utils import aget_effective_stake, datetime_to_iso8601_str

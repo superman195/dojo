@@ -4,14 +4,13 @@ import math
 from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, List
 
-from bittensor.utils.btlogging import logging as logger
-
 from commons.exceptions import (
     ExpiredFromMoreThanExpireTo,
     InvalidMinerResponse,
     NoNewExpiredTasksYet,
     NoProcessedTasksYet,
 )
+from commons.logging import logging as logger
 from commons.utils import datetime_as_utc
 from database.client import prisma, transaction
 from database.mappers import (

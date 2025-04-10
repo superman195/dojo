@@ -2,7 +2,8 @@ import os
 
 import aiofiles
 import httpx
-from bittensor.utils.btlogging import logging as logger
+
+from commons.logging import logging as logger
 
 
 async def test_endpoint():

@@ -9,9 +9,9 @@ from typing import AsyncGenerator
 import aiofiles
 import bittensor as bt
 import httpx
-from bittensor.utils.btlogging import logging as logger
 from pydantic import BaseModel, ValidationError
 
+from commons.logging import logging as logger
 from commons.objects import ObjectManager
 from commons.utils import datetime_to_iso8601_str
 from database.client import connect_db, disconnect_db, prisma

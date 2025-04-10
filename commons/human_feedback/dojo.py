@@ -5,9 +5,9 @@ import random
 from typing import Dict, List
 
 import httpx
-from bittensor.utils.btlogging import logging as logger
 
 from commons.exceptions import CreateTaskFailed
+from commons.logging import logging as logger
 from commons.utils import loaddotenv
 from dojo import get_dojo_api_base_url
 from dojo.protocol import (

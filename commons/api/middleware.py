@@ -2,10 +2,11 @@ import time
 from ipaddress import ip_address, ip_network
 
 import httpx
-from bittensor.utils.btlogging import logging as logger
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
+
+from commons.logging import logging as logger
 
 MAX_CONTENT_LENGTH = 1 * 1024 * 1024
 

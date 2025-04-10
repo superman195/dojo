@@ -1,9 +1,9 @@
 import asyncio
 import gc
+import logging as python_logging
 from contextlib import asynccontextmanager
 
 import uvicorn
-from bittensor.utils.btlogging import logging as logger
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -11,7 +11,12 @@ from commons.api.middleware import LimitContentLengthMiddleware
 from commons.block_subscriber import start_block_subscriber
 from commons.dataset.synthetic import SyntheticAPI
 from commons.exceptions import FatalSyntheticGenerationError
-from commons.logging import ValidatorAPILogHandler
+from commons.logging import (
+    ValidatorAPILogHandler,
+    forwarded_log_filter,
+    setup_python_logging_to_loguru,
+)
+from commons.logging import logging as logger
 from commons.objects import ObjectManager
 from database.client import connect_db, disconnect_db
 from dojo import get_dojo_api_base_url
@@ -30,50 +35,41 @@ async def lifespan(app: FastAPI):
     logger.info("Performing startup tasks...")
     await connect_db()
 
+    # Configure Python's standard logging to forward to Loguru
+    setup_python_logging_to_loguru(level=python_logging.INFO)
+
     # Setup validator API logging
     global api_log_handler
 
     api_log_handler = ValidatorAPILogHandler(
         api_url=get_dojo_api_base_url(),
-        hotkey=validator.wallet.hotkey.ss58_address,
         wallet=validator.wallet,
+        console_output=False,  # Disable console output since logs are already handled by Loguru
     )
     api_log_handler.start()
 
-    # Register with standard Python logging
-    import logging
-
-    python_logger = logging.getLogger()
-    python_logger.addHandler(api_log_handler)
-
-    # Create a bridging handler to capture bittensor logs
-    # This handler will forward messages from the standard Python
-    # logging system to our custom handler
-    class BitLogForwarder(logging.Handler):
-        def emit(self, record):
-            # Forward the log record to our custom handler
-            api_log_handler.emit(record)
-
-    # Add our forwarder to the bittensor logger
-    bt_logger = logging.getLogger("bittensor")
-    bt_forwarder = BitLogForwarder()
-    bt_logger.addHandler(bt_forwarder)
+    # Add the handler directly to Loguru with the filter
+    handler_id = logger.add(
+        api_log_handler,
+        level="DEBUG",
+        format="{message}",
+        filter=forwarded_log_filter,
+        colorize=True,  # Enable colorization for API logs too
+    )
 
     yield
 
     # Cleanup logging handlers
     if api_log_handler:
+        try:
+            # Remove the Loguru handler we added
+            if handler_id:
+                logger.remove(handler_id)
+        except Exception as e:
+            print(f"Error removing Loguru handlers: {e}")
+
+        # Stop the handler and flush logs
         await api_log_handler.stop()
-
-        # Remove from standard Python logger
-        import logging
-
-        python_logger = logging.getLogger()
-        python_logger.removeHandler(api_log_handler)
-
-        # Remove our forwarder from bittensor logger
-        bt_logger = logging.getLogger("bittensor")
-        bt_logger.removeHandler(bt_forwarder)
 
     await _shutdown_validator()
 

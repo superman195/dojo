@@ -5,12 +5,12 @@ import traceback
 from datetime import datetime
 from typing import Dict, Tuple
 
-import bittensor
+import bittensor as bt
 from bittensor.core.metagraph import AsyncMetagraph
-from bittensor.utils.btlogging import logging as logger
 
 from commons.exceptions import FatalSubtensorConnectionError
 from commons.human_feedback.dojo import DojoAPI
+from commons.logging import logging as logger
 from commons.objects import ObjectManager
 from commons.utils import aget_effective_stake, aobject, get_epoch_time, serve_axon
 from dojo import MINER_STATUS, VALIDATOR_MIN_STAKE
@@ -35,10 +35,10 @@ class Miner(aobject):
         logger.info(self.config)
 
         logger.info("Setting up bittensor objects....")
-        self.wallet = bittensor.wallet(config=self.config)
+        self.wallet = bt.wallet(config=self.config)
         logger.info(f"Wallet: {self.wallet}")
         # The axon handles request processing, allowing validators to send this miner requests.
-        self.axon = bittensor.axon(wallet=self.wallet, port=self.config.axon.port)
+        self.axon = bt.axon(wallet=self.wallet, port=self.config.axon.port)
         logger.info(f"Axon: {self.axon}")
 
         await self.init_metagraphs()
@@ -337,7 +337,7 @@ class Miner(aobject):
             synapse, "scoring result", "Valid scoring result request from validator"
         )
 
-    def extract_synapse_info(self, synapse: bittensor.Synapse) -> str:
+    def extract_synapse_info(self, synapse: bt.Synapse) -> str:
         caller_hotkey = synapse.dendrite.hotkey
         ip_addr = synapse.dendrite.ip or "Unknown IP"
         return f"Hotkey: {caller_hotkey}, IP: {ip_addr}"
@@ -436,7 +436,7 @@ class Miner(aobject):
         if self.should_sync_metagraph():
             await self.resync_metagraph()
 
-    async def check_registered(self, subtensor: bittensor.AsyncSubtensor | None = None):
+    async def check_registered(self, subtensor: bt.AsyncSubtensor | None = None):
         # Checkfor registration.
         if subtensor is None:
             subtensor = self.subtensor

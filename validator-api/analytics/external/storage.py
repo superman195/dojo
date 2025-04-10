@@ -3,9 +3,9 @@ import traceback
 from datetime import datetime
 
 import aioboto3
-from bittensor.utils.btlogging import logging as logger
 
 from commons.cache import RedisCache
+from commons.logging import logging as logger
 
 from ..core.models import AnalyticsPayload
 

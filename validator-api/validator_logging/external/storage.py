@@ -2,7 +2,8 @@ import os
 from typing import List
 
 import requests
-from bittensor.utils.btlogging import logging as logger
+
+from commons.logging import logging as logger
 
 from ..core.models import LogEntry
 

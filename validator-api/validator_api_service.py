@@ -7,7 +7,6 @@ from urllib.parse import urlparse
 import bittensor as bt
 import uvicorn
 from analytics.endpoints.routes import analytics_router
-from bittensor.utils.btlogging import logging as logger
 from dataset_extraction.endpoints.routes import dataset_router
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,6 +14,7 @@ from validator_logging.endpoints.routes import logging_router
 
 from commons.api_settings import ValidatorAPISettings, get_settings
 from commons.cache import RedisCache
+from commons.logging import logging as logger
 from commons.objects import ObjectManager
 from dojo.utils.config import source_dotenv
 

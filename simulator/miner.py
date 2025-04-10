@@ -5,8 +5,8 @@ import traceback
 from datetime import datetime, timezone
 
 import redis
-from bittensor.utils.btlogging import logging as logger
 
+from commons.logging import logging as logger
 from commons.utils import get_new_uuid
 from dojo.protocol import FeedbackRequest, Result, TaskResult, TaskResultRequest
 from dojo.utils.config import get_config

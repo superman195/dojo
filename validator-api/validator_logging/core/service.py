@@ -1,6 +1,6 @@
 from typing import Dict, List
 
-from bittensor.utils.btlogging import logging as logger
+from commons.logging import logging as logger
 
 from .models import LogEntry, LogResponse
 

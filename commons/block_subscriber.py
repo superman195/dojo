@@ -5,8 +5,8 @@ from datetime import datetime
 from typing import Any, Callable
 
 import websockets
-from bittensor.utils.btlogging import logging as logger
 
+from commons.logging import logging as logger
 from commons.objects import ObjectManager
 from dojo.chain import parse_block_headers
 

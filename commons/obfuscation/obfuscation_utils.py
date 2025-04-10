@@ -11,9 +11,10 @@ import tempfile
 import time
 from functools import partial
 
-from bittensor.utils.btlogging import logging as logger
 from bs4 import BeautifulSoup
 from jsmin import jsmin
+
+from commons.logging import logging as logger
 
 
 # Obfuscator base class
