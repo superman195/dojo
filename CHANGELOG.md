@@ -1,3 +1,9 @@
+## [1.10.1](https://github.com/tensorplex-labs/dojo/compare/v1.10.0...v1.10.1) (2025-04-10)
+
+### Bug Fixes
+
+* subtensor set to None ([20a2f0d](https://github.com/tensorplex-labs/dojo/commit/20a2f0d6ac5e9e9f19da9b6049e96ec751b6c44c))
+
 ## [1.10.0](https://github.com/tensorplex-labs/dojo/compare/v1.9.0...v1.10.0) (2025-04-09)
 
 ### Features
