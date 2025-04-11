@@ -124,7 +124,7 @@ class DojoAPI:
                 current_title = cls.CODE_GEN_TASK_TITLE.replace("X", str(cls._task_counter))
                 # TODO: make task title dynamic
                 form_body = {
-                    "title": ("", cls.CODE_GEN_TASK_TITLE),
+                    "title": ("", current_title),
                     "body": ("", task_request.prompt),
                     "expireAt": ("", task_request.expire_at),
                     "taskData": ("", json.dumps([task_data])),
