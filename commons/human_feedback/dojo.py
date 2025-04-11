@@ -33,8 +33,10 @@ class DojoAPI:
     MAX_RETRIES = 5
     BASE_DELAY = 1
     TIMEOUT = 15.0
-    CODE_GEN_TASK_TITLE = "LLM Code Generation Task"
+    CODE_GEN_TASK_TITLE = "GX.LLM Code Generation Task"
     _http_client = httpx.AsyncClient()
+    _task_counter = 0  # Add counter
+    _max_groups = 4    # Maximum group number
 
     @classmethod
     async def _get_task_results_by_dojo_task_id(cls, dojo_task_id: str):
@@ -117,6 +119,9 @@ class DojoAPI:
             try:
                 # Prepare request data
                 task_data = cls.serialize_task_request(task_request)
+                # Generate dynamic title
+                cls._task_counter = (cls._task_counter % cls._max_groups) + 1
+                current_title = cls.CODE_GEN_TASK_TITLE.replace("X", str(cls._task_counter))
                 # TODO: make task title dynamic
                 form_body = {
                     "title": ("", cls.CODE_GEN_TASK_TITLE),
