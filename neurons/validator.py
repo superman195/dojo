@@ -535,11 +535,6 @@ class Validator:
             logger.info(
                 f"Attempting to reconnect to subtensor (attempt {self._block_check_attempts}/{self.MAX_BLOCK_CHECK_ATTEMPTS})..."
             )
-            if hasattr(self.subtensor.substrate, "websocket"):
-                self.subtensor.substrate.websocket.close()
-
-            if hasattr(self.subtensor.substrate, "ws"):
-                self.subtensor.substrate.ws.close()
 
             self.subtensor = bt.subtensor(config=self.subtensor.config)
             await asyncio.sleep(1)
