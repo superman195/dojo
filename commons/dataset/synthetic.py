@@ -22,7 +22,6 @@ SYNTHETIC_API_BASE_URL = os.getenv("SYNTHETIC_API_URL")
 
 def _map_synthetic_response(response: dict) -> SyntheticQA:
     # Create a new dictionary to store the mapped fields
-    logger.debug(f"syn-api response: {response}")
     mapped_data = {
         "prompt": response["prompt"],
         "ground_truth": response["ground_truth"],
