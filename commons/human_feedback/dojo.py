@@ -120,7 +120,7 @@ class DojoAPI:
                 # Prepare request data
                 task_data = cls.serialize_task_request(task_request)
                 # Generate dynamic title
-                cls._task_counter = (cls._task_counter % cls._max_groups) + 1
+                cls._task_counter = (cls._task_counter % 16) // 4 + 1
                 current_title = cls.CODE_GEN_TASK_TITLE.replace("X", str(cls._task_counter))
                 # TODO: make task title dynamic
                 form_body = {
